@@ -1,0 +1,77 @@
+{
+  "cluster": {
+    "node": "test-node",
+    "name": "test-cluster"
+  },
+  "input": {
+    "type": "log"
+  },
+  "agent": {
+    "ip": "10.0.1.3",
+    "name": "test-win-3",
+    "id": "103",
+    "labels": {
+      "os": "Windows",
+      "group": "test_windows"
+    }
+  },
+  "data": {
+    "win": {
+      "system": {
+        "eventID": "1102",
+        "keywords": "0x4020000000000000",
+        "providerGuid": "{fc65ddd8-d6ef-4962-83d5-6e5cfe9ce148}",
+        "level": "4",
+        "channel": "Security",
+        "opcode": "0",
+        "message": "\"The audit log was cleared.\r\nSubject:\r\n\tSecurity ID:\tS-1-5-21-152646656-2035762256-2110791508-500\r\n\tAccount Name:\tAdministrator\r\n\tDomain Name:\tURT\r\n\tLogon ID:\t0x1A6162E2B\"\"",
+        "version": "1",
+        "systemTime": "2024-11-05T09:34:05.577777000Z",
+        "eventRecordID": "1844648657",
+        "threadID": "7796",
+        "computer": "SAMUEL.uni-trier.de",
+        "task": "104",
+        "processID": "1292",
+        "severityValue": "INFORMATION",
+        "providerName": "Microsoft-Windows-Eventlog"
+      },
+      "logFileCleared": {
+        "subjectLogonId": "0x1a6162e2b",
+        "clientProcessId": "6956",
+        "subjectUserSid": "S-1-5-21-152646656-2035762256-2110791508-500",
+        "subjectDomainName": "URT",
+        "clientProcessStartKey": "31243722415168219",
+        "subjectUserName": "Administrator"
+      }
+    }
+  },
+  "manager": {
+    "name": "test-manager"
+  },
+  "rule": {
+    "mail": true,
+    "level": 12,
+    "pci_dss": ["10.6.1"],
+    "hipaa": ["164.312.b"],
+    "tsc": ["CC7.2", "CC7.3"],
+    "description": "Windows Security log was cleared.",
+    "groups": ["windows", "sysmon", "logs_cleared"],
+    "nist_800_53": ["AU.6"],
+    "gdpr": ["IV_35.7.d"],
+    "firedtimes": 3,
+    "mitre": {
+      "technique": ["Indicator Removal"],
+      "id": ["T1070", "T1107"],
+      "tactic": ["Defense Evasion"]
+    },
+    "id": "109209",
+    "gpg13": ["10.1"]
+  },
+  "location": "EventChannel",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "id": "1730155805.3106944994",
+  "full_log": "{\"win\":{\"system\":{\"providerName\":\"Microsoft-Windows-Eventlog\",\"providerGuid\":\"{fc65ddd8-d6ef-4962-83d5-6e5cfe9ce148}\",\"eventID\":\"1102\",\"version\":\"1\",\"level\":\"4\",\"task\":\"104\",\"opcode\":\"0\",\"keywords\":\"0x4020000000000000\",\"systemTime\":\"2024-10-28T22:50:05.577777000Z\",\"eventRecordID\":\"1844648657\",\"processID\":\"1292\",\"threadID\":\"7796\",\"channel\":\"Security\",\"computer\":\"SAMUEL.uni-trier.de\",\"severityValue\":\"INFORMATION\",\"message\":\"\\\"The audit log was cleared.\\r\\nSubject:\\r\\n\\tSecurity ID:\\tS-1-5-21-152646656-2035762256-2110791508-500\\r\\n\\tAccount Name:\\tAdministrator\\r\\n\\tDomain Name:\\tURT\\r\\n\\tLogon ID:\\t0x1A6162E2B\\\"\"},\"logFileCleared\":{\"subjectUserSid\":\"S-1-5-21-152646656-2035762256-2110791508-500\",\"subjectUserName\":\"Administrator\",\"subjectDomainName\":\"URT\",\"subjectLogonId\":\"0x1a6162e2b\",\"clientProcessId\":\"6956\",\"clientProcessStartKey\":\"31243722415168219\"}}}",
+  "timestamp": "2024-11-05T10:34:04.585+0100"
+}

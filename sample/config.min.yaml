@@ -1,0 +1,21 @@
+# Wazuh DFN Service Configuration
+
+# Required DFN settings - these must be configured
+dfn:
+  dfn_id: "12345678-abcd-efgh-ijkl-01234567890ab" # DFN customer ID
+  dfn_broker: "kafka.example.org:443" # DFN Kafka broker address
+  dfn_ca: "/opt/wazuh-dfn/certs/dfn-ca.pem" # Path to CA certificate for Kafka SSL
+  dfn_cert: "/opt/wazuh-dfn/certs/dfn-cert.pem" # Path to client certificate for Kafka SSL
+  dfn_key: "/opt/wazuh-dfn/certs/dfn-key.pem" # Path to client key for Kafka SSL
+
+# Logging configuration
+log:
+  console: true # Enable console logging
+  file_path: "/opt/wazuh-dfn/logs/wazuh-dfn.log" # Path to log file
+  interval: 600 # Statistics logging interval in seconds
+  level: "INFO" # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Miscellaneous settings
+misc:
+  num_workers: 10 # Number of worker threads for processing alerts
+  own_network: # Optional: Network CIDR for own network filtering (e.g. "10.0.0.0/8")

@@ -1,0 +1,53 @@
+{
+  "cluster": {
+    "node": "test-node",
+    "name": "test-cluster"
+  },
+  "input": {
+    "type": "log"
+  },
+  "agent": {
+    "ip": "10.0.0.1",
+    "name": "test-agent",
+    "id": "001",
+    "labels": {
+      "os": "Linux",
+      "group": "test_servers"
+    }
+  },
+  "data": {
+    "severity": "INFO",
+    "srcip": "192.0.2.1",
+    "actiontaken": "Found",
+    "service": "http-get-dos",
+    "program_name": "fail2ban.filter",
+    "pid": "1234"
+  },
+  "manager": {
+    "name": "test-manager"
+  },
+  "rule": {
+    "firedtimes": 1,
+    "mail": false,
+    "level": 7,
+    "description": "Fail2ban IP 192.0.2.1 has been Found to connect to http-get-dos",
+    "groups": ["syslog", "fail2ban", "fail2ban-found"],
+    "id": "833002"
+  },
+  "location": "/var/log/fail2ban.log",
+  "decoder": {
+    "name": "fail2ban"
+  },
+  "id": "1234567890.1234567890",
+  "GeoLocation": {
+    "city_name": "Test City",
+    "country_name": "Test Country",
+    "region_name": "Test Region",
+    "location": {
+      "lon": 0.0,
+      "lat": 0.0
+    }
+  },
+  "full_log": "fail2ban: 2024-01-01 00:00:00,000 fail2ban.filter [1234]: INFO [http-get-dos] Found 192.0.2.1 - 2024-01-01 00:00:00",
+  "timestamp": "2024-01-01T00:00:00.000+0000"
+}

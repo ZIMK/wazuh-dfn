@@ -1,0 +1,53 @@
+{
+  "cluster": {
+    "node": "test-node",
+    "name": "test-cluster"
+  },
+  "input": {
+    "type": "log"
+  },
+  "agent": {
+    "ip": "10.0.0.4",
+    "name": "test-agent-4",
+    "id": "004",
+    "labels": {
+      "os": "Linux",
+      "group": "test_servers"
+    }
+  },
+  "data": {
+    "severity": "NOTICE",
+    "srcip": "192.0.2.4",
+    "actiontaken": "Unban",
+    "service": "sshd",
+    "program_name": "fail2ban.actions",
+    "pid": "1237"
+  },
+  "manager": {
+    "name": "test-manager"
+  },
+  "rule": {
+    "firedtimes": 4,
+    "mail": false,
+    "level": 4,
+    "description": "Fail2ban IP 192.0.2.4 has been unbanned from sshd",
+    "groups": ["syslog", "fail2ban"],
+    "id": "833001"
+  },
+  "location": "/var/log/fail2ban.log",
+  "decoder": {
+    "name": "fail2ban"
+  },
+  "id": "1234567890.1234567893",
+  "GeoLocation": {
+    "city_name": "Test City 4",
+    "country_name": "Test Country",
+    "region_name": "Test Region",
+    "location": {
+      "lon": 3.0,
+      "lat": 3.0
+    }
+  },
+  "full_log": "fail2ban: 2024-01-01 00:03:00,000 fail2ban.actions [1237]: NOTICE [sshd] Unban 192.0.2.4",
+  "timestamp": "2024-01-01T00:03:00.000+0000"
+}

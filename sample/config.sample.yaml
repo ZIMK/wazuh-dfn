@@ -1,0 +1,53 @@
+# Wazuh DFN Service Configuration
+
+# Required DFN settings - these must be configured
+dfn:
+  dfn_id: "12345678-abcd-efgh-ijkl-01234567890ab" # DFN customer ID
+  dfn_broker: "kafka.example.org:443" # DFN Kafka broker address
+  dfn_ca: "/opt/wazuh-dfn/certs/dfn-ca.pem" # Path to CA certificate for Kafka SSL
+  dfn_cert: "/opt/wazuh-dfn/certs/dfn-cert.pem" # Path to client certificate for Kafka SSL
+  dfn_key: "/opt/wazuh-dfn/certs/dfn-key.pem" # Path to client key for Kafka SSL
+
+# Logging configuration
+log:
+  console: true # Enable console logging
+  file_path: "/opt/wazuh-dfn/logs/wazuh-dfn.log" # Path to log file
+  interval: 600 # Statistics logging interval in seconds
+  level: "INFO" # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Miscellaneous settings
+misc:
+  num_workers: 10 # Number of worker threads for processing alerts
+  own_network: # Optional: Network CIDR for own network filtering (e.g. "10.0.0.0/8")
+
+# Wazuh-specific settings
+wazuh:
+  json_alert_file: "/var/ossec/logs/alerts/alerts.json" # Full path to the JSON alerts file to monitor
+  json_alert_prefix: '{"timestamp"' # Expected prefix of JSON alert lines
+  json_alert_suffix: "}" # Expected suffix of JSON alert lines
+  json_alert_file_poll_interval: 1.0 # Interval in seconds between JSON alert file checks
+  unix_socket_path: "/var/ossec/queue/sockets/queue" # Path to Wazuh socket for receiving alerts
+  max_event_size: 65535 # Maximum size of events to process
+  max_retries: 5 # Maximum number of retries
+  retry_interval: 5 # Interval between retries in seconds
+
+# Optional Kafka settings - only change if needed
+kafka:
+  timeout: 60 # Kafka request timeout in seconds
+  retry_interval: 5 # Interval between retries in seconds
+  connection_max_retries: 5 # Maximum number of connection retries
+  send_max_retries: 5 # Maximum number of send retries
+  max_wait_time: 60 # Maximum wait time between retries in seconds
+  admin_timeout: 10 # Timeout for admin operations in seconds
+  service_retry_interval: 5 # Interval between service retries in seconds
+  producer_config: # Producer-specific configuration
+    request.timeout.ms: 60000
+    connections.max.idle.ms: 540000 # 9 minutes
+    socket.keepalive.enable: true
+    linger.ms: 1000 # Controls how long to wait before sending a batch
+    batch.size: 16384 # Maximum size of a batch in bytes
+    batch.num.messages: 100 # Maximum number of messages in a batch
+    enable.idempotence: true # Ensure exactly-once delivery
+    acks: "all" # Wait for all replicas
+    statistics.interval.ms: 0 # Disable stats for better performance
+    log_level: 0 # Only log errors
