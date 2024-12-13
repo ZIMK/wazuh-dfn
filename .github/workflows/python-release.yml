@@ -25,7 +25,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python build utilities
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install flit
+          pip install bump-my-version
       - name: Build
         run: flit build --no-use-vcs
       - name: upgrade & push version
