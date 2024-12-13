@@ -1,0 +1,29 @@
+[tool.bumpversion]
+current_version = "0.8.1"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+search = "{current_version}"
+replace = "{new_version}"
+regex = false
+ignore_missing_version = false
+ignore_missing_files = false
+tag = true
+sign_tags = false
+tag_name = "v{new_version}"
+tag_message = "[release] python {current_version} → {new_version}"
+allow_dirty = true
+commit = true
+message = "[release] python {current_version} → {new_version}"
+commit_args = ""
+setup_hooks = []
+pre_commit_hooks = []
+post_commit_hooks = []
+
+[[tool.bumpversion.files]]
+filename = "src/wazuh_dfn/__init__.py"
+
+[[tool.bumpversion.files]]
+filename = "src/wazuh_dfn/services/__init__.py"
+
+[[tool.bumpversion.files]]
+filename = "src/wazuh_dfn/services/handlers/__init__.py"

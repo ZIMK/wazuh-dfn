@@ -50,7 +50,8 @@ class SyslogHandler:
         try:
             self._process_fail2ban_alert(alert)
         except Exception as error:
-            LOGGER.error(f"Error processing Syslog alert: {alert['id']}: {str(error)}", exc_info=True)
+            alert_id = alert.get("id", "Unknown")
+            LOGGER.error(f"Error processing Syslog alert: {alert_id}: {str(error)}", exc_info=True)
 
     def _process_fail2ban_alert(self, alert: Dict[str, Any]) -> None:
         """Process fail2ban-specific alert data.

@@ -39,7 +39,8 @@ class WindowsHandler:
         try:
             self._process_windows_alert(alert)
         except Exception as error:
-            LOGGER.error(f"Error processing Windows alert: {alert['id']}: {str(error)}", exc_info=True)
+            alert_id = alert.get("id", "Unknown")
+            LOGGER.error(f"Error processing Windows alert: {alert_id}: {str(error)}", exc_info=True)
 
     def _process_windows_alert(self, alert: dict) -> None:
         """Process Windows-specific alert data.

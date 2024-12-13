@@ -261,7 +261,7 @@ def test_windows_handler_error_logging(mock_logger, windows_handler):
     windows_handler.process_alert(invalid_alert)
 
     # Verify error was logged
-    mock_logger.error.assert_called_with("Error processing Windows alert: 'providerName'", exc_info=True)
+    mock_logger.error.assert_called_with("Error processing Windows alert: Unknown: 'providerName'", exc_info=True)
 
 
 def test_windows_handler_wazuh_integration(windows_handler, sample_4625_alert):
