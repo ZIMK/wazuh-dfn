@@ -385,13 +385,6 @@ ls -l /opt/wazuh-dfn/certs/
 sudo tail -n 100 /opt/wazuh-dfn/logs/wazuh-dfn.log
 ```
 
-## Support
-
-For technical support or questions, please contact:
-
-- DFN-CERT Services GmbH for Kafka-related issues
-- Your local Wazuh support for agent-related questions
-
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 - see the LICENSE file for details.
