@@ -28,7 +28,7 @@ wazuh:
   json_alert_file_poll_interval: 1.0 # Interval in seconds between JSON alert file checks
   unix_socket_path: "/var/ossec/queue/sockets/queue" # Path to Wazuh socket for receiving alerts
   max_event_size: 65535 # Maximum size of events to process
-  max_retries: 5 # Maximum number of retries
+  max_retries: 42 # Maximum number of retries
   retry_interval: 5 # Interval between retries in seconds
 
 # Optional Kafka settings - only change if needed

@@ -60,7 +60,7 @@ class WazuhConfig:
         },
     )
     max_retries: int = field(
-        default=5,
+        default=42,
         metadata={
             "help": "Maximum number of retries",
             "env_var": "WAZUH_MAX_RETRIES",

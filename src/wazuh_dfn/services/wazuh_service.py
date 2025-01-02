@@ -3,6 +3,7 @@
 import json
 import logging
 import sys
+import threading
 import time
 from socket import SOCK_DGRAM
 from socket import error as socket_error
@@ -45,6 +46,9 @@ class WazuhService:
         WazuhConfigValidator.validate(config)
         self.config = config
         self._socket: Optional[socket] = None
+
+        self._lock = threading.Lock()
+        self._is_reconnecting = False
 
     def start(self) -> None:
         """Start the Wazuh service and verify connection.
@@ -100,6 +104,8 @@ class WazuhService:
                 # For Unix systems, use the socket path directly
                 self._socket.connect(self.config.unix_socket_path)
 
+            LOGGER.info("Connected to Wazuh server")
+            self._is_reconnecting = False
         except Exception as e:
             LOGGER.error(f"Failed to connect to Wazuh server: {e}")
             if self._socket:
@@ -179,17 +185,22 @@ class WazuhService:
             socket_error: If reconnection to socket fails
             Exception: For other connection-related errors
         """
-        try:
-            if self._socket:
+        with self._lock:  # Ensure only one thread can execute this at a time
+            if not self._is_reconnecting:  # Check if a reconnect attempt is already in progress
+                self._is_reconnecting = True  # Set the flag
                 try:
-                    self._socket.close()
-                except Exception:
-                    pass  # Ignore errors during close
-                self._socket = None
-            self.connect()
-        except Exception as e:
-            LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
-            raise
+                    if self._socket:
+                        try:
+                            self._socket.close()
+                        except Exception:
+                            pass  # Ignore errors during close
+                        self._socket = None
+                    self.connect()
+                except Exception as e:
+                    LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
+                    raise
+                finally:
+                    self._is_reconnecting = False  # Reset the flag after the attempt
 
     def _send(
         self,
@@ -267,23 +278,31 @@ class WazuhService:
             LOGGER.debug(f"Message size exceeds the maximum allowed limit of {self.config.max_event_size} bytes.")
 
         LOGGER.debug(event)
-        max_attempts = 3
+        max_attempts = self.config.max_retries
 
         for attempt in range(max_attempts):
             try:
                 if not self._socket:
-                    self.connect()
+                    with self._lock:
+                        if not self._is_reconnecting:
+                            self._is_reconnecting = True
+                            self.connect()  # Only the first worker will call connect
+                        else:
+                            while self._is_reconnecting:  # Wait for the reconnect to finish
+                                time.sleep(1)
                 self._socket.send(event.encode())
                 return
             except socket_error as e:
                 error_code = getattr(e, "errno", None)
                 if attempt < max_attempts - 1 and error_code in (107, 32, 9, 111):
                     LOGGER.warning(f"Socket disconnected (attempt {attempt + 1}/{max_attempts}): {e}")
-                    time.sleep(2 * (2**attempt))  # Exponential backoff
+                    wait_time = min(self.config.retry_interval * (2**attempt), 30)
+                    time.sleep(wait_time)
+
                     self._try_reconnect()
                 else:
                     if error_code == 111:
-                        LOGGER.error("Wazuh is not running")
+                        LOGGER.error(f"Failed to send event after {max_attempts} attempts: Wazuh is not running")
                         sys.exit(6)
                     LOGGER.error(f"Failed to send event: {e}")
                     raise
