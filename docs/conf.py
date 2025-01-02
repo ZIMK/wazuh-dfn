@@ -85,8 +85,9 @@ html_static_path = ["_static"]
 repo_url = "https://github.com/ZIMK/wazuh-dfn"
 html_theme_options = {
     "source_repository": repo_url,
-    "source_branch": "main",
-    "source_directory": "src/",
+    "source_branch": "gh-pages",
+    "source_directory": "_sources/",
+    "top_of_page_buttons": [],
     "light_css_variables": {
         "color-content-foreground": "#4C4C4C",
         "color-foreground-primary": "4C4C4C",
