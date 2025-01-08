@@ -52,12 +52,9 @@ class JSONReader:
                 self.last_check_time = current_time
                 self.check_rotation()
 
-            # Read data until we reach the target file size
-            while True:
-                data = self.file_queue.read(JSONQueue.READ_CHUNK_SIZE)
-                if not data:
-                    break
-
+            # Read data until EOF
+            data = self.file_queue.read()
+            if data:
                 # Process data and collect all alerts
                 new_alerts = self.json_queue.add_data(data)
                 if new_alerts:

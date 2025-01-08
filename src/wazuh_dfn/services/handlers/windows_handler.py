@@ -90,7 +90,10 @@ class WindowsHandler:
                         wz_timestamp=alert["timestamp"],
                     )
                 else:
-                    LOGGER.error("Failed to send Windows alert to Kafka")
+                    alert_id = alert.get("id", "Unknown")
+                    LOGGER.error(f"Failed to send windows alert to Kafka {alert_id}")
+        else:
+            LOGGER.debug("No windows alert to process")
 
     def _create_message_data(self, alert: dict, event_id: str) -> dict:
         """Create message data for Kafka.

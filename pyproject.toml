@@ -213,6 +213,9 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=src/wazuh_dfn --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html --cov-fail-under=80 --junitxml=test-results.xml --cache-clear"
+addopts = "--cov=src/wazuh_dfn --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html --cov-fail-under=80 --junitxml=test-results.xml --cache-clear -m 'not performance'"
 testpaths = ["test"]
 python_files = ["test_*.py"]
+markers = [
+    "performance(threshold, description): marks tests as performance tests with threshold and description parameters",
+]

@@ -77,31 +77,27 @@ class SyslogHandler:
                 LOGGER.debug("No source IP found in fail2ban alert")
                 return
 
-            try:
-                # Check if IP is internal (only if own_network is configured)
-                if self.own_network and not self._is_global_ip(source_ip):
-                    LOGGER.debug(f"Skipping fail2ban alert from internal IP: {source_ip}")
-                    return
+            # Check if IP is internal (only if own_network is configured)
+            if self.own_network and not self._is_global_ip(source_ip):
+                LOGGER.debug(f"Skipping fail2ban alert from internal IP: {source_ip}")
+                return
 
-                # Create message data for Kafka
-                message_data = self._create_message_data(alert)
+            # Create message data for Kafka
+            message_data = self._create_message_data(alert)
 
-                # Send to Kafka first
-                result = self.kafka_service.send_message(message_data)
-                if result:
-                    LOGGER.debug(f"Fail2ban alert sent successfully: {result}")
-                    # Only send to Wazuh if Kafka succeeded
-                    self.wazuh_service.send_event(
-                        alert=alert,
-                        event_format="syslog5424-json",
-                        wz_timestamp=alert["timestamp"],
-                    )
-                else:
-                    LOGGER.error("Failed to send fail2ban alert to Kafka")
-
-            except ValueError as e:
-                LOGGER.error(f"Invalid IP address format: {source_ip} - {e}")
-                self.wazuh_service.send_error({"error": f"Invalid IP address format: {source_ip}"})
+            # Send to Kafka first
+            result = self.kafka_service.send_message(message_data)
+            if result:
+                LOGGER.debug(f"Fail2ban alert sent successfully: {result}")
+                # Only send to Wazuh if Kafka succeeded
+                self.wazuh_service.send_event(
+                    alert=alert,
+                    event_format="syslog5424-json",
+                    wz_timestamp=alert["timestamp"],
+                )
+            else:
+                alert_id = alert.get("id", "Unknown")
+                LOGGER.error(f"Failed to send fail2ban alert to Kafka {alert_id}")
         else:
             LOGGER.debug("No fail2ban alert to process")
 

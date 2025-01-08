@@ -40,9 +40,9 @@ class FileQueue:
                 self.fp = None
             return False
 
-    def read(self, size: int) -> Optional[bytes]:
+    def read(self) -> Optional[bytes]:
         try:
-            return self.fp.read(size)
+            return self.fp.read()
         except Exception as e:
             logger.error(f"Error reading file: {str(e)}")
             return None
