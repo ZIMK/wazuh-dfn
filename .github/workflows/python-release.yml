@@ -29,8 +29,6 @@ jobs:
           pip install -r requirements.txt
           pip install flit
           pip install bump-my-version
-      - name: Build
-        run: flit build --no-use-vcs
       - name: upgrade & push version
         id: upgrade
         run: |
@@ -42,7 +40,8 @@ jobs:
           git push
           git push origin "$tag_name"
           echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
-
+      - name: Build
+        run: flit build --no-use-vcs
       - name: Github Release
         uses: softprops/action-gh-release@v2
         with:
