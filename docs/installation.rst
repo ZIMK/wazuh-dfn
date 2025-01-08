@@ -31,8 +31,12 @@ Rocky Linux 9
    # Create virtual environment
    python3.12 -m virtualenv /opt/wazuh-dfn/venv
 
-   # Install wazuh-dfn
+   # Install wazuh-dfn (if you have the package uploaded to a local repository)
    sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh-dfn
+
+   # If curl and jq are installed you can download and install latest release file with:
+   curl -s https://api.github.com/repos/ZIMK/wazuh-dfn/releases/latest | jq --raw-output '.assets[1] | .browser_download_url' | xargs curl -L -o wazuh_dfn-latest.tar.gz
+   sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh_dfn-latest.tar.gz
 
 Ubuntu 24.04
 ~~~~~~~~~~~~
@@ -50,8 +54,12 @@ Ubuntu 24.04
    # Create virtual environment
    python3.12 -m venv /opt/wazuh-dfn/venv
 
-   # Install wazuh-dfn
+   # Install wazuh-dfn (if you have the package uploaded to a local repository)
    sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh-dfn
+
+   # If curl and jq are installed you can download and install latest release file with:
+   curl -s https://api.github.com/repos/ZIMK/wazuh-dfn/releases/latest | jq --raw-output '.assets[1] | .browser_download_url' | xargs curl -L -o wazuh_dfn-latest.tar.gz
+   sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh_dfn-latest.tar.gz
 
 Configuration
 -------------

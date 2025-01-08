@@ -150,7 +150,7 @@ def test_alerts_worker_service_logging(
     alert_queue.join()
     time.sleep(0.1)  # Give a small grace period
     shutdown_event.set()
-    time.sleep(1)  # Allow shutdown to propagate
+    time.sleep(1.5)  # Allow shutdown to propagate
     assert not service_thread.is_alive(), "Service thread did not shut down properly"
 
 
@@ -196,7 +196,7 @@ def test_alerts_worker_service_shutdown(alerts_worker_service, alert_queue, shut
     shutdown_event.set()
 
     # Wait for shutdown
-    time.sleep(1)
+    time.sleep(1.5)
 
     # Verify clean shutdown
     assert all(not worker.is_alive() for worker in alerts_worker_service.workers if worker)

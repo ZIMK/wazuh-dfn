@@ -96,7 +96,7 @@ class LoggingService:
         try:
             # Log queue size
             queue_size = self.alert_queue.qsize()
-            LOGGER.info(f"Monitoring: Number of objects in alert queue: {queue_size}")
+            LOGGER.info(f"Number of objects in alert queue: {queue_size}")
 
             try:
                 # Log memory usage
@@ -125,8 +125,8 @@ class LoggingService:
                 LOGGER.warning("Alerts worker service is not initialized")
 
             # Log latest queue put time from observer
-            if self.alerts_watcher_service and self.alerts_watcher_service.monitor:
-                latest_queue_put = self.alerts_watcher_service.monitor.latest_queue_put
+            if self.alerts_watcher_service:
+                latest_queue_put = self.alerts_watcher_service.latest_queue_put
                 if latest_queue_put:
                     LOGGER.info(f"Last alert queued at: {latest_queue_put.strftime('%Y-%m-%d %H:%M:%S')}")
                 else:

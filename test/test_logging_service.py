@@ -91,7 +91,7 @@ def test_logging_service_log_stats(logging_service, caplog):
         logging_service._log_stats()
 
         # Verify logs
-        assert "Monitoring: Number of objects in alert queue" in caplog.text
+        assert "Number of objects in alert queue" in caplog.text
         assert "Current memory usage" in caplog.text
         assert "Current open files" in caplog.text
         assert "Kafka producer is alive" in caplog.text
@@ -103,13 +103,13 @@ def test_logging_service_log_stats_no_observer(logging_service, caplog):
     """Test LoggingService statistics logging without observer."""
     with caplog.at_level(logging.INFO):
         # Set monitor to None
-        logging_service.alerts_watcher_service.monitor = None
+        logging_service.alerts_watcher_service.latest_queue_put = None
 
         # Call log stats
         logging_service._log_stats()
 
         # Verify only basic stats are logged
-        assert "Monitoring: Number of objects in alert queue" in caplog.text
+        assert "Number of objects in alert queue" in caplog.text
         assert "Current memory usage" in caplog.text
         assert "Current open files" in caplog.text
         assert "Last alert queued at" not in caplog.text

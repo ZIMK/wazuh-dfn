@@ -1,8 +1,13 @@
 """Alerts worker service module for processing alerts from the queue."""
 
+import json
 import logging
+import os
+import secrets
+import tempfile
 import threading
 import time
+from datetime import datetime
 from queue import Empty, Queue
 from typing import Optional
 
@@ -88,15 +93,42 @@ class AlertsWorkerService:
             try:
                 # Get alert with timeout to allow checking shutdown_event
                 alert = self.alert_queue.get(timeout=1)
+
                 try:
                     self.alerts_service.process_alert(alert)
                     self._last_processed_time = time.time()
                 except Exception as e:
                     LOGGER.error(f"Error processing alert: {e}", exc_info=True)
+                    # Write alert to /tmp
+                    tmp_file = self._dump_alert(alert)
+                    if tmp_file and os.path.exists(tmp_file):
+                        LOGGER.debug(f"Alert written to {tmp_file}")
+                        os.remove(tmp_file)
                 finally:
                     self.alert_queue.task_done()
             except Empty:
+                time.sleep(0.1)  # Sleep briefly to avoid busy waiting
                 continue
+
+        LOGGER.info("Stopping worker thread")
+
+    def _dump_alert(self, alert: dict) -> str | None:
+        try:
+            alert_id = alert.get("id", "unknown")
+            random_suffix = str(secrets.randbelow(999999) + 100000)
+            alert_suffix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{random_suffix}"
+
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w", delete=False, prefix="dfn-alert-", suffix=f"_{alert_id}_{alert_suffix}.json"
+            ) as tmp_file:
+                # Write the alert as JSON to the temporary file
+                json.dump(alert, tmp_file)
+                # Return the name of the temporary file
+                return tmp_file.name
+        except Exception as e:
+            LOGGER.error(f"Error writing alert to tmp file: {str(e)}")
+            return None
 
     def _shutdown(self) -> None:
         """Shutdown the alerts worker service."""
