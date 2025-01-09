@@ -276,7 +276,7 @@ def setup_service(config: Config) -> None:
             alerts_service=alerts_service,
             shutdown_event=shutdown_event,
         )
-        LOGGER.debug("Initializing ObserverService...")
+        LOGGER.debug("Initializing AlertsWatcherService...")
         alerts_watcher_service = AlertsWatcherService(
             config=config.wazuh,
             alert_queue=alert_queue,
@@ -315,11 +315,11 @@ def setup_service(config: Config) -> None:
         alerts_worker_thread.start()
 
         # Start observer service
-        LOGGER.debug("Starting ObserverService...")
+        LOGGER.debug("Starting AlertsWatcherService...")
         observer_thread = threading.Thread(
             target=alerts_watcher_service.start,
             daemon=True,
-            name="ObserverService",
+            name="AlertsWatcherService",
         )
         service_threads.append(observer_thread)
         observer_thread.start()
