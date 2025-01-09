@@ -694,3 +694,40 @@ def test_file_monitor_utf8_boundary():
 
         reader.close()
     os.unlink(file_path)
+
+
+def test_json_queue_discarded_bytes_logging(caplog):
+    """Test JSONQueue logging of discarded bytes."""
+    from wazuh_dfn.services.json_queue import JSONQueue
+
+    caplog.set_level(logging.WARNING)
+
+    queue = JSONQueue()
+
+    # Test with invalid UTF-8 sequences
+    test_data = (
+        b'{"timestamp":"2024-01-01"}\n'  # Valid JSON
+        b"\xfe\xff"  # Invalid UTF-8
+        b"\xe0\x80"  # Invalid UTF-8
+        b'{"timestamp":"2024-01-02"}\n'  # Valid JSON
+    )
+
+    queue.add_data(test_data)
+
+    # Check logs for discarded bytes - should only have summary log
+    discarded_logs = [r for r in caplog.records if "Discarded" in r.message]
+    assert len(discarded_logs) == 1  # Only one summary log expected
+
+    # Verify the summary log content
+    assert "bytes in this round" in discarded_logs[0].message
+    assert "total discarded: " in discarded_logs[0].message
+    assert "hex: [fe ff e0 80]" in discarded_logs[0].message.lower()
+    assert "content:" in discarded_logs[0].message
+
+    # Verify both valid JSONs were processed
+    queue.add_data(b'{"timestamp":"2024-01-03"}\n')  # Another valid JSON
+    assert queue._discarded_bytes > 0  # Counter should be tracking discards
+
+    # Test reset clears the counter
+    queue.reset()
+    assert queue._discarded_bytes == 0

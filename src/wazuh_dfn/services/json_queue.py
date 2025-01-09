@@ -11,6 +11,16 @@ class JSONQueue:
         self.alert_prefix = alert_prefix.encode("utf-8")
         self.error_count = 0
         self.max_error_count = 100
+        self._discarded_bytes = 0  # Add counter for discarded bytes
+
+    def _format_bytes_for_log(self, data: bytes, max_len: int = 100) -> str:
+        """Format bytes for logging, showing both hex and printable chars."""
+        if len(data) > max_len:
+            data = data[:max_len] + b"..."
+        hex_str = " ".join(f"{b:02x}" for b in data)
+        # Replace non-printable chars with dots
+        ascii_str = "".join(chr(b) if 32 <= b <= 126 else "." for b in data)
+        return f"hex: [{hex_str}], ascii: [{ascii_str}]"
 
     def find_json_end(self, text: str, start: int) -> Optional[int]:
         """Find the end position of a JSON object, handling nested structures."""
@@ -78,10 +88,19 @@ class JSONQueue:
             logger.debug(f"JSON decode error: {str(e)}")
             return None
 
+    def _get_position_context(self, position: int, initial_size: int) -> str:
+        if position < initial_size:
+            return f"at beginning portion (position {position} of {initial_size} new bytes)"
+        elif position >= len(self.buffer) - initial_size:
+            return "at end portion"
+        else:
+            return "in middle portion (from previous buffer)"
+
     def add_data(self, new_data: bytes) -> List[dict]:
         initial_size = len(new_data)
         logger.debug(f"Adding {initial_size} bytes to buffer (current buffer size: {len(self.buffer)})")
         self.buffer.extend(new_data)
+        self._initial_size = initial_size  # Store for position context
         result = self._process_buffer()
         if result:
             processed_size = sum(len(json.dumps(obj).encode("utf-8")) for obj in result)
@@ -90,6 +109,7 @@ class JSONQueue:
 
     def _process_buffer(self) -> List[dict]:
         complete_objects = []
+        discarded_this_round = bytearray()  # Track discarded content
         try:
             # Find valid UTF-8 sequences and build clean buffer
             clean_buffer = bytearray()
@@ -123,7 +143,13 @@ class JSONQueue:
                     elif (self.buffer[i] & 0xF8) == 0xF0:  # 4-byte sequence
                         length = 4
                     else:  # Invalid UTF-8 start byte
-                        logger.warning(f"Invalid UTF-8 start byte at position {i}: {hex(self.buffer[i])}")
+                        context = self._get_position_context(i, self._initial_size)
+                        discarded_byte = self.buffer[i : i + 1]
+                        discarded_this_round.extend(discarded_byte)
+                        logger.warning(
+                            f"Invalid UTF-8 start byte {context}: {hex(self.buffer[i])}, "
+                            f"content: {self._format_bytes_for_log(discarded_byte)}"
+                        )
                         i += 1
                         continue
 
@@ -136,6 +162,12 @@ class JSONQueue:
                             i += length
                         except UnicodeDecodeError:
                             # Invalid sequence, skip the first byte
+                            discarded_byte = self.buffer[i : i + 1]
+                            discarded_this_round.extend(discarded_byte)
+                            logger.warning(
+                                f"Invalid UTF-8 sequence at {self._get_position_context(i, self._initial_size)}, "
+                                f"skipping byte: {self._format_bytes_for_log(discarded_byte)}"
+                            )
                             i += 1
                     else:
                         # Not enough bytes for complete sequence
@@ -191,13 +223,30 @@ class JSONQueue:
             else:
                 self.buffer.clear()
 
+            # At the end of processing, log discarded bytes
+            if len(discarded_this_round) > 0:
+                self._discarded_bytes += len(discarded_this_round)
+                logger.warning(
+                    f"Discarded {len(discarded_this_round)} bytes in this round "
+                    f"(total discarded: {self._discarded_bytes}), "
+                    f"content: {self._format_bytes_for_log(discarded_this_round)}"
+                )
+
         except Exception as e:
             logger.error(f"Error processing buffer: {str(e)}")
             if not isinstance(e, UnicodeDecodeError):
                 self.error_count += 1
+            # Track discarded bytes from complete failure
+            discarded_size = len(self.buffer)
+            self._discarded_bytes += discarded_size
+            logger.warning(
+                f"Discarded entire buffer of {discarded_size} bytes due to error, "
+                f"content: {self._format_bytes_for_log(bytes(self.buffer))}"
+            )
 
         return complete_objects
 
     def reset(self):
         self.buffer.clear()
         self.error_count = 0
+        self._discarded_bytes = 0

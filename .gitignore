@@ -197,3 +197,4 @@ pyrightconfig.json
 .env
 test-results.xml
 .scannerwork/
+test_alerts.json

@@ -177,10 +177,11 @@ class MockKafkaService(KafkaService):
         return True
 
 
-class AlertWriter:
+class AlertWriter(threading.Thread):
     """Writes alerts to file at specified rate."""
 
     def __init__(self, file_path: str, alerts_per_second: int):
+        super().__init__()
         self.file_path = file_path
         self.alerts_per_second = alerts_per_second
         self.running = False
@@ -192,30 +193,28 @@ class AlertWriter:
         self._file = None
         self._force_quit_timer = None
         self.newline_size = 2 if platform.system() == "Windows" else 1  # CRLF vs LF
+        self._lock = threading.Lock()
         LOGGER.info(f"Initializing AlertWriter with target rate: {alerts_per_second}/s")
         LOGGER.debug(f"Using newline size: {self.newline_size} bytes")
 
-    def start(self):
+    def run(self):
         """Start writing alerts to file with force quit timer."""
         self.running = True
-        self._file = open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size)
-        # Set force quit timer
-        self._force_quit_timer = threading.Timer(70, self._force_quit)  # Force quit after 70s
-        self._force_quit_timer.daemon = True
-        self._force_quit_timer.start()
-        try:
-            while not self._stop_event.is_set():
-                batch_start = time.time()
-                self._write_batch(self._file)
-                elapsed = time.time() - batch_start
-                if elapsed < 1.0:
-                    time.sleep(1.0 - elapsed)
-        finally:
-            if self._force_quit_timer and self._force_quit_timer.is_alive():
-                self._force_quit_timer.cancel()
-            if self._file:
-                self._file.close()
-                self._file = None
+        with open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size) as self._file:
+            # Set force quit timer
+            self._force_quit_timer = threading.Timer(70, self._force_quit)  # Force quit after 70s
+            self._force_quit_timer.daemon = True
+            self._force_quit_timer.start()
+            try:
+                while not self._stop_event.is_set():
+                    batch_start = time.time()
+                    self._write_batch(self._file)
+                    elapsed = time.time() - batch_start
+                    if elapsed < 1.0:
+                        time.sleep(1.0 - elapsed)
+            finally:
+                if self._force_quit_timer and self._force_quit_timer.is_alive():
+                    self._force_quit_timer.cancel()
 
     def _write_batch(self, f: TextIO):
         """Write one second worth of alerts."""
@@ -231,7 +230,11 @@ class AlertWriter:
             self.total_bytes += json_bytes - 1 + self.newline_size  # -1 for \n, +newline_size for actual ending
             self.newline_bytes += self.newline_size
             self.alert_count += 1
-            f.write(alert_str)
+            with self._lock:
+                if f and not f.closed:
+                    f.write(alert_str)
+                else:
+                    raise ValueError("File handle is closed or invalid")
 
         write_time = time.time() - write_start
 
@@ -245,9 +248,6 @@ class AlertWriter:
         """Stop writing alerts."""
         self._stop_event.set()
         self.running = False
-        if self._file:
-            self._file.close()
-            self._file = None
 
     def _force_quit(self):
         """Force quit the process if it's stuck."""
@@ -314,8 +314,8 @@ def test_mixed_alerts_performance():  # NOSONAR
 
         # Configure and start alert writer
         writer = AlertWriter(str(alert_file), alerts_per_second)
-        writer_thread = threading.Thread(target=writer.start)
-        writer_thread.start()
+        writer.start()
+        writer.join()  # Wait for thread to complete
 
         # Configure watcher service
         config = WazuhConfig()
@@ -379,7 +379,7 @@ def test_mixed_alerts_performance():  # NOSONAR
 
                 # 1. Stop writer with timeout
                 writer.stop()
-                writer_thread.join(timeout=2)
+                writer.join(timeout=2)
 
                 # 2. Force stop watcher
                 watcher_shutdown.set()
@@ -487,7 +487,7 @@ def test_mixed_alerts_performance():  # NOSONAR
                     LOGGER.error(f"Error closing json reader: {e}")
 
             # Force thread termination if needed
-            if writer_thread.is_alive():
+            if writer.is_alive():
                 LOGGER.warning("Writer thread still alive during cleanup")
             if watcher_thread.is_alive():
                 LOGGER.warning("Watcher thread still alive during cleanup")
