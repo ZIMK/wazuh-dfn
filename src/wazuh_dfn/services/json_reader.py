@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -59,7 +60,25 @@ class JSONReader:
 
     def read_file(self):
         try:
-            return self.fp.read()
+            # Get current position and file size
+            current_pos = self.fp.tell()
+            self.fp.seek(0, os.SEEK_END)
+            file_size = self.fp.tell()
+            self.fp.seek(current_pos)
+
+            # Calculate remaining bytes
+            remaining = file_size - current_pos
+            if remaining > 0:
+                data = self.fp.read()
+                read_size = len(data) if data else 0
+                if read_size < remaining:
+                    logger.warning(
+                        f"Data loss: Read {read_size} of {remaining} available bytes at position {current_pos}"
+                    )
+                else:
+                    logger.debug(f"Read {read_size} bytes from file at position {current_pos}")
+                return data
+            return None
         except Exception as e:
             logger.error(f"Error reading file: {str(e)}")
             return None
@@ -76,9 +95,18 @@ class JSONReader:
 
             data = self.read_file()
             if data:
+                bytes_read = len(data)
+                logger.debug(f"Processing {bytes_read} bytes of data")
                 new_alerts = self.json_queue.add_data(data)
                 if new_alerts:
+                    total_alert_size = sum(len(json.dumps(alert).encode("utf-8")) for alert in new_alerts)
                     alerts.extend(new_alerts)
+                    logger.debug(f"Processed {total_alert_size}/{bytes_read} bytes into {len(new_alerts)} alerts")
+                else:
+                    logger.warning(f"No alerts found in {bytes_read} bytes of data: {data.decode("utf-8")}")
+            elif data is not None:
+                logger.warning("Empty data read from file, possible end of file or truncation")
+
         except Exception as e:
             logger.error(f"Error reading file: {str(e)}")
 

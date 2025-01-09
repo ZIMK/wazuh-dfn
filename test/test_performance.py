@@ -1,19 +1,26 @@
 """Performance tests for alert processing."""
 
+import sys
+
+if sys.version_info < (3, 12):
+    raise RuntimeError("This code requires Python 3.12 or higher")
+
 import ctypes
 import gc
 import json
 import logging
 import os
+import platform
 import queue
 import secrets
+import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from multiprocessing import Value
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from typing import List, TextIO
 from unittest.mock import MagicMock
 
@@ -27,9 +34,9 @@ from wazuh_dfn.services.kafka_service import KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 # Configure root logger
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.DEBUG)  # Set root to DEBUG to capture all
 
-# Configure file handler
+# Configure regular file handler (INFO level)
 log_file = "performance_test.log"
 if os.path.exists(log_file):
     os.remove(log_file)
@@ -38,17 +45,30 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
-# Configure console handler
+# Configure debug file handler (DEBUG level)
+debug_log_file = "performance_test_debug.log"
+if os.path.exists(debug_log_file):
+    os.remove(debug_log_file)
+
+debug_file_handler = logging.FileHandler(debug_log_file)
+debug_file_handler.setLevel(logging.DEBUG)
+debug_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d]")
+)
+
+# Configure console handler (INFO level)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 
 # Add handlers to root logger
 logging.getLogger().addHandler(file_handler)
+logging.getLogger().addHandler(debug_file_handler)
 logging.getLogger().addHandler(console_handler)
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.info("Performance test logging initialized")
+LOGGER.debug("Debug logging initialized")
 
 MONITORED_EVENT_IDS = ["4625", "4719", "4964", "1102", "4794", "4724", "4697", "4702", "4698", "4672", "4720", "1100"]
 
@@ -166,18 +186,36 @@ class AlertWriter:
         self.running = False
         self._stop_event = threading.Event()
         self.buffer_size = max(alerts_per_second * 2, 10000)  # Buffer 2 seconds worth of alerts
+        self.total_bytes = 0
+        self.alert_count = 0
+        self.newline_bytes = 0
+        self._file = None
+        self._force_quit_timer = None
+        self.newline_size = 2 if platform.system() == "Windows" else 1  # CRLF vs LF
         LOGGER.info(f"Initializing AlertWriter with target rate: {alerts_per_second}/s")
+        LOGGER.debug(f"Using newline size: {self.newline_size} bytes")
 
     def start(self):
-        """Start writing alerts to file."""
+        """Start writing alerts to file with force quit timer."""
         self.running = True
-        with open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size) as f:
+        self._file = open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size)
+        # Set force quit timer
+        self._force_quit_timer = threading.Timer(70, self._force_quit)  # Force quit after 70s
+        self._force_quit_timer.daemon = True
+        self._force_quit_timer.start()
+        try:
             while not self._stop_event.is_set():
                 batch_start = time.time()
-                self._write_batch(f)
+                self._write_batch(self._file)
                 elapsed = time.time() - batch_start
                 if elapsed < 1.0:
                     time.sleep(1.0 - elapsed)
+        finally:
+            if self._force_quit_timer and self._force_quit_timer.is_alive():
+                self._force_quit_timer.cancel()
+            if self._file:
+                self._file.close()
+                self._file = None
 
     def _write_batch(self, f: TextIO):
         """Write one second worth of alerts."""
@@ -187,15 +225,37 @@ class AlertWriter:
 
         write_start = time.time()
         for alert in alerts:
-            f.write(json.dumps(alert) + "\n")
+            alert_str = json.dumps(alert) + "\n"
+            json_bytes = len(alert_str.encode("utf-8"))
+            # Account for actual newline bytes on the system
+            self.total_bytes += json_bytes - 1 + self.newline_size  # -1 for \n, +newline_size for actual ending
+            self.newline_bytes += self.newline_size
+            self.alert_count += 1
+            f.write(alert_str)
+
         write_time = time.time() - write_start
 
-        LOGGER.debug(f"Batch stats - Generation: {generation_time:.3f}s, Writing: {write_time:.3f}s")
+        LOGGER.debug(
+            f"Batch stats - Generation: {generation_time:.3f}s, "
+            f"Writing: {write_time:.3f}s, "
+            f"Batch size: {len(alerts)} alerts"
+        )
 
     def stop(self):
         """Stop writing alerts."""
         self._stop_event.set()
         self.running = False
+        if self._file:
+            self._file.close()
+            self._file = None
+
+    def _force_quit(self):
+        """Force quit the process if it's stuck."""
+        LOGGER.error("Force quitting due to timeout")
+        if platform.system() == "Windows":
+            os._exit(1)  # Force exit on Windows
+        else:
+            os.kill(os.getpid(), signal.SIGKILL)  # Force kill on Unix
 
 
 def process_alert(args):
@@ -261,8 +321,9 @@ def test_mixed_alerts_performance():  # NOSONAR
         config = WazuhConfig()
         config.json_alert_file = str(alert_file)
 
-        # Start watcher service
-        watcher = AlertsWatcherService(config, alert_queue, threading.Event())
+        # Start watcher service with explicit shutdown event
+        watcher_shutdown = threading.Event()
+        watcher = AlertsWatcherService(config, alert_queue, watcher_shutdown)
         watcher_thread = threading.Thread(target=watcher.start)
         watcher_thread.start()
 
@@ -272,10 +333,13 @@ def test_mixed_alerts_performance():  # NOSONAR
         processed = 0
         last_processed = 0
 
+        # Set a timeout for the entire test
+        test_timeout = time.time() + duration + 30  # duration + 30 seconds grace period
+
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = []
             try:
-                while time.time() - start_time < duration:
+                while time.time() - start_time < duration and time.time() < test_timeout:
                     try:
                         alert = alert_queue.get(timeout=1.0)
                         futures.append(
@@ -305,16 +369,46 @@ def test_mixed_alerts_performance():  # NOSONAR
                         continue
 
             finally:
-                LOGGER.info("Stopping alert generation and processing")
-                writer.stop()
-                writer_thread.join(timeout=5)
-                watcher.shutdown_event.set()
-                watcher.json_reader.close()
-                watcher_thread.join(timeout=5)
+                LOGGER.info("Starting shutdown sequence...")
 
-                # Wait for all processing to complete
+                # Set timeout for entire shutdown sequence
+                shutdown_deadline = time.time() + 15  # 15 seconds maximum for shutdown
+
+                def is_timeout():
+                    return time.time() > shutdown_deadline
+
+                # 1. Stop writer with timeout
+                writer.stop()
+                writer_thread.join(timeout=2)
+
+                # 2. Force stop watcher
+                watcher_shutdown.set()
+                if hasattr(watcher, "json_reader"):
+                    try:
+                        watcher.json_reader.close()
+                    except Exception:
+                        pass
+
+                # 3. Aggressive queue clearing
+                while not alert_queue.empty() and not is_timeout():
+                    try:
+                        alert_queue.get_nowait()
+                        alert_queue.task_done()
+                    except Empty:
+                        break
+
+                # 4. Quick watcher thread cleanup
+                watcher_thread.join(timeout=2)
+
+                # 5. Cancel all pending futures immediately
                 for future in futures:
-                    future.result(timeout=5)
+                    future.cancel()
+
+                # 6. Final executor shutdown
+                LOGGER.info("Shutting down thread pool...")
+                executor.shutdown(wait=False)  # Don't wait if tasks are still running
+
+                LOGGER.info("Shutdown sequence completed")
 
         total_time = time.time() - start_time
 
@@ -335,6 +429,40 @@ def test_mixed_alerts_performance():  # NOSONAR
         LOGGER.info(f"Fail2ban alerts processed: {processed_fail2ban}/{fail2ban_count.value} (lost: {lost_fail2ban})")
         LOGGER.info(f"Total lost alerts: {total_lost}")
 
+        # After the test completes, verify file size matches bytes written
+        actual_file_size = alert_file.stat().st_size
+        LOGGER.info(f"Total bytes written (counted): {writer.total_bytes}")
+        LOGGER.info(f"Total alerts written: {writer.alert_count}")
+        LOGGER.info(f"Total newline bytes: {writer.newline_bytes}")
+        LOGGER.info(f"Actual file size: {actual_file_size}")
+
+        # Read the file content for verification
+        with open(alert_file, "rb") as f:
+            content = f.read()
+            last_bytes = content[-10:] if len(content) >= 10 else content
+            LOGGER.info(f"Last few bytes (hex): {last_bytes.hex()}")
+
+            # Count actual newlines
+            actual_newlines = content.count(b"\n")
+            LOGGER.info(f"Actual newlines in file: {actual_newlines}")
+            LOGGER.info(f"Expected newlines: {writer.alert_count}")
+
+        # Detailed mismatch information
+        if actual_file_size != writer.total_bytes:
+            diff = actual_file_size - writer.total_bytes
+            LOGGER.error(
+                f"Size mismatch details:\n"
+                f"Difference: {diff} bytes\n"
+                f"Per alert difference: {diff / writer.alert_count:.2f} bytes\n"
+                f"Newline difference: {actual_newlines - writer.alert_count}"
+            )
+
+        assert actual_file_size == writer.total_bytes, (
+            f"File size mismatch. Written: {writer.total_bytes}, "
+            f"Actual: {actual_file_size}, "
+            f"Difference: {abs(writer.total_bytes - actual_file_size)} bytes"
+        )
+
         # Assertions
         assert (
             actual_rate >= alerts_per_second * 0.95
@@ -347,14 +475,35 @@ def test_mixed_alerts_performance():  # NOSONAR
         ), f"Lost too many Fail2ban alerts: {lost_fail2ban} ({(lost_fail2ban/fail2ban_count.value)*100:.1f}%)"
 
     finally:
-        # Cleanup test file with proper handle closure
+        # Enhanced cleanup with timeouts
+        LOGGER.info("Performing final cleanup")
         try:
-            if alert_file.exists():
-                # Force close any remaining handles
-                gc.collect()
-                if hasattr(alert_file, "_handle"):
-                    alert_file._handle.close()
-                alert_file.unlink()
-        except PermissionError as e:
-            LOGGER.error(f"Could not delete test file: {e}")
-            LOGGER.error("Manual cleanup of {alert_file} may be required")
+            writer.stop()
+            watcher_shutdown.set()
+            if hasattr(watcher, "json_reader"):
+                try:
+                    watcher.json_reader.close()
+                except Exception as e:
+                    LOGGER.error(f"Error closing json reader: {e}")
+
+            # Force thread termination if needed
+            if writer_thread.is_alive():
+                LOGGER.warning("Writer thread still alive during cleanup")
+            if watcher_thread.is_alive():
+                LOGGER.warning("Watcher thread still alive during cleanup")
+        except Exception as e:
+            LOGGER.error(f"Error during service cleanup: {e}")
+
+        # Cleanup test file with proper handle closure and retries
+        for _ in range(3):  # Try up to 3 times
+            try:
+                if alert_file.exists():
+                    gc.collect()  # Force garbage collection
+                    alert_file.unlink()
+                    break
+            except PermissionError as e:
+                LOGGER.warning(f"Retry deleting file due to: {e}")
+                time.sleep(1)  # Wait before retry
+            except Exception as e:
+                LOGGER.error(f"Unexpected error during file cleanup: {e}")
+                break

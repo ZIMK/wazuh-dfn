@@ -2,7 +2,7 @@ from wazuh_dfn.services.json_queue import JSONQueue
 
 
 def test_basic_json_parsing():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     input_data = b'{"key": "value"}{"second": "object"}'
     result = queue.add_data(input_data)
 
@@ -22,7 +22,7 @@ def test_alert_prefix_handling():
 
 
 def test_incomplete_json():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     # Send incomplete JSON
     result1 = queue.add_data(b'{"key": "val')
     assert len(result1) == 0
@@ -34,7 +34,7 @@ def test_incomplete_json():
 
 
 def test_nested_json():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     input_data = b'{"outer": {"inner": "value"}, "array": [1,2,3]}'
     result = queue.add_data(input_data)
 
@@ -43,7 +43,7 @@ def test_nested_json():
 
 
 def test_invalid_json():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     input_data = b'{"valid": "json"}invalid{not_json}{"valid_again": true}'
     result = queue.add_data(input_data)
 
@@ -53,7 +53,7 @@ def test_invalid_json():
 
 
 def test_unicode_handling():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     input_data = '{"unicode": "测试"}'.encode("utf-8")
     result = queue.add_data(input_data)
 
@@ -62,7 +62,7 @@ def test_unicode_handling():
 
 
 def test_multiple_chunks():
-    queue = JSONQueue()
+    queue = JSONQueue(alert_prefix="{")
     chunk1 = b'{"part": 1}'
     chunk2 = b'{"part": 2}'
 

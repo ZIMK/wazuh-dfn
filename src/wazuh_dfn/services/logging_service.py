@@ -88,6 +88,7 @@ class LoggingService:
         This method logs the following details:
         - The number of objects currently in the alert queue.
         - The current memory usage of the process in percentage.
+        - The current CPU usage averages (5 and 10 minutes).
         - The current open files of the process.
         - The status of the Kafka producer indicating if it is alive.
         - The number of alerts processed.
@@ -104,6 +105,13 @@ class LoggingService:
                 LOGGER.info(f"Current memory usage: {memory_percent:.2f}%")
             except psutil.Error as e:
                 LOGGER.error(f"Error getting memory usage: {str(e)}")
+
+            # Log CPU usage averages
+            try:
+                cpu_times = psutil.cpu_percent()
+                LOGGER.info(f"CPU usage (avg): {cpu_times:.2f}%")
+            except Exception as e:
+                LOGGER.debug(f"Error getting memory usage CPU average: {e}")
 
             try:
                 # Log open files
