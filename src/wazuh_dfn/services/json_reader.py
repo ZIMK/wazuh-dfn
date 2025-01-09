@@ -1,9 +1,8 @@
 import logging
 import os
 import time
-from typing import Dict, Iterator, List
+from typing import Dict, List
 
-from wazuh_dfn.services.file_queue import FileQueue
 from wazuh_dfn.services.json_queue import JSONQueue
 
 logger = logging.getLogger(__name__)
@@ -21,7 +20,8 @@ class JSONReader:
         self.file_path = file_path
         self.alert_prefix = alert_prefix
         self.tail = tail
-        self.file_queue = None
+        self.fp = None
+        self.f_status = None
         self.json_queue = None
         self.last_check_time = 0
         self.check_interval = check_interval  # seconds
@@ -33,29 +33,49 @@ class JSONReader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def __iter__(self) -> Iterator[List[Dict]]:
-        return self
+    def open_file(self, tail: bool = False) -> bool:
+        if self.fp:
+            self.fp.close()
 
-    def __next__(self) -> List[Dict]:
-        """Get all available alerts from the queue up to the current file size"""
-        if not self.is_active():
-            raise StopIteration
-        return self.next_alerts()
+        try:
+            self.fp = open(self.file_path, "rb")
+
+            if tail and self.fp.seek(0, os.SEEK_END) == -1:
+                logger.error(f"Failed to seek in file {self.file_path}")
+                self.fp.close()
+                self.fp = None
+                return False
+
+            self.f_status = os.fstat(self.fp.fileno())
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error opening file {self.file_path}: {str(e)}")
+            if self.fp:
+                self.fp.close()
+                self.fp = None
+            return False
+
+    def read_file(self):
+        try:
+            return self.fp.read()
+        except Exception as e:
+            logger.error(f"Error reading file: {str(e)}")
+            return None
 
     def next_alerts(self) -> List[Dict]:
         alerts = []
 
         try:
-            # Check file rotation periodically
             current_time = time.time()
             if current_time - self.last_check_time >= self.check_interval:
+                logger.debug(f"Checking for rotation at {current_time}")
                 self.last_check_time = current_time
                 self.check_rotation()
 
-            # Read data until EOF
-            data = self.file_queue.read()
+            data = self.read_file()
             if data:
-                # Process data and collect all alerts
                 new_alerts = self.json_queue.add_data(data)
                 if new_alerts:
                     alerts.extend(new_alerts)
@@ -66,28 +86,28 @@ class JSONReader:
 
     def open(self):
         """Open the file for reading"""
-        self.file_queue = FileQueue(self.file_path)
         self.json_queue = JSONQueue(self.alert_prefix)
-        self.file_queue.open(self.tail)
+        self.open_file(self.tail)
 
     def is_active(self) -> bool:
         """Check if the reader is still active"""
-        return bool(self.file_queue and self.file_queue.fp)
+        return bool(self.fp)
 
     def check_rotation(self) -> bool:
         """Check if file has been rotated"""
         try:
             current_stat = os.stat(self.file_path)
-            if current_stat.st_ino != self.file_queue.f_status.st_ino:
+            if current_stat.st_ino != self.f_status.st_ino:
                 logger.info(f"File rotation detected. Reopening file {self.file_path}")
-                return self.file_queue.open(False)
+                return self.open_file(False)
         except Exception as e:
             logger.warning(f"Failed to check file stats: {str(e)}")
         return False
 
     def close(self):
         """Close the reader"""
-        if self.file_queue:
-            self.file_queue.close()
+        if self.fp:
+            self.fp.close()
+            self.fp = None
         if self.json_queue:
             self.json_queue.reset()

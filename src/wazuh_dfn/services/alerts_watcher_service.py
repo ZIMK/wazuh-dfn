@@ -46,13 +46,13 @@ class AlertsWatcherService:
             with JSONReader(self.file_path, alert_prefix=self.config.json_alert_prefix, tail=True) as reader:
                 self.json_reader = reader
                 while not self.shutdown_event.is_set():
-                    for alerts in reader:
-                        if alerts:
-                            for alert in alerts:
-                                self.alert_queue.put(alert)
-                                self.latest_queue_put = datetime.now()
+                    alerts = reader.next_alerts()
+                    if alerts:
+                        for alert in alerts:
+                            self.alert_queue.put(alert)
+                            self.latest_queue_put = datetime.now()
 
-                        time.sleep(self.config.json_alert_file_poll_interval)
+                    time.sleep(self.config.json_alert_file_poll_interval)
         except Exception as e:
             LOGGER.error(f"Error reading file: {str(e)}")
         finally:

@@ -309,8 +309,7 @@ def test_mixed_alerts_performance():  # NOSONAR
                 writer.stop()
                 writer_thread.join(timeout=5)
                 watcher.shutdown_event.set()
-                if hasattr(watcher.json_reader, "file_queue"):
-                    watcher.json_reader.file_queue.close()
+                watcher.json_reader.close()
                 watcher_thread.join(timeout=5)
 
                 # Wait for all processing to complete

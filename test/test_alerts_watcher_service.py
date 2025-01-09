@@ -76,13 +76,13 @@ def test_file_monitor_inode_change(tmp_path, monkeypatch):
     reader.open()
     reader.next_alerts()
 
-    reader.file_queue.f_status.st_ino
+    reader.f_status.st_ino
 
     # Get initial position
-    initial_inode = reader.file_queue.f_status.st_ino
+    initial_inode = reader.f_status.st_ino
 
     # Remove and recreate file to simulate rotation
-    reader.file_queue.fp.close()  # On windows it needs to be closed before deletion
+    reader.fp.close()  # On windows it needs to be closed before deletion
 
     os.unlink(str(file_path))
 
@@ -95,7 +95,7 @@ def test_file_monitor_inode_change(tmp_path, monkeypatch):
     assert alerts is not None
 
     # Check inode change
-    assert reader.file_queue.f_status.st_ino != initial_inode
+    assert reader.f_status.st_ino != initial_inode
 
 
 def test_alerts_watcher_service_start_stop():
@@ -125,7 +125,7 @@ def test_alerts_watcher_service_start_stop():
 
     finally:
         if os.path.exists(config.json_alert_file):
-            service.json_reader.file_queue.close()
+            service.json_reader.close()
             os.unlink(config.json_alert_file)
 
 
@@ -170,30 +170,6 @@ def test_file_monitor_incomplete_json():
     os.unlink(file_path)
 
 
-def test_file_monitor_read_chunk_until_newline(caplog):
-    """Test FileMonitor's _read_chunk_until_newline method."""
-    with caplog.at_level(logging.INFO):
-        with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
-            file_path = tf.name
-
-            reader = JSONReader(file_path, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
-
-            # Write long line exceeding MAX_LINE_SIZE
-            long_data = "x" * 70000
-            alert = f'{{"timestamp":"2024-01-01","data":"{long_data}"}}\n'
-            tf.write(alert)
-            tf.flush()
-
-            reader.next_alerts()
-
-            # Verify long line was not processed correctly
-            assert "Buffer would exceed max size" in caplog.text
-
-            reader.close()
-    os.unlink(file_path)
-
-
 def test_file_monitor_file_deletion_recreation(caplog):
     """Test FileMonitor handling of file deletion and recreation."""
     caplog.set_level(logging.DEBUG)
@@ -229,7 +205,7 @@ def test_file_monitor_file_deletion_recreation(caplog):
 
         # Delete file
         logger.debug("Closing file before deletion")
-        reader.file_queue.close()
+        reader.fp.close()
         logger.debug("Deleting file")
         os.unlink(file_path)
         time.sleep(0.1)

@@ -6,9 +6,8 @@ logger = logging.getLogger(__name__)
 
 
 class JSONQueue:
-    MAX_BUFFER_SIZE = 1048576  # 1MB
 
-    def __init__(self, alert_prefix: str = ""):
+    def __init__(self, alert_prefix: str = "{"):
         self.buffer = bytearray()
         self.alert_prefix = alert_prefix.encode("utf-8")
         self.discard_until_prefix = bool(alert_prefix)
@@ -31,11 +30,6 @@ class JSONQueue:
             return None
 
     def add_data(self, new_data: bytes) -> List[dict]:
-        # Check for buffer overflow
-        if len(self.buffer) + len(new_data) > self.MAX_BUFFER_SIZE:
-            logger.warning(f"Buffer would exceed max size ({self.MAX_BUFFER_SIZE}). Discarding old data.")
-            self.reset()
-
         # Handle alert prefix in new data
 
         prefix_pos = new_data.find(self.alert_prefix)
@@ -102,10 +96,6 @@ class JSONQueue:
 
             if self.error_count >= self.max_error_count:
                 logger.warning("Too many parse errors. Resetting buffer.")
-                self.reset()
-
-            if len(self.buffer) > self.MAX_BUFFER_SIZE:
-                logger.warning("Buffer exceeded max size without matches. Resetting.")
                 self.reset()
 
         except UnicodeDecodeError:
