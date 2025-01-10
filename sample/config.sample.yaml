@@ -31,6 +31,9 @@ wazuh:
   max_event_size: 65535 # Maximum size of events to process
   max_retries: 42 # Maximum number of retries
   retry_interval: 5 # Interval between retries in seconds
+  store_failed_alerts: false # Whether to store failed alerts for later analysis
+  failed_alerts_path: "/opt/wazuh-dfn/failed-alerts" # Directory path to store failed alerts
+  max_failed_files: 100 # Maximum number of failed alert files to keep
 
 # Optional Kafka settings - only change if needed
 kafka:

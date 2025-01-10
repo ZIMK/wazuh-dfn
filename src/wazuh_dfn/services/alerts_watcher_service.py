@@ -46,6 +46,9 @@ class AlertsWatcherService:
                 file_path=self.file_path,
                 alert_queue=self.alert_queue,
                 alert_prefix=self.config.json_alert_prefix,
+                failed_alerts_path=self.config.failed_alerts_path,
+                max_failed_files=self.config.max_failed_files,
+                store_failed_alerts=self.config.store_failed_alerts,
             )
             while not self.shutdown_event.is_set():
                 self.file_monitor.check_file()

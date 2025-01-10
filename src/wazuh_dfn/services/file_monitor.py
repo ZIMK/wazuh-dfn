@@ -18,12 +18,18 @@ class FileMonitor:
         alert_queue: Queue,
         alert_prefix: str,
         tail: bool = False,
+        failed_alerts_path: Optional[str] = None,  # Add path for storing failed alerts
+        max_failed_files: int = 100,  # Maximum number of failed alert files to keep
+        store_failed_alerts: bool = False,
     ) -> None:
         self.file_path = file_path
         self.alert_queue = alert_queue
         self.alert_prefix = alert_prefix.encode("utf-8")
         self.alert_suffix = b"}"  # Just the closing brace
         self.tail = tail
+        self.failed_alerts_path = failed_alerts_path
+        self.max_failed_files = max_failed_files
+        self.store_failed_alerts = store_failed_alerts
 
         self.fp = None
         self.buffer = bytearray()
@@ -132,7 +138,50 @@ class FileMonitor:
             LOGGER.debug("Queued alert successfully")
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             self.errors += 1
-            LOGGER.debug(f"Error processing alert: {str(e)}")
+            # Log the raw bytes for debugging (as hex to avoid encoding issues)
+            LOGGER.error(f"Error processing alert: {str(e)}, raw content: {alert_bytes.hex()}")
+
+            # Save failed alert to timestamped file if directory configured
+            if self.store_failed_alerts and self.failed_alerts_path:
+                try:
+                    self._cleanup_failed_alerts()  # Cleanup before saving new file
+
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    failed_file = os.path.join(self.failed_alerts_path, f"failed_alert_{timestamp}.json")
+                    with open(failed_file, "wb") as f:
+                        f.write(alert_bytes)
+                    LOGGER.info(f"Saved failed alert to {failed_file}")
+                except Exception as save_error:
+                    LOGGER.error(f"Error saving failed alert: {str(save_error)}")
+
+    def _cleanup_failed_alerts(self) -> None:
+        """Remove oldest failed alert files if exceeding max_failed_files."""
+        if not self.failed_alerts_path:
+            return
+
+        try:
+            files = [
+                os.path.join(self.failed_alerts_path, f)
+                for f in os.listdir(self.failed_alerts_path)
+                if f.startswith("failed_alert_")
+            ]
+            if len(files) <= self.max_failed_files:
+                return
+
+            # Sort files by creation time, oldest first
+            files.sort(key=lambda x: os.path.getctime(x))
+
+            # Remove oldest files that exceed the limit
+            files_to_remove = files[: (len(files) - self.max_failed_files)]
+            for file_path in files_to_remove:
+                try:
+                    os.remove(file_path)
+                    LOGGER.debug(f"Removed old failed alert file: {file_path}")
+                except Exception as e:
+                    LOGGER.error(f"Error removing old failed alert file {file_path}: {str(e)}")
+
+        except Exception as e:
+            LOGGER.error(f"Error during failed alerts cleanup: {str(e)}")
 
     def _process_buffer(self) -> None:
         """Process buffer content to find and queue complete alerts."""

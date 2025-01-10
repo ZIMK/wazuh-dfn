@@ -223,6 +223,8 @@ def setup_directories(config: Config) -> None:
     optional_dirs = []
     if config.log.file_path:
         optional_dirs.append(os.path.dirname(config.log.file_path))
+    if config.wazuh.store_failed_alerts and config.wazuh.failed_alerts_path:
+        optional_dirs.append(config.wazuh.failed_alerts_path)
 
     # Create optional directories - log warning if this fails
     for directory in optional_dirs:

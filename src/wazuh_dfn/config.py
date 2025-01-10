@@ -83,6 +83,30 @@ class WazuhConfig:
             "cli": "--wazuh-json-alert-file-poll-interval",
         },
     )
+    store_failed_alerts: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to store failed alerts for later analysis",
+            "env_var": "WAZUH_STORE_FAILED_ALERTS",
+            "cli": "--wazuh-store-failed-alerts",
+        },
+    )
+    failed_alerts_path: str = field(
+        default="/opt/wazuh-dfn/failed-alerts",
+        metadata={
+            "help": "Directory path to store failed alerts",
+            "env_var": "WAZUH_FAILED_ALERTS_PATH",
+            "cli": "--wazuh-failed-alerts-path",
+        },
+    )
+    max_failed_files: int = field(
+        default=100,
+        metadata={
+            "help": "Maximum number of failed alert files to keep",
+            "env_var": "WAZUH_MAX_FAILED_FILES",
+            "cli": "--wazuh-max-failed-files",
+        },
+    )
 
     def __post_init__(self):
         """Validate configuration after initialization."""
