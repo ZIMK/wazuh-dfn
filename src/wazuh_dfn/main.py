@@ -187,7 +187,10 @@ def setup_logging(config: Config) -> None:
         if os.path.exists(config.log.file_path):
             try:
                 file_handler = logging.handlers.TimedRotatingFileHandler(
-                    filename=config.log.file_path, when="midnight", interval=2
+                    filename=config.log.file_path,
+                    when="midnight",
+                    interval=1,
+                    backupCount=config.log.keep_files,  # Use config value instead of hardcoded 5
                 )
                 file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
                 handlers.append(file_handler)

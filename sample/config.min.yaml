@@ -12,6 +12,7 @@ dfn:
 log:
   console: true # Enable console logging
   file_path: "/opt/wazuh-dfn/logs/wazuh-dfn.log" # Path to log file
+  keep_files: 5 # Number of log files to keep
   interval: 600 # Statistics logging interval in seconds
   level: "INFO" # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 

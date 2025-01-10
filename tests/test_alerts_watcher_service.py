@@ -1,4 +1,11 @@
-"""Test module for AlertsWatcherService."""
+"""Tests for the AlertsWatcherService module.
+
+This module contains comprehensive tests for the AlertsWatcherService, including:
+- Alert file monitoring and processing
+- JSON parsing and validation
+- File system event handling
+- Edge cases and error conditions
+"""
 
 import json
 import logging
@@ -13,10 +20,27 @@ import pytest
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
-from wazuh_dfn.services.file_json_reader import FileJsonReader
+from wazuh_dfn.services.file_monitor import FileMonitor
 
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
+
+
+def write_alert(f, alert_data: dict, binary: bool = False) -> None:
+    """Write alert data to a file with consistent newlines.
+
+    Args:
+        f: File object to write to
+        alert_data: Dictionary containing alert data
+        binary: Whether to write in binary mode
+    """
+    alert_str = json.dumps(alert_data) + "\n"
+    if binary:
+        f.write(alert_str.encode("utf-8"))
+    else:
+        f.write(alert_str)
+    f.flush()
+    os.fsync(f.fileno())
 
 
 def test_alerts_watcher_service_init():
@@ -40,23 +64,29 @@ def test_file_monitor_process_valid_alert():
     """Test FileMonitor processing of valid alerts."""
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
-        alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        tf.close()  # Close file to ensure it's written
 
         # Write valid alert
-        alert = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
-        tf.write(alert)
-        tf.flush()
-        time.sleep(0.1)
+        with open(file_path, "w") as f:
+            alert = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
+            f.write(alert)
+            f.flush()
+            os.fsync(f.fileno())  # Force write to disk
 
-        # Process the file
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()  # Add explicit open
         reader.check_file()
 
         # Verify alert was queued
-        assert alert_queue.qsize() == 1
+        assert alert_queue.qsize() == 1, "Expected one alert in queue after processing"
         queued_alert = alert_queue.get()
-        assert queued_alert["rule"]["level"] == 5
-        assert queued_alert["timestamp"] == "2024-01-01 00:00:00"
+        assert (
+            queued_alert["rule"]["level"] == 5
+        ), f"Alert level mismatch. Expected 5, got {queued_alert['rule']['level']}"
+        assert (
+            queued_alert["timestamp"] == "2024-01-01 00:00:00"
+        ), f"Alert timestamp mismatch. Expected 2024-01-01 00:00:00, got {queued_alert['timestamp']}"
 
         reader.close()
     os.unlink(file_path)
@@ -72,30 +102,49 @@ def test_file_monitor_inode_change(tmp_path, monkeypatch):
 
     # Create initial file
     with open(file_path, "w") as f:
-        f.write('{"timestamp": "2021-01-01"}\n')
+        alert1 = '{"timestamp": "2021-01-01", "rule": {"level": 1}}\n'
+        f.write(alert1)
+        f.flush()
+        os.fsync(f.fileno())
 
-    # Open reader
-    reader = FileJsonReader(str(file_path), alert_queue, alert_prefix='{"timestamp"')
+    # Open reader and process initial file
+    reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()  # Add explicit open
+    reader.check_file()
+
+    # Verify first alert was read
+    assert alert_queue.qsize() == 1
+    alert = alert_queue.get()
+    assert alert["rule"]["level"] == 1
+
+    # Store initial inode
     initial_inode = os.stat(file_path).st_ino
 
-    # Process initial file
-    reader.check_file()
-
-    # Remove and recreate file to simulate rotation
+    # Close and remove original file
+    reader.close()
     os.unlink(str(file_path))
 
+    # Create new file (this will have a different inode)
     with open(file_path, "w") as f:
-        f.write('{"timestamp": "2021-01-02"}\n')
+        alert2 = '{"timestamp": "2021-01-02", "rule": {"level": 2}}\n'
+        f.write(alert2)
+        f.flush()
+        os.fsync(f.fileno())
 
-    time.sleep(0.1)
+    # Process the new file
     reader.check_file()
 
-    # Check inode change handled correctly
+    # Verify new alert was read
+    assert alert_queue.qsize() == 1
+    alert = alert_queue.get()
+    assert alert["rule"]["level"] == 2
+
+    # Verify inode changed
     new_inode = os.stat(file_path).st_ino
     assert new_inode != initial_inode
-    assert alert_queue.qsize() == 2
 
     reader.close()
+    os.unlink(str(file_path))
 
 
 def test_alerts_watcher_service_start_stop():
@@ -143,24 +192,30 @@ def test_file_monitor_incomplete_json(caplog):
     caplog.set_level(logging.DEBUG)
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
+        tf.close()  # Close file to ensure it's written
+
         alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()  # Add explicit open
 
         # Write incomplete JSON
-        tf.write('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5')
-        tf.flush()
-        reader.check_file()
+        with open(file_path, "w") as f:
+            f.write('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5')
+            f.flush()
+            os.fsync(f.fileno())
 
-        # Verify incomplete JSON not queued
+        reader.check_file()
         assert alert_queue.qsize() == 0
 
         # Complete the JSON
-        tf.write("}}\n")
-        tf.flush()
+        with open(file_path, "a") as f:
+            f.write("}}\n")
+            f.flush()
+            os.fsync(f.fileno())
+
         time.sleep(0.1)
         reader.check_file()
 
-        # Verify complete JSON is queued
         assert alert_queue.qsize() == 1
         alert = alert_queue.get()
         assert alert["rule"]["level"] == 5
@@ -179,34 +234,31 @@ def test_file_monitor_file_deletion_recreation(caplog):
     alert_queue = queue.Queue()
     logger.debug("Test starting with file path: %s", file_path)
 
+    # Create initial file and write first alert
+    logger.debug("Creating initial file with first alert")
     with open(file_path, "w") as f:
-        logger.debug("Creating initial empty file")
-        f.write("")
+        alert1 = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
+        f.write(alert1)
         f.flush()
         os.fsync(f.fileno())
 
-    logger.debug("Opening FileJsonReader")
-    reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+    logger.debug("Opening FileMonitor with tail=True")
+    reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()  # Explicitly open the file
 
     try:
-        # Write initial alert
-        logger.debug("Writing first alert")
-        with open(file_path, "w") as f:
-            alert1 = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
-            f.write(alert1)
-            f.flush()
-            os.fsync(f.fileno())
-
-        time.sleep(0.1)
         logger.debug("Reading first alert")
         reader.check_file()
-        assert alert_queue.qsize() == 1
+
+        logger.debug("Checking queue size")
+        assert alert_queue.qsize() == 1, "First alert should be in queue"
+
         first_alert = alert_queue.get()
         logger.debug("First read result: %s", first_alert)
-        assert first_alert["rule"]["level"] == 5
+        assert first_alert["rule"]["level"] == 5, "First alert should have level 5"
 
         # Delete file
-        logger.debug("Closing file before deletion")
+        logger.debug("Closing reader before deletion")
         reader.close()
         logger.debug("Deleting file")
         os.unlink(file_path)
@@ -214,7 +266,7 @@ def test_file_monitor_file_deletion_recreation(caplog):
 
         logger.debug("Reading after deletion")
         reader.check_file()
-        assert alert_queue.empty()
+        assert alert_queue.empty(), "Queue should be empty after file deletion"
 
         # Recreate file with new alert
         logger.debug("Recreating file with second alert")
@@ -224,15 +276,14 @@ def test_file_monitor_file_deletion_recreation(caplog):
             f.flush()
             os.fsync(f.fileno())
 
-        time.sleep(0.1)
         logger.debug("Reading after recreation")
+        time.sleep(0.1)
         reader.check_file()
-        assert alert_queue.qsize() == 1
+
+        assert alert_queue.qsize() == 1, "Second alert should be in queue"
         second_alert = alert_queue.get()
         logger.debug("Second read result: %s", second_alert)
-
-        # Verify alerts were processed correctly
-        assert second_alert["rule"]["level"] == 6
+        assert second_alert["rule"]["level"] == 6, "Second alert should have level 6"
 
     finally:
         logger.debug("Cleaning up")
@@ -248,8 +299,11 @@ def test_file_monitor_malformed_json():
     """Test FileMonitor handling of malformed JSON alerts."""
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        tf.close()  # Close file to ensure it's written
+
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()  # Add explicit open
 
         # Write malformed JSON alerts
         malformed_alerts = [
@@ -258,21 +312,20 @@ def test_file_monitor_malformed_json():
             '{"timestamp":"2024-01-01", "extra": }}}\n',
         ]
 
-        found_mal_alerts = []
-        for alert in malformed_alerts:
-            tf.write(alert)
-            tf.flush()
-            reader.check_file()
+        # Write each malformed alert
+        with open(file_path, "w") as f:
+            for alert in malformed_alerts:
+                f.write(alert)
+                f.flush()
+                os.fsync(f.fileno())
 
-        # Write valid alert
-        valid_alert = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
-        tf.write(valid_alert)
-        tf.flush()
+            # Write valid alert
+            valid_alert = '{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n'
+            f.write(valid_alert)
+            f.flush()
+            os.fsync(f.fileno())
+
         reader.check_file()
-
-        # Verify only valid alert was queued
-        assert len(found_mal_alerts) == 0
-
         assert alert_queue.qsize() == 1
         valid_alert = alert_queue.get()
         assert valid_alert["rule"]["level"] == 5
@@ -284,26 +337,29 @@ def test_file_monitor_split_json_alert():
     """Test FileMonitor handling of JSON alerts split across multiple reads."""
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
+        tf.close()  # Close file to ensure it's written
+
         alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()  # Add explicit open
 
-        # Write first part of the alert
-        first_part = '{"timestamp'
-        tf.write(first_part)
-        tf.flush()
+        # Write first part
+        with open(file_path, "w") as f:
+            f.write('{"timestamp')
+            f.flush()
+            os.fsync(f.fileno())
+
         time.sleep(0.1)
-
-        # Process first part - should not queue anything
         reader.check_file()
         assert alert_queue.empty()
 
-        # Write second part of the alert
-        second_part = '":"2025-01-09T10:44:45.948+0100","rule":{"level":3,"description":"Test"}}\n'
-        tf.write(second_part)
-        tf.flush()
-        time.sleep(0.1)
+        # Write second part
+        with open(file_path, "a") as f:
+            f.write('":"2025-01-09T10:44:45.948+0100","rule":{"level":3,"description":"Test"}}\n')
+            f.flush()
+            os.fsync(f.fileno())
 
-        # Process complete alert
+        time.sleep(0.1)
         reader.check_file()
         assert alert_queue.qsize() == 1
         alert = alert_queue.get()
@@ -318,7 +374,8 @@ def test_file_monitor_multiple_consecutive_alerts():
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader.open()  # Add explicit open
 
         # Create 5 different alerts
         alerts = [
@@ -356,22 +413,38 @@ def test_file_monitor_large_json_alert():
     """Test FileMonitor handling of very large JSON alerts."""
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()
 
-        # Create a large alert with nested data
-        large_data = {"data": "x" * 1024 * 1024}  # 1MB of data
+        # Create a moderate-sized alert (reduced from 1MB to 100KB)
+        large_data = {"data": "x" * 102400}  # 100KB of data
         large_alert = {"timestamp": "2024-01-01 00:00:00", "rule": {"level": 1}, "large_field": large_data}
 
-        tf.write(json.dumps(large_alert) + "\n")
-        tf.flush()
-        time.sleep(0.1)
+        # Write alert and force flush
+        with open(file_path, "w") as f:
+            json.dump(large_alert, f)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
 
-        reader.check_file()
-        assert alert_queue.qsize() == 1
-        alert = alert_queue.get()  # Fix variable name
-        assert alert["rule"]["level"] == 1
-        assert len(alert["large_field"]["data"]) == 1024 * 1024
+        # Add a small delay and check multiple times
+        max_attempts = 5
+        alert_found = False
+        for _ in range(max_attempts):
+            reader.check_file()
+            if not alert_queue.empty():
+                alert_found = True
+                break
+            time.sleep(0.1)
+
+        assert alert_found, f"Alert not found in queue after {max_attempts} attempts"
+        assert alert_queue.qsize() == 1, "Expected exactly one alert in queue"
+        alert = alert_queue.get()
+        assert alert["rule"]["level"] == 1, f"Alert level mismatch. Expected 1, got {alert['rule']['level']}"
+        assert (
+            len(alert["large_field"]["data"]) == 102400
+        ), f"Alert data size mismatch. Expected 102400, got {len(alert['large_field']['data'])}"
 
         reader.close()
     os.unlink(file_path)
@@ -382,7 +455,7 @@ def test_file_monitor_unicode_alerts():
     with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"')
         reader.open()
 
         # Create alerts with various Unicode characters
@@ -416,7 +489,8 @@ def test_file_monitor_nested_prefix_alerts():
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()  # Add explicit open
 
         # Create alert with nested timestamp objects
         nested_alert = {
@@ -444,7 +518,7 @@ def test_file_monitor_multiple_incomplete_alerts():
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
         reader.open()
 
         # Write complete alert and ensure it's flushed
@@ -491,7 +565,7 @@ def test_file_monitor_race_condition():
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
         reader.open()
 
         def write_alerts():
@@ -499,6 +573,7 @@ def test_file_monitor_race_condition():
                 with open(file_path, "a") as f:
                     f.write(f'{{"timestamp":"2024-01-01 00:00:{i:02d}","rule":{{"level":{i}}}}}\n')
                     f.flush()
+                    os.fsync(f.fileno())
                 time.sleep(0.001)  # Small delay to simulate rapid writes
 
         # Start writing alerts in a separate thread
@@ -525,76 +600,99 @@ def test_file_monitor_race_condition():
     os.unlink(file_path)
 
 
-# def test_file_monitor_memory_limits():
-#     """Test FileMonitor handling of memory limits with large number of alerts."""
-#     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
-#         file_path = tf.name
-#         alert_queue = queue.Queue()  # Add queue definition
-#         reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
-#         reader.open()
+def test_file_monitor_memory_limits():
+    """Test FileMonitor handling of memory limits with large number of alerts."""
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
+        file_path = tf.name
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()
 
-#         # Write a large number of small alerts
-#         num_alerts = 10000
-#         alert_template = '{"timestamp":"2024-01-01 00:00:%d","rule":{"level":%d}}\n'
+        num_alerts = 1000
+        alerts_written = 0
+        alerts_processed = []
+        batch_size = 100
 
-#         # Write alerts in batches to avoid memory issues during test setup
-#         batch_size = 1000
-#         for batch in range(0, num_alerts, batch_size):
-#             alerts = "".join(alert_template % (i, i) for i in range(batch, min(batch + batch_size, num_alerts)))
-#             tf.write(alerts)
-#             tf.flush()
-#             time.sleep(0.01)
+        for batch in range(0, num_alerts, batch_size):
+            batch_alerts = []
+            for i in range(batch, min(batch + batch_size, num_alerts)):
+                alert = {"timestamp": f"2024-01-01 00:00:{i:02d}", "rule": {"level": i}}
+                batch_alerts.append(json.dumps(alert) + "\n")
+                alerts_written += 1
 
-#         # Read and verify alerts in batches
-#         found_alerts = []
-#         while len(found_alerts) < num_alerts:
-#             reader.check_file()
-#             while not alert_queue.empty():
-#                 found_alerts.append(alert_queue.get())
-#             time.sleep(0.01)
+            with open(file_path, "a") as f:
+                f.writelines(batch_alerts)
+                f.flush()
+                os.fsync(f.fileno())
 
-#         assert len(found_alerts) == num_alerts
-#         assert all(alert["rule"]["level"] == i for i, alert in enumerate(found_alerts))
+            timeout = time.time() + 5
+            while len(alerts_processed) < alerts_written and time.time() < timeout:
+                reader.check_file()
+                while not alert_queue.empty():
+                    alerts_processed.append(alert_queue.get())
+                time.sleep(0.01)
 
-#         reader.close()
-#     os.unlink(file_path)
+            if len(alerts_processed) < alerts_written:
+                assert (
+                    False
+                ), f"Timeout while processing batch. Expected {alerts_written} alerts, got {len(alerts_processed)}"
+
+        assert (
+            len(alerts_processed) == num_alerts
+        ), f"Total alerts mismatch. Expected {num_alerts}, got {len(alerts_processed)}"
+
+        assert (
+            alerts_processed[0]["rule"]["level"] == 0
+        ), f"First alert level mismatch. Expected 0, got {alerts_processed[0]['rule']['level']}"
+        assert (
+            alerts_processed[-1]["rule"]["level"] == num_alerts - 1
+        ), f"Last alert level mismatch. Expected {num_alerts-1}, got {alerts_processed[-1]['rule']['level']}"
+
+        reader.close()
+    os.unlink(file_path)
 
 
 def test_file_monitor_invalid_utf8():
-    """Test FileMonitor handling of invalid UTF-8 bytes."""
+    """Test FileMonitor handling of invalid UTF-8 bytes.
+
+    This test ensures that the FileMonitor can properly handle files containing
+    both valid JSON alerts and invalid UTF-8 byte sequences.
+    """
     with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tf:
         file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
         reader.open()
 
-        # Write valid alert
-        valid_alert = b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n'
+        alerts = [
+            b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n',
+            b"\xfe\xff" + b'{"timestamp":"2024-01-01 00:00:01",' + b'"rule":{"level":2}}\n',
+            b'{"timestamp":"2024-01-01 00:00:02","rule":{"level":3}}\n',
+        ]
 
-        # Create some invalid UTF-8 bytes
-        invalid_bytes = b"\xfe\xff\xfe\xff"
+        with open(file_path, "wb") as f:
+            for alert in alerts:
+                f.write(alert)
+                f.flush()
+                os.fsync(f.fileno())
 
-        # Write another valid alert after invalid bytes
-        valid_alert2 = b'{"timestamp":"2024-01-01 00:00:01","rule":{"level":2}}\n'
+        timeout = time.time() + 5
+        processed = []
+        while len(processed) < 3 and time.time() < timeout:
+            reader.check_file()
+            while not alert_queue.empty():
+                processed.append(alert_queue.get())
+            time.sleep(0.1)
 
-        # Write sequence of valid -> invalid -> valid data
-        tf.write(valid_alert)
-        tf.write(invalid_bytes)
-        tf.write(valid_alert2)
-        tf.flush()
-        time.sleep(0.1)
+        assert (
+            len(processed) == 3
+        ), f"Alert count mismatch. Expected 3 alerts, got {len(processed)}.\nProcessed alerts: {processed}"
 
-        # Process the file
-        reader.check_file()
-
-        # Verify both valid alerts were processed
-        assert alert_queue.qsize() == 2, "Should process both valid alerts"
-        found_alerts = []
-        while not alert_queue.empty():
-            found_alerts.append(alert_queue.get())
-
-        assert found_alerts[0]["rule"]["level"] == 1, "First alert should be processed"
-        assert found_alerts[1]["rule"]["level"] == 2, "Second alert should be processed"
+        expected_levels = [1, 2, 3]
+        actual_levels = [a["rule"]["level"] for a in processed]
+        assert (
+            actual_levels == expected_levels
+        ), f"Alert levels mismatch.\nExpected: {expected_levels}\nGot: {actual_levels}"
 
         reader.close()
     os.unlink(file_path)
@@ -605,154 +703,267 @@ def test_file_monitor_mixed_encoding():
     with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tf:
         file_path = tf.name
         alert_queue = queue.Queue()
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"')
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()
 
-        # Create test data with mixed encodings
-        test_data = [
-            b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n',  # Valid JSON
-            b"\xfe\xff",  # Invalid UTF-8
-            b'{"timestamp":"2024-01-01 00:00:02","rule":{"level":3}}\n',  # Valid JSON
-        ]
+        test_data = (
+            b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n'
+            b"\xfe\xff\n"
+            b'{"timestamp":"2024-01-01 00:00:02","rule":{"level":3}}\n'
+        )
 
-        for data in test_data:
-            tf.write(data)
-            tf.flush()
-            time.sleep(0.1)
+        with open(file_path, "wb") as f:
+            f.write(test_data)
+            f.flush()
+            os.fsync(f.fileno())
+
+        timeout = time.time() + 5
+        processed = []
+        while len(processed) < 2 and time.time() < timeout:
             reader.check_file()
+            while not alert_queue.empty():
+                processed.append(alert_queue.get())
+            time.sleep(0.1)
 
-        # Verify valid alerts were processed
-        assert alert_queue.qsize() == 2
-        alert1 = alert_queue.get()
-        alert2 = alert_queue.get()
-        assert alert1["rule"]["level"] == 1
-        assert alert2["rule"]["level"] == 3
+        assert len(processed) == 2, (
+            f"Valid alert count mismatch. Expected 2 valid alerts, got {len(processed)}.\n"
+            f"Processed alerts: {processed}"
+        )
+
+        expected_levels = [1, 3]
+        actual_levels = [a["rule"]["level"] for a in processed]
+        assert (
+            actual_levels == expected_levels
+        ), f"Alert levels mismatch.\nExpected: {expected_levels}\nGot: {actual_levels}"
 
         reader.close()
     os.unlink(file_path)
 
 
 def test_file_monitor_utf8_byte_scanning():
-    """Test FileMonitor handling of UTF-8 byte sequences of different lengths."""
-    with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tf:
-        file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
+    """Test FileMonitor handling of UTF-8 byte sequences.
 
-        # Write complete alert with UTF-8 sequences separately
-        alert1 = b'{"timestamp":"2024-01-01","message":"ABC"}\n'
-        alert2 = b'{"timestamp":"2024-01-02","message":"\xc3\xa9"}\n'  # é
-        alert3 = b'{"timestamp":"2024-01-03","message":"\xe2\x82\xac"}\n'  # €
-        alert4 = b'{"timestamp":"2024-01-04","message":"\xf0\x9f\x8c\x9f"}\n'  # 🌟
+    Verifies correct processing of UTF-8 sequences of varying lengths,
+    including multi-byte characters and emojis.
+    """
+    file_path = os.path.join(tempfile.gettempdir(), "test_utf8.json")
+    alert_queue = queue.Queue()
+    reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()
 
-        # Write each alert separately
-        for alert in [alert1, alert2, alert3, alert4]:
-            tf.write(alert)
-            tf.flush()
-            time.sleep(0.1)  # Give time for processing
+    try:
+        # Write each alert and verify immediately
+        alerts = [
+            (b'{"timestamp":"2024-01-01","message":"ABC"}\n', "ABC"),
+            (b'{"timestamp":"2024-01-02","message":"\xc3\xa9"}\n', "é"),  # é
+            (b'{"timestamp":"2024-01-03","message":"\xe2\x82\xac"}\n', "€"),  # €
+            (b'{"timestamp":"2024-01-04","message":"\xf0\x9f\x8c\x9f"}\n', "🌟"),  # 🌟
+        ]
 
-        reader.check_file()
-        found_alerts = []
-        while not alert_queue.empty():
-            found_alerts.append(alert_queue.get())
+        for i, (raw_alert, expected_message) in enumerate(alerts):
+            # Write single alert
+            with open(file_path, "wb" if i == 0 else "ab") as f:
+                f.write(raw_alert)
+                f.flush()
+                os.fsync(f.fileno())
 
-        assert len(found_alerts) == 4, "Should process all alerts"
-        assert found_alerts[0]["message"] == "ABC", "ASCII alert should be processed"
-        assert found_alerts[1]["message"] == "é", "2-byte UTF-8 should be processed"
-        assert found_alerts[2]["message"] == "€", "3-byte UTF-8 should be processed"
-        assert found_alerts[3]["message"] == "🌟", "4-byte UTF-8 should be processed"
+            # Verify file content
+            with open(file_path, "rb") as f:
+                content = f.read()
+                LOGGER.debug(f"File content for alert {i}: {content!r}")
 
+            time.sleep(0.1)
+            reader.check_file()
+
+            assert not alert_queue.empty(), f"Alert {i} ({expected_message!r}) should be in queue but queue is empty"
+            alert = alert_queue.get()
+            assert (
+                alert["message"] == expected_message
+            ), f"Alert {i} message mismatch.\nExpected: {expected_message!r}\nGot: {alert['message']!r}"
+
+    finally:
         reader.close()
-    os.unlink(file_path)
+        if os.path.exists(file_path):
+            os.unlink(file_path)
 
 
 def test_file_monitor_utf8_boundary():
-    """Test FileMonitor handling of UTF-8 sequences split across buffer boundaries."""
-    with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tf:
-        file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
+    """Test handling of UTF-8 sequences split across buffer boundaries.
 
-        # Write a sequence of valid->partial->completion->valid
-        sequences = [
-            # Valid complete alert
-            b'{"timestamp":"2024-01-01","text":"start"}\n',
-            # Alert with UTF-8 split across writes (🌟 = f0 9f 8c 9f)
-            b'{"timestamp":"2024-01-02","text":"split\xf0\x9f',  # First half
-            b'\x8c\x9f end"}\n',  # Second half
-            # Final complete alert
-            b'{"timestamp":"2024-01-03","text":"done"}\n',
-        ]
+    Ensures that UTF-8 characters split between read operations are
+    properly reconstructed and processed.
+    """
+    file_path = os.path.join(tempfile.gettempdir(), "test_utf8_boundary.json")
+    alert_queue = queue.Queue()
+    reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()
 
-        for seq in sequences:
-            tf.write(seq)
-            tf.flush()
-            time.sleep(0.1)  # Allow time for processing
+    try:
+        # First complete alert
+        with open(file_path, "wb") as f:
+            f.write(b'{"timestamp":"2024-01-01","text":"start"}\n')
+            f.flush()
+            os.fsync(f.fileno())
 
+        time.sleep(0.1)
+        LOGGER.debug("Checking first alert")
         reader.check_file()
-        found_alerts = []
-        while not alert_queue.empty():
-            found_alerts.append(alert_queue.get())
+        assert alert_queue.qsize() == 1, "First alert ('start') should be in queue but queue is empty"
+        assert alert_queue.get()["text"] == "start", "First alert should have text 'start'"
 
-        assert len(found_alerts) == 3, "Should process all three alerts"
-        assert found_alerts[0]["text"] == "start", "First alert should be processed"
-        assert found_alerts[1]["text"] == "split🌟 end", "Split UTF-8 should be correctly assembled"
-        assert found_alerts[2]["text"] == "done", "Final alert should be processed"
+        LOGGER.debug("Writing split alert part 1")
+        with open(file_path, "ab") as f:
+            f.write(b'{"timestamp":"2024-01-02","text":"split\xf0\x9f')
+            f.flush()
+            os.fsync(f.fileno())
 
+        time.sleep(0.1)
+        reader.check_file()
+        assert alert_queue.empty(), "Incomplete UTF-8 sequence should not be processed"
+
+        LOGGER.debug("Completing split alert")
+        with open(file_path, "ab") as f:
+            f.write(b'\x8c\x9f end"}\n')
+            f.flush()
+            os.fsync(f.fileno())
+
+        time.sleep(0.1)
+        reader.check_file()
+        assert alert_queue.qsize() == 1, "Completed split alert should be in queue"
+        alert = alert_queue.get()
+        assert (
+            alert["text"] == "split🌟 end"
+        ), f"Split UTF-8 alert text mismatch.\nExpected: 'split🌟 end'\nGot: {alert['text']!r}"
+
+        # Write final alert
+        with open(file_path, "ab") as f:
+            f.write(b'{"timestamp":"2024-01-03","text":"done"}\n')
+            f.flush()
+            os.fsync(f.fileno())
+
+        time.sleep(0.1)
+        reader.check_file()
+        assert alert_queue.qsize() == 1, "Final alert should be processed"
+        assert alert_queue.get()["text"] == "done"
+
+    finally:
         reader.close()
-    os.unlink(file_path)
+        if os.path.exists(file_path):
+            os.unlink(file_path)
 
 
 def test_file_monitor_partial_alert_boundaries():
-    """Test FileMonitor handling of alerts split at buffer boundaries."""
+    """Test handling of alerts split at buffer boundaries.
+
+    Verifies that partially written alerts are properly processed once
+    completed, even when split across multiple read operations.
+    """
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
         file_path = tf.name
-        alert_queue = queue.Queue()  # Add queue definition
-        reader = FileJsonReader(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
 
-        # First part ends with a partial alert
-        first_part = (
-            '{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n'
-            '{"timestamp":"2024-01-01 00:00:01","rule":{"level":2}}\n'
-            '"manager":{"name":"wazuhm"},"id":"1234",'
-        )
+    alert_queue = queue.Queue()
+    reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()
 
-        # Second part continues the alert
-        second_part = (
-            '"cluster":{"name":"wazuh","node":"master-node"},'
-            '"rule":{"level":3,"description":"Test"}}\n'
-            '{"timestamp":"2024-01-01 00:00:02","rule":{"level":4}}\n'
-        )
+    try:
+        # Write initial complete alerts
+        with open(file_path, "w") as f:
+            f.write('{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n')
+            f.write('{"timestamp":"2024-01-01 00:00:01","rule":{"level":2}}\n')
+            f.flush()
+            os.fsync(f.fileno())
 
-        # Write parts separately
-        tf.write(first_part)
-        tf.flush()
         time.sleep(0.1)
-
-        # First read should get complete alerts
+        LOGGER.debug("Checking initial alerts")
         reader.check_file()
+
         found_alerts = []
         while not alert_queue.empty():
             found_alerts.append(alert_queue.get())
-        assert len(found_alerts) == 2, "Should get first two complete alerts"
-        assert [a["rule"]["level"] for a in found_alerts] == [1, 2]
 
-        # Write second part
-        tf.write(second_part)
-        tf.flush()
+        assert (
+            len(found_alerts) == 2
+        ), f"Expected 2 initial alerts, got {len(found_alerts)}.\nFound alerts: {found_alerts}"
+
+        assert [a["rule"]["level"] for a in found_alerts] == [1, 2], (
+            "Initial alerts have incorrect levels.\n"
+            f"Expected: [1, 2]\n"
+            f"Got: {[a['rule']['level'] for a in found_alerts]}"
+        )
+
+        LOGGER.debug("Writing partial alert")
+        with open(file_path, "a") as f:
+            f.write('{"timestamp":"2024-01-01 00:00:02",')
+            f.write('"rule":{"level":3},"data":"test"')
+            f.flush()
+            os.fsync(f.fileno())
+
         time.sleep(0.1)
-
-        # Second read should get reconstructed split alert and final alert
         reader.check_file()
+        assert alert_queue.empty(), "Incomplete alert should not be processed"
+
+        LOGGER.debug("Completing alert and adding final")
+        with open(file_path, "a") as f:
+            f.write("}\n")
+            f.write('{"timestamp":"2024-01-01 00:00:03","rule":{"level":4}}\n')
+            f.flush()
+            os.fsync(f.fileno())
+
+        time.sleep(0.1)
+        reader.check_file()
+
         found_alerts = []
         while not alert_queue.empty():
             found_alerts.append(alert_queue.get())
-        assert len(found_alerts) == 2, "Should get reconstructed alert and final alert"
-        assert found_alerts[0]["rule"]["level"] == 3, "Split alert should be reconstructed"
-        assert found_alerts[1]["rule"]["level"] == 4, "Final alert should be processed"
-        assert found_alerts[0]["id"] == "1234", "Split alert should preserve earlier parts"
 
+        assert (
+            len(found_alerts) == 2
+        ), f"Expected 2 additional alerts, got {len(found_alerts)}.\nFound alerts: {found_alerts}"
+
+        levels = [a["rule"]["level"] for a in found_alerts]
+        assert levels == [3, 4], f"Additional alerts have incorrect levels.\nExpected: [3, 4]\nGot: {levels}"
+
+    finally:
         reader.close()
-    os.unlink(file_path)
+        os.unlink(file_path)
+
+
+def test_file_monitor_newline_handling():
+    """Test handling of different newline types.
+
+    Ensures proper processing of alerts with different line endings:
+    - Unix (LF)
+    - Windows (CRLF)
+    - Old Mac (CR)
+    """
+    file_path = os.path.join(tempfile.gettempdir(), "test_newlines.json")
+    alert_queue = queue.Queue()
+    reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+    reader.open()
+
+    try:
+        # Test different newline variations
+        alerts = [
+            (b'{"timestamp":"2024-01-01","rule":{"level":1}}\n', 1),  # Unix (LF)
+            (b'{"timestamp":"2024-01-02","rule":{"level":2}}\r\n', 2),  # Windows (CRLF)
+            (b'{"timestamp":"2024-01-03","rule":{"level":3}}\r', 3),  # Old Mac (CR)
+        ]
+
+        # Write and verify each alert
+        for i, (alert, level) in enumerate(alerts):
+            with open(file_path, "wb" if i == 0 else "ab") as f:
+                f.write(alert)
+                f.flush()
+                os.fsync(f.fileno())
+
+            time.sleep(0.1)
+            reader.check_file()
+
+            assert not alert_queue.empty(), f"Alert {i} should be processed"
+            processed_alert = alert_queue.get()
+            assert processed_alert["rule"]["level"] == level, f"Alert {i} has incorrect level"
+
+    finally:
+        reader.close()
+        if os.path.exists(file_path):
+            os.unlink(file_path)

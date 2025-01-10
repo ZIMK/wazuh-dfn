@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..config import WazuhConfig
 from ..validators import WazuhConfigValidator
-from .file_json_reader import FileJsonReader
+from .file_monitor import FileMonitor
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,19 +36,17 @@ class AlertsWatcherService:
         self.shutdown_event = shutdown_event
         self.file_path = config.json_alert_file
         self.latest_queue_put: Optional[datetime] = None
-        self.file_monitor: Optional[FileJsonReader] = None
+        self.file_monitor: Optional[FileMonitor] = None
 
     def start(self) -> None:
         """Start monitoring alert files."""
         LOGGER.info(f"Starting file monitoring for {self.file_path}")
-
         try:
-            self.file_monitor = FileJsonReader(
+            self.file_monitor = FileMonitor(
                 file_path=self.file_path,
                 alert_queue=self.alert_queue,
                 alert_prefix=self.config.json_alert_prefix,
             )
-
             while not self.shutdown_event.is_set():
                 self.file_monitor.check_file()
                 # Update latest queue put time from monitor

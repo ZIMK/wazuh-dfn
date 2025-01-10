@@ -379,6 +379,12 @@ class LogConfigValidator(ConfigValidator):
             raise ConfigValidationError(f"Invalid interval: {interval}, must be a positive integer")
 
     @staticmethod
+    def _validate_keep_files(keep_files: int) -> None:
+        """Validate number of log files to keep."""
+        if not isinstance(keep_files, int) or keep_files <= 0:
+            raise ConfigValidationError(f"Invalid keep_files: {keep_files}, must be a positive integer")
+
+    @staticmethod
     def validate(config: Union[Dict[str, Any], LogConfig]) -> bool:
         """Validate log configuration.
 
@@ -391,14 +397,19 @@ class LogConfigValidator(ConfigValidator):
         config_dict = config if isinstance(config, dict) else config.__dict__
 
         # Required fields
-        required = ["file_path", "level"]
+        required = ["file_path"]
         for field in required:
             if field not in config_dict:
                 raise ConfigValidationError(f"Missing required field: {field}")
 
         # Validate fields
         LogConfigValidator._validate_file_path(config_dict["file_path"])
-        LogConfigValidator._validate_log_level(config_dict["level"])
+
+        if "level" in config_dict:
+            LogConfigValidator._validate_log_level(config_dict["level"])
+
+        if "keep_files" in config_dict:
+            LogConfigValidator._validate_keep_files(config_dict["keep_files"])
 
         if "interval" in config_dict:
             LogConfigValidator._validate_interval(config_dict["interval"])

@@ -55,6 +55,7 @@ class LoggingService:
         self.alerts_worker_service = alerts_worker_service
         self.shutdown_event = shutdown_event
         self.process = psutil.Process()
+        # No need to store file_monitors since we'll access the single instance directly
 
     def start(self) -> None:
         """Start periodic statistics logging and keep running until shutdown."""
@@ -139,6 +140,19 @@ class LoggingService:
                     LOGGER.info(f"Last alert queued at: {latest_queue_put.strftime('%Y-%m-%d %H:%M:%S')}")
                 else:
                     LOGGER.info("No alerts queued yet")
+
+            # Log FileMonitor statistics
+            if self.alerts_watcher_service.file_monitor:
+                alerts_per_sec, error_rate, total_alerts, total_errors = (
+                    self.alerts_watcher_service.file_monitor.log_stats()
+                )
+                LOGGER.info(
+                    f"FileMonitor - "
+                    f"Alerts/sec: {alerts_per_sec:.2f}, "
+                    f"Error rate: {error_rate:.2f}%, "
+                    f"Total alerts: {total_alerts}, "
+                    f"Total errors: {total_errors}"
+                )
 
         except Exception as e:
             LOGGER.error(f"Error collecting monitoring stats: {str(e)}")

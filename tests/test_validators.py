@@ -182,13 +182,13 @@ def test_log_config_validator():
     config = {"level": "INFO", "file_path": "/path/to/log"}
     assert LogConfigValidator.validate(config) is True
 
-    # Test invalid level
-    config = {"level": "INVALID_LEVEL", "file_path": "/path/to/log"}
+    # Test missing file_path
+    config = {}
     with pytest.raises(ConfigValidationError):
         LogConfigValidator.validate(config)
 
-    # Test missing log_level
-    config = {"file_path": "/path/to/log"}
+    # Test invalid level
+    config = {"level": "INVALID_LEVEL", "file_path": "/path/to/log"}
     with pytest.raises(ConfigValidationError):
         LogConfigValidator.validate(config)
 

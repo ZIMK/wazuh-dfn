@@ -275,6 +275,14 @@ class LogConfig:
             "cli": "--log-file-path",
         },
     )
+    keep_files: int = field(
+        default=5,
+        metadata={
+            "help": "Number of log files to keep when rotating",
+            "env_var": "LOG_KEEP_FILES",
+            "cli": "--log-keep-files",
+        },
+    )
     interval: int = field(
         default=600,
         metadata={

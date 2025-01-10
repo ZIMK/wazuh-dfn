@@ -11,8 +11,8 @@ def load_json_file(file_path: str) -> Dict:
 
 def test_process_fail2ban_alerts(alerts_service) -> None:
     """Test processing of fail2ban alerts from test JSON files"""
-    # Create test directory if it doesn't exist
-    os.makedirs("test", exist_ok=True)
+    # Get the directory where this test file is located
+    test_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Mock Kafka producer to prevent actual message sending
     with patch.object(alerts_service.syslog_handler.kafka_service, "send_message") as mock_kafka_send:
@@ -23,10 +23,10 @@ def test_process_fail2ban_alerts(alerts_service) -> None:
         with patch.object(alerts_service.syslog_handler.wazuh_service, "send_event") as mock_wazuh_send:
             mock_wazuh_send.return_value = True
 
-            fail2ban_files = [f for f in os.listdir("test") if f.startswith("lin_fail2ban-") and f.endswith(".json")]
+            fail2ban_files = [f for f in os.listdir(test_dir) if f.startswith("lin_fail2ban-") and f.endswith(".json")]
 
             for file_name in fail2ban_files:
-                with open(os.path.join("test", file_name), "r") as f:
+                with open(os.path.join(test_dir, file_name), "r") as f:
                     alert_data = json.load(f)
                     alerts_service.process_alert(alert_data)
 
@@ -54,8 +54,8 @@ def test_process_fail2ban_alerts(alerts_service) -> None:
 
 def test_process_windows_alerts(alerts_service) -> None:
     """Test processing of Windows security alerts from test JSON files"""
-    # Create test directory if it doesn't exist
-    os.makedirs("test", exist_ok=True)
+    # Get the directory where this test file is located
+    test_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Mock Kafka producer to prevent actual message sending
     with patch.object(alerts_service.windows_handler.kafka_service, "send_message") as mock_kafka_send:
@@ -66,10 +66,10 @@ def test_process_windows_alerts(alerts_service) -> None:
         with patch.object(alerts_service.windows_handler.wazuh_service, "send_event") as mock_wazuh_send:
             mock_wazuh_send.return_value = True
 
-            windows_files = [f for f in os.listdir("test") if f.startswith("win_") and f.endswith(".json")]
+            windows_files = [f for f in os.listdir(test_dir) if f.startswith("win_") and f.endswith(".json")]
 
             for file_name in windows_files:
-                with open(os.path.join("test", file_name), "r") as f:
+                with open(os.path.join(test_dir, file_name), "r") as f:
                     alert_data = json.load(f)
                     alerts_service.process_alert(alert_data)
 
