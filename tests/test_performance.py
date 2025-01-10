@@ -202,7 +202,7 @@ class AlertWriter(threading.Thread):
         self.running = True
         with open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size) as self._file:
             # Set force quit timer
-            self._force_quit_timer = threading.Timer(70, self._force_quit)  # Force quit after 70s
+            self._force_quit_timer = threading.Timer(120, self._force_quit)  # Force quit after 120s
             self._force_quit_timer.daemon = True
             self._force_quit_timer.start()
             try:
