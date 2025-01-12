@@ -192,8 +192,10 @@ class WazuhService:
                     if self._socket:
                         try:
                             self._socket.close()
-                        except Exception:
-                            pass  # Ignore errors during close
+                        except socket_error as e:
+                            LOGGER.warning(f"Error closing socket: {e}")
+                        except Exception as e:
+                            LOGGER.warning(f"Unexpected error while closing socket: {e}")
                         self._socket = None
                     self.connect()
                 except Exception as e:
