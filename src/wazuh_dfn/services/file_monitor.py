@@ -70,8 +70,8 @@ class FileMonitor:
         if self.fp:
             try:
                 self.fp.close()
-            except Exception:
-                pass
+            except Exception as e:
+                LOGGER.error(f"Error closing file: {str(e)}")
         self.fp = None
         self.buffer = bytearray()
 
