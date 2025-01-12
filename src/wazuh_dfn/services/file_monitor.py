@@ -50,8 +50,8 @@ class FileMonitor:
         if self.fp:
             try:
                 self.fp.close()
-            except Exception:
-                pass
+            except Exception as e:
+                LOGGER.error(f"Error closing file: {str(e)}")
 
         try:
             self.fp = open(self.file_path, "rb")
