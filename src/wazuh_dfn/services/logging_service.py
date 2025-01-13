@@ -144,15 +144,15 @@ class LoggingService:
 
             # Log FileMonitor statistics
             if self.alerts_watcher_service.file_monitor:
-                alerts_per_sec, error_rate, total_alerts, total_errors = (
+                alerts_per_sec, error_rate, interval_alerts, interval_errors = (
                     self.alerts_watcher_service.file_monitor.log_stats()
                 )
                 LOGGER.info(
-                    f"FileMonitor - "
+                    f"FileMonitor (current interval) - "
                     f"Alerts/sec: {alerts_per_sec:.2f}, "
                     f"Error rate: {error_rate:.2f}%, "
-                    f"Total alerts: {total_alerts}, "
-                    f"Total errors: {total_errors}"
+                    f"Processed alerts: {interval_alerts}, "
+                    f"Errors: {interval_errors}"
                 )
 
         except Exception as e:

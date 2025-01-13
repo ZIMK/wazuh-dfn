@@ -41,8 +41,6 @@ class FileMonitor:
         self.processed_alerts = 0
         self.errors = 0
         self.last_stats_time = datetime.now()
-        self.last_processed_alerts = 0
-        self.last_errors = 0
 
         LOGGER.info(f"Initialized FileMonitor for {file_path}")
 
@@ -219,27 +217,29 @@ class FileMonitor:
             LOGGER.error(f"Error checking file {self.file_path}: {str(e)}")
 
     def log_stats(self) -> tuple[float, float, int, int]:
-        """Calculate and return statistics since last call.
+        """Calculate and return statistics for the current interval.
+        Resets counters after calculation.
 
         Returns:
             tuple[float, float, int, int]: (alerts per second, error rate percentage,
-                                          total processed alerts, total errors)
+                                          interval processed alerts, interval errors)
         """
         current_time = datetime.now()
         time_diff = (current_time - self.last_stats_time).total_seconds()
 
         if time_diff <= 0:
-            return 0.0, 0.0, self.processed_alerts, self.errors
+            return 0.0, 0.0, 0, 0
 
-        alerts_diff = self.processed_alerts - self.last_processed_alerts
-        errors_diff = self.errors - self.last_errors
+        alerts_per_second = self.processed_alerts / time_diff
+        error_rate = (self.errors / max(self.processed_alerts, 1)) * 100 if self.processed_alerts > 0 else 0.0
 
-        alerts_per_second = alerts_diff / time_diff
-        error_rate = (errors_diff / max(alerts_diff, 1)) * 100 if alerts_diff > 0 else 0.0
+        # Store current values for return
+        interval_processed = self.processed_alerts
+        interval_errors = self.errors
 
-        # Update last values
+        # Reset counters and update time
         self.last_stats_time = current_time
-        self.last_processed_alerts = self.processed_alerts
-        self.last_errors = self.errors
+        self.processed_alerts = 0
+        self.errors = 0
 
-        return alerts_per_second, error_rate, self.processed_alerts, self.errors
+        return alerts_per_second, error_rate, interval_processed, interval_errors
