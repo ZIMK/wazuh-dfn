@@ -3,6 +3,8 @@
 import logging
 import socket
 import sys
+import threading
+from socket import error as socket_error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +12,8 @@ import pytest
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.wazuh_service import AF, SOCK_DGRAM, WazuhService
+
+LOGGER = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -483,3 +487,59 @@ def test_wazuh_service_send_event_missing_agent_info(mock_socket, wazuh_config, 
     sent_data = mock_socket_instance.send.call_args[0][0].decode()
     assert "1:dfn:" in sent_data
     assert '"integration": "dfn"' in sent_data
+
+
+@patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
+def test_wazuh_service_concurrent_reconnection_during_outage(mock_socket, wazuh_config, mock_socket_instance):
+    """Test multiple workers handling Wazuh service outage and recovery."""
+    mock_socket.return_value = mock_socket_instance
+
+    # Counter to control socket behavior
+    attempt_counter = {"value": 0}
+
+    def mock_send(data):
+        """Mock socket send with varying behaviors based on attempt count."""
+        attempt_counter["value"] += 1
+        if attempt_counter["value"] <= 3:
+            # Initial connection refused (Wazuh down)
+            error = socket_error("Connection refused")
+            error.errno = 111
+            raise error
+        elif attempt_counter["value"] <= 8:
+            # Transport endpoint not connected
+            error = socket_error("Transport endpoint is not connected")
+            error.errno = 107
+            raise error
+        # After 8 attempts, succeed
+        return len(data)
+
+    mock_socket_instance.send.side_effect = mock_send
+
+    service = WazuhService(wazuh_config)
+    service.connect()
+
+    # Simulate multiple workers sending events concurrently
+    def worker_send_event():
+        try:
+            service.send_event({"id": f"test-{threading.get_ident()}"})
+        except Exception as e:
+            # We expect some workers to fail
+            LOGGER.error(f"Worker failed: {e}")
+
+    # Create and start multiple worker threads
+    threads = []
+    for _ in range(5):  # Simulate 5 concurrent workers
+        thread = threading.Thread(target=worker_send_event)
+        threads.append(thread)
+        thread.start()
+
+    # Mock time.sleep to speed up test
+    with patch("time.sleep"):
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join(timeout=2)
+
+    # Verify behavior
+    assert attempt_counter["value"] >= 8  # Ensure we went through all error stages
+    assert mock_socket_instance.connect.call_count >= 3  # Multiple reconnection attempts
+    assert service._socket is not None  # Service should be connected at the end
