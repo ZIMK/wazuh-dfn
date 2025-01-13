@@ -79,15 +79,27 @@ def sample_config(tmp_path):
     return config
 
 
+@pytest.fixture(scope="session")
+def test_data_dir():
+    """Provide a temporary directory for test data that persists for the test session."""
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        yield tmpdirname
+
+
 @pytest.fixture
 def sample_alert():
-    """Create a sample alert for testing."""
+    """Return a sample valid alert for testing."""
     return {
         "timestamp": "2024-01-01T00:00:00",
         "rule": {"level": 5, "description": "Test alert"},
         "agent": {"name": "test-agent", "id": "001"},
         "location": "test",
         "full_log": "Test alert message",
+        "alert": {
+            "id": "test-1",
+            "timestamp": "2024-01-01T00:00:00.000Z",
+            "data": {"field1": "value1", "field2": "value2"},
+        },
     }
 
 

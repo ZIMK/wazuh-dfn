@@ -36,6 +36,7 @@ class FileMonitor:
         self.buffer = bytearray()
         self.current_inode = None
         self.latest_queue_put: Optional[datetime] = None
+        self.last_complete_position = 0  # Track position of last complete alert
 
         # Stats tracking
         self.processed_alerts = 0
@@ -56,6 +57,7 @@ class FileMonitor:
             self.fp = open(self.file_path, "rb")
             if not self.tail:
                 self.fp.seek(0, os.SEEK_END)
+                self.last_complete_position = self.fp.tell()
 
             stat = os.stat(self.file_path)
             self.current_inode = stat.st_ino
@@ -204,14 +206,39 @@ class FileMonitor:
             if self._check_inode() and not self.open():
                 return
 
-            # Read new content
+            # Store starting position
+            start_position = self.fp.tell()
+            alerts_found = False
+
+            # First phase: Read all available data
             while True:
                 chunk = self.fp.read(CHUNK_SIZE)
                 if not chunk:
                     break
                 LOGGER.debug(f"Read chunk: {chunk}")
                 self.buffer.extend(chunk)
-                self._process_buffer()
+
+            # Second phase: Process complete alerts from buffer
+            buffer_position = 0
+            while True:
+                buffer_size_before = len(self.buffer)
+                alert_bytes = self._extract_alert()
+                if not alert_bytes:
+                    break
+
+                self._queue_alert(alert_bytes)
+                alerts_found = True
+                # Track position based on how much of buffer was consumed
+                bytes_consumed = buffer_size_before - len(self.buffer)
+                buffer_position += bytes_consumed
+                self.last_complete_position = start_position + buffer_position
+
+            # If no complete alerts were found and we have data in buffer,
+            # revert to last known good position
+            if not alerts_found and len(self.buffer) > 0:
+                LOGGER.debug(f"No complete alerts found, reverting to position {self.last_complete_position}")
+                self.fp.seek(self.last_complete_position)
+                self.buffer.clear()
 
         except Exception as e:
             LOGGER.error(f"Error checking file {self.file_path}: {str(e)}")

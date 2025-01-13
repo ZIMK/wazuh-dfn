@@ -43,6 +43,38 @@ def write_alert(f, alert_data: dict, binary: bool = False) -> None:
     os.fsync(f.fileno())
 
 
+def safe_cleanup(reader: FileMonitor, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
+    """Safely cleanup test resources.
+
+    Args:
+        reader: FileMonitor instance to close
+        file_path: Path to file to remove
+        max_retries: Maximum number of retries
+        delay: Delay between retries in seconds
+    """
+    if reader:
+        try:
+            reader.close()
+        except Exception as e:
+            LOGGER.warning(f"Error closing reader: {e}")
+        reader = None
+
+    time.sleep(delay)  # Always wait before attempting to remove file
+
+    if not os.path.exists(file_path):
+        return
+
+    for i in range(max_retries):
+        try:
+            os.unlink(file_path)
+            return
+        except OSError as e:
+            if i < max_retries - 1:
+                time.sleep(delay)
+                continue
+            LOGGER.warning(f"Failed to remove file {file_path} after {max_retries} attempts: {e}")
+
+
 def test_alerts_watcher_service_init():
     """Test AlertsWatcherService initialization."""
     config = WazuhConfig()
@@ -967,3 +999,161 @@ def test_file_monitor_newline_handling():
         reader.close()
         if os.path.exists(file_path):
             os.unlink(file_path)
+
+
+def test_file_monitor_read_then_process():
+    """Test FileMonitor's two-phase read-then-process behavior."""
+    tf = None
+    reader = None
+    file_path = None
+
+    try:
+        tf = tempfile.NamedTemporaryFile(mode="w+", delete=False)
+        file_path = tf.name
+        tf.close()  # Close immediately to avoid handle conflicts
+
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()
+
+        # Write several alerts in different states
+        alerts = [
+            '{"timestamp":"2024-01-01","rule":{"level":1}}\n',  # Complete alert
+            '{"timestamp":"2024-01-02","rule":{"level":2}}\n',  # Complete alert
+            '{"timestamp":"2024-01-03","rule":',  # Partial alert
+        ]
+
+        # Write initial content
+        with open(file_path, "w") as f:
+            f.writelines(alerts)
+            f.flush()
+            os.fsync(f.fileno())
+
+        # First check should process complete alerts and maintain position
+        initial_position = reader.last_complete_position
+        reader.check_file()
+
+        # Verify two complete alerts were processed
+        assert alert_queue.qsize() == 2, "Should process exactly two complete alerts"
+        assert all(alert_queue.get()["rule"]["level"] == i for i in [1, 2])
+
+        # Verify position was updated correctly
+        assert reader.last_complete_position > initial_position
+        last_good_position = reader.last_complete_position
+
+        # Complete the partial alert
+        with open(file_path, "a") as f:
+            f.write('{"level":3}}\n')
+            f.flush()
+            os.fsync(f.fileno())
+
+        # Check again
+        reader.check_file()
+        assert alert_queue.qsize() == 1, "Should process the completed alert"
+        assert alert_queue.get()["rule"]["level"] == 3
+
+        # Verify position was updated
+        assert reader.last_complete_position > last_good_position
+
+        # Write some invalid content followed by valid alert
+        with open(file_path, "a") as f:
+            f.write('invalid json\n{"timestamp":"2024-01-04","rule":{"level":4}}\n')
+            f.flush()
+            os.fsync(f.fileno())
+
+        reader.check_file()
+        assert alert_queue.qsize() == 1, "Should skip invalid JSON and process valid alert"
+        assert alert_queue.get()["rule"]["level"] == 4
+
+    finally:
+        if reader:
+            try:
+                reader.close()
+            except Exception:
+                pass
+        time.sleep(0.1)  # Give OS time to release handles
+        if file_path and os.path.exists(file_path):
+            safe_cleanup(None, file_path)  # Reader already closed NOSONAR
+
+
+def safe_unlink(file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
+    """Safely unlink a file with retries.
+
+    Args:
+        file_path: Path to file to remove
+        max_retries: Maximum number of retries
+        delay: Delay between retries in seconds
+    """
+    for i in range(max_retries):
+        try:
+            os.unlink(file_path)
+            return
+        except PermissionError:
+            if i < max_retries - 1:
+                time.sleep(delay)
+            else:
+                raise
+
+
+def test_file_monitor_position_reversion():
+    """Test FileMonitor's position reversion behavior."""
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tf:
+        file_path = tf.name
+        alert_queue = queue.Queue()
+        reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
+        reader.open()
+
+        try:
+            # Write initial complete alert
+            with open(file_path, "w") as f:
+                f.write('{"timestamp":"2024-01-01","rule":{"level":1}}\n')
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Process initial alert and store position
+            reader.check_file()
+            assert alert_queue.qsize() == 1, "Should process initial alert"
+            assert alert_queue.get()["rule"]["level"] == 1
+            initial_good_position = reader.last_complete_position
+
+            # Write incomplete alert
+            with open(file_path, "a") as f:
+                f.write('{"timestamp":"2024-01-02","rule":{"level":2}')  # No closing brace or newline
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Check file - should revert position as no complete alerts found
+            reader.check_file()
+            assert alert_queue.empty(), "Should not process incomplete alert"
+            assert reader.last_complete_position == initial_good_position, "Should revert to last known good position"
+
+            # Write more incomplete data
+            with open(file_path, "a") as f:
+                f.write(',"extra":"data"')  # Still incomplete
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Check again - should still revert
+            reader.check_file()
+            assert alert_queue.empty(), "Should still not process incomplete alert"
+            assert reader.last_complete_position == initial_good_position, "Should maintain last known good position"
+
+            # Complete the alert and add a new one
+            with open(file_path, "a") as f:
+                f.write("}\n")  # Complete previous alert
+                f.write('{"timestamp":"2024-01-03","rule":{"level":3}}\n')  # Add new alert
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Check file - should process both alerts
+            reader.check_file()
+            assert alert_queue.qsize() == 2, "Should process both completed alerts"
+
+            alerts = [alert_queue.get() for _ in range(2)]
+            assert [a["rule"]["level"] for a in alerts] == [2, 3], "Should process alerts in correct order"
+            assert (
+                reader.last_complete_position > initial_good_position
+            ), "Should update position after processing complete alerts"
+
+        finally:
+            safe_cleanup(reader, file_path)
