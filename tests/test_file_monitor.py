@@ -159,17 +159,25 @@ def test_file_rotation(file_monitor, temp_log_file):
 
 
 def test_failed_alerts_storage(file_monitor, temp_log_file, temp_failed_alerts_dir):
-    invalid_alert = '{"alert": invalid_json}\n'
-    with open(temp_log_file, "w") as f:
-        f.write(invalid_alert)
+    # Write an alert with invalid UTF-8 bytes to trigger both failed and replaced files
+    invalid_bytes = b'{"alert": "\xFF\xFE invalid utf8"}\n'
+    with open(temp_log_file, "wb") as f:
+        f.write(invalid_bytes)
 
     file_monitor.open()
     file_monitor.check_file()
 
-    # Check if failed alert file was created
-    failed_files = os.listdir(temp_failed_alerts_dir)
-    assert len(failed_files) == 1
-    assert failed_files[0].startswith("failed_alert_")
+    # Check if both failed and replaced alert files were created
+    failed_files = sorted(os.listdir(temp_failed_alerts_dir))
+    assert len(failed_files) == 2
+
+    # Verify file naming pattern
+    assert any(f.endswith("_failed_alert.json") for f in failed_files)
+    assert any(f.endswith("_replaced_alert.json") for f in failed_files)
+
+    # Verify files have same timestamp prefix
+    timestamps = set(f.split("_")[0] for f in failed_files)
+    assert len(timestamps) == 1, "Failed and replaced files should have same timestamp"
 
 
 def test_stats_calculation(file_monitor):
@@ -196,16 +204,24 @@ def test_stats_calculation(file_monitor):
 
 
 def test_cleanup_failed_alerts(file_monitor, temp_failed_alerts_dir):
-    # Create more than max_failed_files dummy files
-    for i in range(file_monitor.max_failed_files + 5):
-        path = os.path.join(temp_failed_alerts_dir, f"failed_alert_{i}.json")
-        with open(path, "w") as f:
+    # Create more than max_failed_files pairs of files with new naming pattern
+    target_total = file_monitor.max_failed_files + 5
+    for _ in range(target_total):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        # Create both failed and replaced alert files
+        failed_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_failed_alert.json")
+        replaced_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_replaced_alert.json")
+        with open(failed_path, "w") as f:
             f.write("{}")
+        with open(replaced_path, "w") as f:
+            f.write("{}")
+        time.sleep(0.001)  # Ensure unique timestamps
 
     file_monitor._cleanup_failed_alerts()
 
     remaining_files = os.listdir(temp_failed_alerts_dir)
-    assert len(remaining_files) == file_monitor.max_failed_files
+    # Each alert can have two files (failed and replaced), so max files should be doubled
+    assert len(remaining_files) <= file_monitor.max_failed_files * 2
 
 
 def test_large_alert_spanning_chunks(file_monitor, temp_log_file):

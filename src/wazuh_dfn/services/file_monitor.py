@@ -145,33 +145,65 @@ class FileMonitor:
         del self.buffer[:line_end]
         return alert_bytes
 
+    def _save_failed_alert(self, alert_bytes: bytes, alert_str: Optional[str] = None) -> None:
+        """Save failed alert to file."""
+        if not self.store_failed_alerts or not self.failed_alerts_path:
+            return
+
+        try:
+            self._cleanup_failed_alerts()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            failed_file = os.path.join(self.failed_alerts_path, f"{timestamp}_failed_alert.json")
+
+            with open(failed_file, "wb") as f:
+                f.write(alert_bytes)
+
+            if alert_str:
+                replaced_file = os.path.join(self.failed_alerts_path, f"{timestamp}_replaced_alert.json")
+                with open(replaced_file, "wb") as f:
+                    f.write(alert_str.encode("utf-8"))
+                LOGGER.info(f"Saved failed alert and replaced version to {failed_file} and {replaced_file}")
+            else:
+                LOGGER.info(f"Saved failed alert to {failed_file}")
+        except Exception as save_error:
+            LOGGER.error(f"Error saving failed alert: {str(save_error)}")
+
+    def _process_alert_with_replace(self, alert_bytes: bytes) -> bool:
+        """Try processing alert with character replacement."""
+        try:
+            alert_str = alert_bytes.decode("utf-8", errors="replace").rstrip()
+            alert_data = json.loads(alert_str)
+            self.alert_queue.put(alert_data)
+            self.latest_queue_put = datetime.now()
+            self.processed_alerts += 1
+            LOGGER.warning("Alert processed with character replacement")
+            self._save_failed_alert(alert_bytes, alert_str)
+            return True
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+
     def _queue_alert(self, alert_bytes: bytes) -> None:
         """Process and queue an alert."""
         try:
-            alert_str = alert_bytes.decode("utf-8").rstrip()
-            LOGGER.debug(f"Processing alert: {alert_str}")
+            # First try strict decoding
+            alert_str = alert_bytes.decode("utf-8", errors="strict").rstrip()
             alert_data = json.loads(alert_str)
             self.alert_queue.put(alert_data)
             self.latest_queue_put = datetime.now()
             self.processed_alerts += 1
             LOGGER.debug("Queued alert successfully")
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            self.errors += 1
-            # Log the raw bytes for debugging (as hex to avoid encoding issues)
-            LOGGER.error(f"Error processing alert: {str(e)}, raw content: {alert_bytes.hex()}")
+            return
+        except UnicodeDecodeError:
+            # Try with replace if strict decode fails
+            if self._process_alert_with_replace(alert_bytes):
+                return
+        except json.JSONDecodeError:
+            pass  # Fall through to error handling
 
-            # Save failed alert to timestamped file if directory configured
-            if self.store_failed_alerts and self.failed_alerts_path:
-                try:
-                    self._cleanup_failed_alerts()  # Cleanup before saving new file
-
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                    failed_file = os.path.join(self.failed_alerts_path, f"failed_alert_{timestamp}.json")
-                    with open(failed_file, "wb") as f:
-                        f.write(alert_bytes)
-                    LOGGER.info(f"Saved failed alert to {failed_file}")
-                except Exception as save_error:
-                    LOGGER.error(f"Error saving failed alert: {str(save_error)}")
+        # Handle all failures
+        self.errors += 1
+        LOGGER.error(f"Error processing alert, raw content: {alert_bytes.hex()}")
+        self._save_failed_alert(alert_bytes)
 
     def _cleanup_failed_alerts(self) -> None:
         """Remove oldest failed alert files if exceeding max_failed_files."""
@@ -182,7 +214,7 @@ class FileMonitor:
             files = [
                 os.path.join(self.failed_alerts_path, f)
                 for f in os.listdir(self.failed_alerts_path)
-                if f.startswith("failed_alert_")
+                if "_failed_alert.json" in f or "_replaced_alert.json" in f
             ]
             if len(files) <= self.max_failed_files:
                 return
