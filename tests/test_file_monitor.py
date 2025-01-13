@@ -206,3 +206,21 @@ def test_cleanup_failed_alerts(file_monitor, temp_failed_alerts_dir):
 
     remaining_files = os.listdir(temp_failed_alerts_dir)
     assert len(remaining_files) == file_monitor.max_failed_files
+
+
+def test_large_alert_spanning_chunks(file_monitor, temp_log_file):
+    # Create an alert larger than CHUNK_SIZE (8192)
+    large_data = "x" * 20000  # Create string longer than CHUNK_SIZE
+    large_alert = f'{{"alert": {{"field": "{large_data}"}}}}\n'
+
+    with open(temp_log_file, "w") as f:
+        f.write(large_alert)
+
+    file_monitor.open()
+    file_monitor.check_file()
+
+    # Verify the alert was properly read and processed
+    alert = file_monitor.alert_queue.get_nowait()
+    assert alert["alert"]["field"] == large_data
+    assert file_monitor.alert_queue.empty()
+    assert file_monitor.errors == 0

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -11,8 +12,15 @@ LOGGER = logging.getLogger(__name__)
 # Maximum chunk size to read at once
 CHUNK_SIZE = 8192
 
+# Maximum message size (64KB as per Wazuh server)
+MAX_MESSAGE_SIZE = 64 * 1024 * 2
+
+# Maximum time to wait for incomplete alerts (seconds)
+MAX_WAIT_TIME = 1.0
+
 
 class FileMonitor:
+
     def __init__(
         self,
         file_path: str,
@@ -104,15 +112,21 @@ class FileMonitor:
         """Extract a complete alert from the buffer if available."""
         start = self.buffer.find(self.alert_prefix)
         if start == -1:
-            if len(self.buffer) > CHUNK_SIZE * 2:
+            if len(self.buffer) > MAX_MESSAGE_SIZE:
+                LOGGER.debug(f"Clearing buffer of size {len(self.buffer)} - no alert prefix found")
                 self.buffer.clear()
             return None
 
         if start > 0:
+            LOGGER.debug(f"Removing {start} bytes of leading data before alert prefix")
             del self.buffer[:start]
 
-        end = self.buffer.find(self.alert_suffix)
+        end = self.buffer.find(self.alert_suffix, len(self.alert_prefix))
         if end == -1:
+            # If we have too much data without finding a suffix, something is wrong
+            if len(self.buffer) > MAX_MESSAGE_SIZE:
+                LOGGER.warning(f"Buffer overflow ({len(self.buffer)} bytes) without finding alert suffix")
+                self.buffer.clear()
             return None
 
         end_pos = end + len(self.alert_suffix)
@@ -121,9 +135,13 @@ class FileMonitor:
 
         line_end = self._find_line_ending(end_pos)
         if line_end == -1:
+            if len(self.buffer) > MAX_MESSAGE_SIZE:
+                LOGGER.warning("No line ending found in large buffer, possible corrupted data")
+                self.buffer.clear()
             return None
 
         alert_bytes = bytes(self.buffer[:line_end])
+        LOGGER.debug(f"Extracted alert of {len(alert_bytes)} bytes")
         del self.buffer[:line_end]
         return alert_bytes
 
@@ -192,51 +210,94 @@ class FileMonitor:
                 break
             self._queue_alert(alert_bytes)
 
+    def _wait_for_data(self, wait_start: Optional[float]) -> Optional[float]:
+        """Wait for more data if buffer contains incomplete alert."""
+        if len(self.buffer) > 0:
+            if wait_start is None:
+                return time.time()
+            elif time.time() - wait_start > MAX_WAIT_TIME:
+                LOGGER.debug("Max wait time reached, will process buffer in next round")
+                return None
+            time.sleep(0.1)
+            return wait_start
+        return None
+
+    def _handle_file_status(self) -> bool:
+        """Check file existence and handle rotation."""
+        if not self.fp and not self.open():
+            return False
+
+        if not os.path.exists(self.file_path):
+            LOGGER.warning(f"File {self.file_path} no longer exists")
+            return False
+
+        if self._check_inode():
+            LOGGER.info("File rotation detected, clearing buffer")
+            self.buffer.clear()
+            return self.open()
+
+        return True
+
+    def _process_chunk(self, chunk: bytes) -> tuple[bool, int]:
+        """Process a chunk of data from the file."""
+        if not chunk:
+            return False, 0
+
+        LOGGER.debug(f"Read chunk of {len(chunk)} bytes at position {self.fp.tell()}")
+        self.buffer.extend(chunk)
+
+        buffer_position = 0
+        alerts_found = False
+
+        while True:
+            buffer_size_before = len(self.buffer)
+            alert_bytes = self._extract_alert()
+            if not alert_bytes:
+                break
+
+            try:
+                self._queue_alert(alert_bytes)
+                alerts_found = True
+                buffer_position += buffer_size_before - len(self.buffer)
+            except Exception as e:
+                LOGGER.error(f"Error processing alert: {str(e)}, alert size: {len(alert_bytes)}")
+                if len(alert_bytes) > 0:
+                    LOGGER.debug(f"First 100 bytes of failed alert: {alert_bytes[:100].hex()}")
+                raise
+
+        return alerts_found, buffer_position
+
     def check_file(self) -> None:
         """Check file for new alerts."""
         try:
-            LOGGER.debug("Checking file")
-            if not self.fp and not self.open():
+            LOGGER.debug(f"Checking file, current buffer size: {len(self.buffer)}")
+
+            if not self._handle_file_status():
                 return
 
-            if not os.path.exists(self.file_path):
-                LOGGER.warning(f"File {self.file_path} no longer exists")
-                return
-
-            if self._check_inode() and not self.open():
-                return
-
-            # Store starting position
             start_position = self.fp.tell()
             alerts_found = False
+            wait_start = None
+            buffer_position = 0
 
-            # First phase: Read all available data
             while True:
                 chunk = self.fp.read(CHUNK_SIZE)
                 if not chunk:
-                    break
-                LOGGER.debug(f"Read chunk: {chunk}")
-                self.buffer.extend(chunk)
+                    wait_start = self._wait_for_data(wait_start)
+                    if wait_start is None:
+                        break
+                    continue
 
-            # Second phase: Process complete alerts from buffer
-            buffer_position = 0
-            while True:
-                buffer_size_before = len(self.buffer)
-                alert_bytes = self._extract_alert()
-                if not alert_bytes:
-                    break
-
-                self._queue_alert(alert_bytes)
-                alerts_found = True
-                # Track position based on how much of buffer was consumed
-                bytes_consumed = buffer_size_before - len(self.buffer)
-                buffer_position += bytes_consumed
+                wait_start = None
+                chunk_alerts_found, chunk_position = self._process_chunk(chunk)  # Remove start_position argument
+                alerts_found = alerts_found or chunk_alerts_found
+                buffer_position += chunk_position
                 self.last_complete_position = start_position + buffer_position
 
-            # If no complete alerts were found and we have data in buffer,
-            # revert to last known good position
-            if not alerts_found and len(self.buffer) > 0:
-                LOGGER.debug(f"No complete alerts found, reverting to position {self.last_complete_position}")
+            if len(self.buffer) > 0 and not alerts_found:
+                LOGGER.debug(
+                    f"No complete alerts found, reverting to position {self.last_complete_position}, buffer size: {len(self.buffer)}"
+                )
                 self.fp.seek(self.last_complete_position)
                 self.buffer.clear()
 

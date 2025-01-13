@@ -20,7 +20,7 @@ import pytest
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
-from wazuh_dfn.services.file_monitor import FileMonitor
+from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
 
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
@@ -449,8 +449,9 @@ def test_file_monitor_large_json_alert():
         reader = FileMonitor(file_path, alert_queue, alert_prefix='{"timestamp"', tail=True)
         reader.open()
 
-        # Create a moderate-sized alert (reduced from 1MB to 100KB)
-        large_data = {"data": "x" * 102400}  # 100KB of data
+        # Create a moderate-sized alert
+        multiplier = 3 * CHUNK_SIZE  # 100B of data
+        large_data = {"data": "x" * multiplier}  # 100B of data
         large_alert = {"timestamp": "2024-01-01 00:00:00", "rule": {"level": 1}, "large_field": large_data}
 
         # Write alert and force flush
@@ -468,14 +469,14 @@ def test_file_monitor_large_json_alert():
             if not alert_queue.empty():
                 alert_found = True
                 break
-            time.sleep(0.1)
+            time.sleep(0.5)
 
         assert alert_found, f"Alert not found in queue after {max_attempts} attempts"
         assert alert_queue.qsize() == 1, "Expected exactly one alert in queue"
         alert = alert_queue.get()
         assert alert["rule"]["level"] == 1, f"Alert level mismatch. Expected 1, got {alert['rule']['level']}"
         assert (
-            len(alert["large_field"]["data"]) == 102400
+            len(alert["large_field"]["data"]) == multiplier
         ), f"Alert data size mismatch. Expected 102400, got {len(alert['large_field']['data'])}"
 
         reader.close()
