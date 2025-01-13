@@ -49,6 +49,7 @@ class FileMonitor:
         # Stats tracking
         self.processed_alerts = 0
         self.errors = 0
+        self.replaced_alerts = 0  # Add counter for replaced alerts
         self.last_stats_time = datetime.now()
 
         LOGGER.info(f"Initialized FileMonitor for {file_path}")
@@ -176,6 +177,7 @@ class FileMonitor:
             self.alert_queue.put(alert_data)
             self.latest_queue_put = datetime.now()
             self.processed_alerts += 1
+            self.replaced_alerts += 1  # Increment replaced alerts counter
             LOGGER.warning("Alert processed with character replacement")
             self._save_failed_alert(alert_bytes, alert_str)
             return True
@@ -336,19 +338,20 @@ class FileMonitor:
         except Exception as e:
             LOGGER.error(f"Error checking file {self.file_path}: {str(e)}")
 
-    def log_stats(self) -> tuple[float, float, int, int]:
+    def log_stats(self) -> tuple[float, float, int, int, int]:
         """Calculate and return statistics for the current interval.
         Resets counters after calculation.
 
         Returns:
-            tuple[float, float, int, int]: (alerts per second, error rate percentage,
-                                          interval processed alerts, interval errors)
+            tuple[float, float, int, int, int]: (alerts per second, error rate percentage,
+                                             interval processed alerts, interval errors,
+                                             interval replaced alerts)
         """
         current_time = datetime.now()
         time_diff = (current_time - self.last_stats_time).total_seconds()
 
         if time_diff <= 0:
-            return 0.0, 0.0, 0, 0
+            return 0.0, 0.0, 0, 0, 0
 
         alerts_per_second = self.processed_alerts / time_diff
         error_rate = (self.errors / max(self.processed_alerts, 1)) * 100 if self.processed_alerts > 0 else 0.0
@@ -356,10 +359,12 @@ class FileMonitor:
         # Store current values for return
         interval_processed = self.processed_alerts
         interval_errors = self.errors
+        interval_replaced = self.replaced_alerts
 
         # Reset counters and update time
         self.last_stats_time = current_time
         self.processed_alerts = 0
         self.errors = 0
+        self.replaced_alerts = 0
 
-        return alerts_per_second, error_rate, interval_processed, interval_errors
+        return alerts_per_second, error_rate, interval_processed, interval_errors, interval_replaced

@@ -144,7 +144,7 @@ class LoggingService:
 
             # Log FileMonitor statistics
             if self.alerts_watcher_service.file_monitor:
-                alerts_per_sec, error_rate, interval_alerts, interval_errors = (
+                alerts_per_sec, error_rate, interval_alerts, interval_errors, interval_replaced = (
                     self.alerts_watcher_service.file_monitor.log_stats()
                 )
                 LOGGER.info(
@@ -152,6 +152,7 @@ class LoggingService:
                     f"Alerts/sec: {alerts_per_sec:.2f}, "
                     f"Error rate: {error_rate:.2f}%, "
                     f"Processed alerts: {interval_alerts}, "
+                    f"Replaced alerts: {interval_replaced}, "
                     f"Errors: {interval_errors}"
                 )
 

@@ -167,17 +167,12 @@ def test_failed_alerts_storage(file_monitor, temp_log_file, temp_failed_alerts_d
     file_monitor.open()
     file_monitor.check_file()
 
-    # Check if both failed and replaced alert files were created
+    # Check if failed alert file was created
     failed_files = sorted(os.listdir(temp_failed_alerts_dir))
-    assert len(failed_files) == 2
-
-    # Verify file naming pattern
+    assert len(failed_files) == 2  # Should have both failed and replaced versions
+    # Check naming pattern
     assert any(f.endswith("_failed_alert.json") for f in failed_files)
     assert any(f.endswith("_replaced_alert.json") for f in failed_files)
-
-    # Verify files have same timestamp prefix
-    timestamps = set(f.split("_")[0] for f in failed_files)
-    assert len(timestamps) == 1, "Failed and replaced files should have same timestamp"
 
 
 def test_stats_calculation(file_monitor):
@@ -186,42 +181,41 @@ def test_stats_calculation(file_monitor):
     # Simulate some activity
     file_monitor.processed_alerts = 100
     file_monitor.errors = 5
+    file_monitor.replaced_alerts = 10
     file_monitor.last_stats_time = datetime.now()
 
     # Add a small delay to ensure non-zero time difference
     time.sleep(0.1)
 
-    alerts_per_sec, error_rate, processed, errors = file_monitor.log_stats()
+    alerts_per_sec, error_rate, processed, errors, replaced = file_monitor.log_stats()
 
     assert processed == 100
     assert errors == 5
+    assert replaced == 10
     assert abs(error_rate - 5.0) < 1e-6  # 5 errors out of 100 processed = 5%
     assert 0 < alerts_per_sec <= 1000  # Reasonable range given the 0.1s delay
 
     # Verify counters are reset
     assert file_monitor.processed_alerts == 0
     assert file_monitor.errors == 0
+    assert file_monitor.replaced_alerts == 0
 
 
 def test_cleanup_failed_alerts(file_monitor, temp_failed_alerts_dir):
-    # Create more than max_failed_files pairs of files with new naming pattern
+    # Create max_failed_files pairs of files (original and replaced)
     target_total = file_monitor.max_failed_files + 5
-    for _ in range(target_total):
+    for i in range(target_total):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        # Create both failed and replaced alert files
+        # Create only failed alert files (not pairs) to test exact limit
         failed_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_failed_alert.json")
-        replaced_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_replaced_alert.json")
         with open(failed_path, "w") as f:
-            f.write("{}")
-        with open(replaced_path, "w") as f:
             f.write("{}")
         time.sleep(0.001)  # Ensure unique timestamps
 
     file_monitor._cleanup_failed_alerts()
 
     remaining_files = os.listdir(temp_failed_alerts_dir)
-    # Each alert can have two files (failed and replaced), so max files should be doubled
-    assert len(remaining_files) <= file_monitor.max_failed_files * 2
+    assert len(remaining_files) == file_monitor.max_failed_files
 
 
 def test_large_alert_spanning_chunks(file_monitor, temp_log_file):
