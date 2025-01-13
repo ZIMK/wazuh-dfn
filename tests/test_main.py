@@ -32,6 +32,7 @@ wazuh:
   json_alert_file_poll_interval: 1.0
   max_retries: 5
   retry_interval: 5
+  json_alert_queue_size: 1000
 
 kafka:
   timeout: 60
@@ -182,7 +183,7 @@ def mock_services():
         patch("wazuh_dfn.main.AlertsWatcherService") as mock_observer,
         patch("wazuh_dfn.main.LoggingService") as mock_logging,
         patch("wazuh_dfn.main.threading.Event") as mock_event,
-        patch("wazuh_dfn.main.Queue") as mock_queue,
+        patch("wazuh_dfn.main.MaxSizeQueue") as mock_queue,
         patch("wazuh_dfn.main.threading.Thread") as mock_thread,
     ):
         # Configure service mocks with stop methods

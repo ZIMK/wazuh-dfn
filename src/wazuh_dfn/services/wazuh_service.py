@@ -175,34 +175,30 @@ class WazuhService:
                     )
 
     def _try_reconnect(self) -> None:
-        """Attempt to reestablish connection to Wazuh server.
+        """Attempt to reestablish connection to Wazuh server."""
+        with self._lock:
+            if self._is_reconnecting:
+                # If another thread is already reconnecting, just wait and return
+                return
 
-        Closes any existing socket connection and attempts to create
-        a new connection. This is used during error recovery when
-        the original connection is lost.
-
-        Raises:
-            socket_error: If reconnection to socket fails
-            Exception: For other connection-related errors
-        """
-        with self._lock:  # Ensure only one thread can execute this at a time
-            if not self._is_reconnecting:  # Check if a reconnect attempt is already in progress
-                self._is_reconnecting = True  # Set the flag
-                try:
-                    if self._socket:
-                        try:
-                            self._socket.close()
-                        except socket_error as e:
-                            LOGGER.warning(f"Error closing socket: {e}")
-                        except Exception as e:
-                            LOGGER.warning(f"Unexpected error while closing socket: {e}")
+            self._is_reconnecting = True
+            try:
+                if self._socket:
+                    try:
+                        self._socket.close()
+                    except Exception as e:
+                        LOGGER.warning(f"Error closing socket during reconnect: {e}")
+                    finally:
                         self._socket = None
-                    self.connect()
-                except Exception as e:
-                    LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
-                    raise
-                finally:
-                    self._is_reconnecting = False  # Reset the flag after the attempt
+
+                # Add small delay to prevent reconnect storm
+                time.sleep(0.1)
+                self.connect()
+            except Exception as e:
+                LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
+                raise
+            finally:
+                self._is_reconnecting = False
 
     def _send(
         self,
@@ -255,61 +251,71 @@ class WazuhService:
 
         self._send_event(f"1:dfn:{json.dumps(msg)}")
 
-    def _send_event(self, event: str) -> None:
-        """Send an event through the Wazuh socket connection.
+    def _handle_socket_error(self, e: socket_error, attempt: int, max_attempts: int) -> bool:
+        """Handle socket errors during event sending.
 
-        Handles the low-level socket communication including automatic
-        reconnection attempts on failure. Uses exponential backoff
-        between retry attempts.
-
-        Automatic reconnection is attempted for the following socket errors:
-        - errno 107: Transport endpoint not connected
-        - errno 32: Broken pipe
-        - errno 9: Bad file descriptor
-        - errno 111: Connection refused (Wazuh not running)
-
-        Args:
-            event: Formatted event string to send
-
-        Raises:
-            socket_error: If sending fails after all retry attempts
-                or on unrecoverable socket errors
-            SystemExit: If Wazuh is not running (errno 111) after max attempts
+        Returns:
+            bool: True if should continue retrying, False if should raise error
         """
+        error_code = getattr(e, "errno", None)
+        LOGGER.warning(f"Socket error (attempt {attempt + 1}/{max_attempts}): {e} (errno: {error_code})")
+
+        if error_code not in (107, 32, 9, 111):
+            LOGGER.error(f"Unrecoverable socket error: {e}")
+            raise e
+
+        if attempt >= max_attempts:
+            if error_code == 111:
+                LOGGER.error("Wazuh is not running after maximum retries")
+                sys.exit(6)
+            return False
+
+        wait_time = min(self.config.retry_interval * (2**attempt), 30)
+        LOGGER.info(f"Waiting {wait_time} seconds before retry...")
+        time.sleep(wait_time)
+
+        try:
+            self._try_reconnect()
+        except Exception as reconnect_error:
+            LOGGER.error(f"Reconnection attempt {attempt} failed: {reconnect_error}")
+
+        return True
+
+    def _ensure_connection(self) -> bool:
+        """Ensure socket connection is available.
+
+        Returns:
+            bool: True if connection is ready, False if should retry
+        """
+        if not self._socket:
+            self._try_reconnect()
+            if not self._socket:
+                time.sleep(1)
+                return False
+        return True
+
+    def _send_event(self, event: str) -> None:
+        """Send an event through the Wazuh socket connection."""
         if len(event) > self.config.max_event_size:
             LOGGER.debug(f"Message size exceeds the maximum allowed limit of {self.config.max_event_size} bytes.")
 
         LOGGER.debug(event)
+        attempt = 0
         max_attempts = self.config.max_retries
 
-        for attempt in range(max_attempts):
+        while attempt < max_attempts:
+            if not self._ensure_connection():
+                continue
+
             try:
-                if not self._socket:
-                    with self._lock:
-                        if not self._is_reconnecting:
-                            self._is_reconnecting = True
-                            self.connect()  # Only the first worker will call connect
-                        else:
-                            while self._is_reconnecting:  # Wait for the reconnect to finish
-                                time.sleep(1)
                 self._socket.send(event.encode())
                 return
             except socket_error as e:
-                error_code = getattr(e, "errno", None)
-                if attempt < max_attempts - 1 and error_code in (107, 32, 9, 111):
-                    LOGGER.warning(f"Socket disconnected (attempt {attempt + 1}/{max_attempts}): {e}")
-                    wait_time = min(self.config.retry_interval * (2**attempt), 30)
-                    time.sleep(wait_time)
+                if not self._handle_socket_error(e, attempt, max_attempts):
+                    break
+                attempt += 1
 
-                    self._try_reconnect()
-                else:
-                    if error_code == 111:
-                        LOGGER.error(f"Failed to send event after {max_attempts} attempts: Wazuh is not running")
-                        sys.exit(6)
-                    LOGGER.error(f"Failed to send event: {e}")
-                    raise
-
-        raise socket_error("Failed to send event after maximum retries")
+        raise socket_error(f"Failed to send event after {max_attempts} attempts")
 
     def close(self) -> None:
         """Close the connection to Wazuh server.

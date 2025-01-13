@@ -5,12 +5,12 @@ import os
 import shutil
 import tempfile
 import threading
-from queue import Queue
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 from wazuh_dfn.validators import ConfigValidator
 
@@ -188,7 +188,7 @@ def alerts_service(sample_config, kafka_service, wazuh_service):
 @pytest.fixture
 def alert_queue():
     """Create an alert queue for testing."""
-    return Queue()
+    return MaxSizeQueue()
 
 
 @pytest.fixture

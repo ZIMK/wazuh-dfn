@@ -4,8 +4,9 @@ import logging
 import threading
 import time
 from datetime import datetime
-from queue import Queue
 from typing import Optional
+
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 from ..config import WazuhConfig
 from ..validators import WazuhConfigValidator
@@ -20,7 +21,7 @@ class AlertsWatcherService:
     def __init__(
         self,
         config: WazuhConfig,
-        alert_queue: Queue,
+        alert_queue: MaxSizeQueue,
         shutdown_event: threading.Event,
     ) -> None:
         """Initialize AlertsWatcherService.

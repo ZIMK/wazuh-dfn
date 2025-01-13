@@ -2,8 +2,9 @@ import json
 import logging
 import os
 from datetime import datetime
-from queue import Queue
 from typing import Optional
+
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class FileMonitor:
     def __init__(
         self,
         file_path: str,
-        alert_queue: Queue,
+        alert_queue: MaxSizeQueue,
         alert_prefix: str,
         tail: bool = False,
         failed_alerts_path: Optional[str] = None,  # Add path for storing failed alerts

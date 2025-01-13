@@ -2,11 +2,11 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from queue import Queue
 from threading import Thread
 from time import sleep
 
 from wazuh_dfn.services.file_monitor import FileMonitor
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 
 # Utility functions
@@ -92,7 +92,7 @@ def test_file_monitor_processing():
 
     try:
         # Set up FileMonitor
-        alert_queue = Queue()
+        alert_queue = MaxSizeQueue()
         monitor = FileMonitor(file_path=temp_file, alert_queue=alert_queue, alert_prefix="{", tail=True)
 
         # Start monitoring in a separate thread
@@ -132,7 +132,7 @@ def test_file_monitor_rotation():
 
     try:
         # Set up monitoring
-        alert_queue = Queue()
+        alert_queue = MaxSizeQueue()
         monitor = FileMonitor(file_path=temp_file, alert_queue=alert_queue, alert_prefix="{", tail=True)
 
         # First check

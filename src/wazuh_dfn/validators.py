@@ -209,22 +209,23 @@ class WazuhConfigValidator(ConfigValidator):
             ConfigValidationError: If configuration is invalid
         """
         if isinstance(config, dict):
+            # Only include truly required fields
             required_fields = [
                 "json_alert_file",
                 "unix_socket_path",
-                "max_event_size",
-                "json_alert_prefix",
-                "json_alert_suffix",
-                "json_alert_file_poll_interval",
             ]
             ConfigValidator.validate_config_dict(config, required_fields)
 
-            # Validate max_event_size
-            if config["max_event_size"] <= 0:
+            # Optional fields: validate only if present
+            if "max_event_size" in config and config["max_event_size"] <= 0:
                 raise ConfigValidationError([f"Invalid max_event_size: {config['max_event_size']}. Must be positive"])
 
-            # Validate poll interval
-            if config["json_alert_file_poll_interval"] <= 0:
+            if "json_alert_queue_size" in config and config["json_alert_queue_size"] <= 0:
+                raise ConfigValidationError(
+                    [f"Invalid json_alert_queue_size: {config['json_alert_queue_size']}. Must be positive"]
+                )
+
+            if "json_alert_file_poll_interval" in config and config["json_alert_file_poll_interval"] <= 0:
                 raise ConfigValidationError(
                     [
                         f"Invalid json_alert_file_poll_interval: {config['json_alert_file_poll_interval']}. Must be positive"

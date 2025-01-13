@@ -107,6 +107,14 @@ class WazuhConfig:
             "cli": "--wazuh-max-failed-files",
         },
     )
+    json_alert_queue_size: int = field(
+        default=100000,
+        metadata={
+            "help": "Maximum number of alerts to queue for processing",
+            "env_var": "WAZUH_JSON_ALERT_QUEUE_SIZE",
+            "cli": "--wazuh-json-alert-queue-size",
+        },
+    )
 
     def __post_init__(self):
         """Validate configuration after initialization."""

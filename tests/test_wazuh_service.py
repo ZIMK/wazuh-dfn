@@ -238,7 +238,7 @@ def test_wazuh_service_reconnection_backoff(mock_socket, wazuh_config, mock_sock
     service.connect()
 
     with patch("time.sleep"):  # Mock sleep to speed up tests
-        with pytest.raises(socket.error, match=r"\[Errno 107\] Transport endpoint is not connected"):
+        with pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"):
             service._send_event("test event")
 
 
@@ -440,7 +440,7 @@ def test_wazuh_service_exponential_backoff(mock_socket, wazuh_config, mock_socke
     service.connect()
 
     with patch("time.sleep"):  # Mock sleep to speed up tests
-        with pytest.raises(socket.error, match=r"\[Errno 107\] Transport endpoint is not connected"):
+        with pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"):
             service._send_event("test event")
 
     # Verify retry attempts

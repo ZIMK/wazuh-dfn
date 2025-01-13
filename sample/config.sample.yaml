@@ -23,6 +23,7 @@ misc:
 
 # Wazuh-specific settings
 wazuh:
+  json_alert_queue_size: 100000 # Maximum number of alerts to queue for processing
   json_alert_file: "/var/ossec/logs/alerts/alerts.json" # Full path to the JSON alerts file to monitor
   json_alert_prefix: '{"timestamp"' # Expected prefix of JSON alert lines
   json_alert_suffix: "}" # Expected suffix of JSON alert lines

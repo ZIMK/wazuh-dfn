@@ -2,9 +2,10 @@
 
 import logging
 import threading
-from queue import Queue
 
 import psutil
+
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 from ..config import LogConfig
 from ..validators import LogConfigValidator
@@ -26,7 +27,7 @@ class LoggingService:
     def __init__(
         self,
         config: LogConfig,
-        alert_queue: Queue,
+        alert_queue: MaxSizeQueue,
         kafka_service: KafkaService,
         alerts_watcher_service: AlertsWatcherService,
         alerts_worker_service: AlertsWorkerService,

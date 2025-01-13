@@ -12,10 +12,11 @@ import threading
 import time
 from dataclasses import field
 from importlib.metadata import PackageNotFoundError, version
-from queue import Queue
 from typing import Any
 
 from dotenv import load_dotenv
+
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
@@ -249,7 +250,7 @@ def setup_service(config: Config) -> None:
     """
 
     shutdown_event = threading.Event()
-    alert_queue = Queue()
+    alert_queue = MaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
     service_threads = []  # Initialize service_threads list at the start
 
     LOGGER.info("Starting services...")
