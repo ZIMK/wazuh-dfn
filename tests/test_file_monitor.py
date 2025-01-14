@@ -204,7 +204,7 @@ def test_stats_calculation(file_monitor):
 def test_cleanup_failed_alerts(file_monitor, temp_failed_alerts_dir):
     # Create max_failed_files pairs of files (original and replaced)
     target_total = file_monitor.max_failed_files + 5
-    for i in range(target_total):
+    for _ in range(target_total):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         # Create only failed alert files (not pairs) to test exact limit
         failed_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_failed_alert.json")
