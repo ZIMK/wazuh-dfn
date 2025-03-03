@@ -24,3 +24,7 @@ updates:
     reviewers:
       - "sebastian2010"
     target-branch: "main"
+    groups:
+      python-packages:
+        patterns:
+          - "*"
