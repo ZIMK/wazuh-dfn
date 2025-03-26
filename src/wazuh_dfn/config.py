@@ -1,15 +1,12 @@
-# -*- coding: utf-8 -*-
 """Configuration module for Wazuh DFN service."""
 
 import argparse
 import logging
-import os
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
-
 import yaml
-
 from .exceptions import ConfigValidationError
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -237,7 +234,7 @@ class KafkaConfig:
             "cli": "--kafka-service-retry-interval",
         },
     )
-    producer_config: Dict[str, Any] = field(
+    producer_config: dict[str, Any] = field(
         default_factory=lambda: {
             "request.timeout.ms": 60000,
             "connections.max.idle.ms": 540000,  # 9 minutes
@@ -352,7 +349,7 @@ class MiscConfig:
             "cli": "--misc-num-workers",
         },
     )
-    own_network: Optional[str] = field(
+    own_network: str | None = field(
         default=None,
         metadata={
             "help": "Own network CIDR notation (optional)",
@@ -400,12 +397,13 @@ class Config:
         if not yaml_path:
             return config
 
-        if not os.path.exists(yaml_path):
+        yaml_path_obj = Path(yaml_path)
+        if not yaml_path_obj.exists():
             raise FileNotFoundError
 
         print(f"Loading config from {yaml_path}")
         try:
-            with open(yaml_path, "r") as f:
+            with yaml_path_obj.open() as f:
                 config_dict = yaml.safe_load(f)
         except yaml.YAMLError as e:
             raise ConfigValidationError(f"Invalid YAML content: {e}")
@@ -460,6 +458,8 @@ class Config:
     @staticmethod
     def _load_from_env(config: "Config") -> None:
         """Load configuration from environment variables."""
+        import os  # Import os only for environment variables access
+
         for cls_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
             config_section = getattr(config, cls_name)
             for field_name, field_obj in config_section.__class__.__dataclass_fields__.items():
@@ -481,7 +481,7 @@ class Config:
                     if value is not None:
                         setattr(config_section, field_name, Config._convert_value(value, field_obj.type))
 
-    def get(self, key: str, default: Optional[str] = None) -> str:
+    def get(self, key: str, default: str | None = None) -> str:
         """Get configuration value.
 
         Args:
@@ -528,6 +528,7 @@ class Config:
                         yaml_lines.append(f"  # Environment variable: {metadata['env_var']}\n")
                     yaml_lines.append(f"  {field_name}: {field_obj.default}\n")
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "w") as f:
+        output_path_obj = Path(output_path)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        with output_path_obj.open("w") as f:
             f.writelines(yaml_lines)

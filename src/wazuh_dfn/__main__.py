@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Project name: Wazuh DFN
 # Project URL: https://github.com/ZIMK/wazuh-dfn
@@ -13,9 +12,10 @@ from wazuh_dfn.main import main
 
 if __name__ == "__main__":
     if __package__ is None:
-        from os import path, sys
+        import sys
+        from pathlib import Path
 
-        sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-        del sys, path
+        sys.path.append(str(Path(__file__).parent.parent))
+        del sys, Path
 
     main()

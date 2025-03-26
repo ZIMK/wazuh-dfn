@@ -1,17 +1,14 @@
 """Logging service module for managing logging and statistics."""
 
 import logging
-import threading
-
 import psutil
-
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-
-from ..config import LogConfig
-from ..validators import LogConfigValidator
+import threading
 from .alerts_watcher_service import AlertsWatcherService
 from .alerts_worker_service import AlertsWorkerService
 from .kafka_service import KafkaService
+from wazuh_dfn.config import LogConfig
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.validators import LogConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -106,7 +103,7 @@ class LoggingService:
                 memory_percent = self.process.memory_percent()
                 LOGGER.info(f"Current memory usage: {memory_percent:.2f}%")
             except psutil.Error as e:
-                LOGGER.error(f"Error getting memory usage: {str(e)}")
+                LOGGER.error(f"Error getting memory usage: {e!s}")
 
             # Log CPU usage averages
             try:
@@ -120,7 +117,7 @@ class LoggingService:
                 open_files = self.process.open_files()
                 LOGGER.info(f"Current open files: {open_files}")
             except psutil.Error as e:
-                LOGGER.error(f"Error getting open files: {str(e)}")
+                LOGGER.error(f"Error getting open files: {e!s}")
 
             # Log Kafka producer status
             if self.kafka_service.producer:
@@ -157,4 +154,4 @@ class LoggingService:
                 )
 
         except Exception as e:
-            LOGGER.error(f"Error collecting monitoring stats: {str(e)}")
+            LOGGER.error(f"Error collecting monitoring stats: {e!s}")

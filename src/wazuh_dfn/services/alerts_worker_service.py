@@ -2,18 +2,16 @@
 
 import json
 import logging
-import os
 import secrets
 import tempfile
 import threading
 import time
-from datetime import datetime
-from queue import Empty, Queue
-from typing import Optional
-
-from ..config import MiscConfig
-from ..validators import MiscConfigValidator
 from .alerts_service import AlertsService
+from datetime import datetime
+from pathlib import Path
+from queue import Empty, Queue
+from wazuh_dfn.config import MiscConfig
+from wazuh_dfn.validators import MiscConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +47,7 @@ class AlertsWorkerService:
         self.alert_queue = alert_queue
         self.alerts_service = alerts_service
         self.shutdown_event = shutdown_event
-        self.workers: list[Optional[threading.Thread]] = []
+        self.workers: list[threading.Thread | None] = []
         self._last_processed_time = time.time()
 
     @property
@@ -101,9 +99,9 @@ class AlertsWorkerService:
                     LOGGER.error(f"Error processing alert: {e}", exc_info=True)
                     # Write alert to /tmp
                     tmp_file = self._dump_alert(alert)
-                    if tmp_file and os.path.exists(tmp_file):
+                    if tmp_file and Path(tmp_file).exists():
                         LOGGER.debug(f"Alert written to {tmp_file}")
-                        os.remove(tmp_file)
+                        Path(tmp_file).unlink()
                 finally:
                     self.alert_queue.task_done()
             except Empty:
@@ -127,7 +125,7 @@ class AlertsWorkerService:
                 # Return the name of the temporary file
                 return tmp_file.name
         except Exception as e:
-            LOGGER.error(f"Error writing alert to tmp file: {str(e)}")
+            LOGGER.error(f"Error writing alert to tmp file: {e!s}")
             return None
 
     def _shutdown(self) -> None:

@@ -2,9 +2,8 @@
 
 import logging
 import xml.etree.ElementTree as ET
-
-from ..kafka_service import KafkaService
-from ..wazuh_service import WazuhService
+from wazuh_dfn.services.kafka_service import KafkaService
+from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ class WindowsHandler:
             self._process_windows_alert(alert)
         except Exception as error:
             alert_id = alert.get("id", "Unknown")
-            LOGGER.error(f"Error processing Windows alert: {alert_id}: {str(error)}", exc_info=True)
+            LOGGER.error(f"Error processing Windows alert: {alert_id}: {error!s}", exc_info=True)
 
     def _process_windows_alert(self, alert: dict) -> None:
         """Process Windows-specific alert data.
@@ -122,7 +121,7 @@ class WindowsHandler:
 
         return message_data
 
-    def _create_xml_event(self, alert: dict, event_id: str) -> str:
+    def _create_xml_event(self, alert: dict, event_id: str) -> ET.Element:
         """
         Generate a Windows event XML element based on the alert information and event ID.
 
@@ -133,12 +132,11 @@ class WindowsHandler:
         event_id : str
             The event ID of the Windows event.
 
-        Returns
+        Returns:
         -------
         ET.Element
             An XML element representing the generated Windows event.
         """
-
         win_alert = alert["data"]["win"]
 
         root = ET.Element("Event")
@@ -168,7 +166,9 @@ class WindowsHandler:
             )
             self.wazuh_service.send_error(
                 {
-                    "description": f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id}, agent_id: {agent_id}, agent_name: {agent_name}"
+                    "description": (
+                        f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id}, agent_id: {agent_id}, agent_name: {agent_name}"
+                    )
                 }
             )
 
@@ -185,11 +185,10 @@ class WindowsHandler:
         system_alert : dict
             The system alert dictionary containing information about the Windows event.
 
-        Returns
+        Returns:
         -------
         None
         """
-
         elem.append(
             ET.Element("Provider", {"Name": system_alert["providerName"], "Guid": system_alert["providerGuid"]})
         )
@@ -257,12 +256,11 @@ class WindowsHandler:
         event_id : str
             The event ID of the Windows event.
 
-        Returns
+        Returns:
         -------
         ET.Element
             An XML element representing the generated EventData element.
         """
-
         event_data = ET.Element("EventData")
         for x in event_data_alert.items():
             tmp = ET.Element("Data", attrib={"Name": x[0][0].upper() + x[0][1:]})
@@ -286,12 +284,11 @@ class WindowsHandler:
         """
         Generate the EventData element for the Windows event XML with event ID 1100.
 
-        Returns
+        Returns:
         -------
         ET.Element
             An XML element representing the generated EventData element.
         """
-
         event_data = ET.Element("UserData")
         elem = ET.Element("ServiceShutdown")
         elem.set("xmlns", "http://manifests.microsoft.com/win/2004/08/windows/eventlog")
@@ -308,12 +305,11 @@ class WindowsHandler:
         event_data_alert : dict
             The event data alert dictionary containing information about the Windows event.
 
-        Returns
+        Returns:
         -------
         ET.Element
             An XML element representing the generated EventData element.
         """
-
         event_data = ET.Element("UserData")
         elem = ET.Element("LogFileCleared")
         elem.set("xmlns", "http://manifests.microsoft.com/win/2004/08/windows/eventlog")

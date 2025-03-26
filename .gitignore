@@ -198,3 +198,9 @@ pyrightconfig.json
 test-results.xml
 .scannerwork/
 test_alerts.json
+
+digest.txt
+improvements.md
+
+.pdm-python
+.pdm-build

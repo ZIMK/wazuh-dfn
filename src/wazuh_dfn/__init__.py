@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Project name: Wazuh DFN
 # Project URL: https://github.com/ZIMK/wazuh-dfn

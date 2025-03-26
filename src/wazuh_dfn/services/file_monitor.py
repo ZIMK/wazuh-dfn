@@ -1,10 +1,8 @@
 import json
 import logging
-import os
 import time
 from datetime import datetime
-from typing import Optional
-
+from pathlib import Path
 from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -27,7 +25,7 @@ class FileMonitor:
         alert_queue: MaxSizeQueue,
         alert_prefix: str,
         tail: bool = False,
-        failed_alerts_path: Optional[str] = None,  # Add path for storing failed alerts
+        failed_alerts_path: str | None = None,  # Add path for storing failed alerts
         max_failed_files: int = 100,  # Maximum number of failed alert files to keep
         store_failed_alerts: bool = False,
     ) -> None:
@@ -43,7 +41,7 @@ class FileMonitor:
         self.fp = None
         self.buffer = bytearray()
         self.current_inode = None
-        self.latest_queue_put: Optional[datetime] = None
+        self.latest_queue_put: datetime | None = None
         self.last_complete_position = 0  # Track position of last complete alert
 
         # Stats tracking
@@ -60,19 +58,20 @@ class FileMonitor:
             try:
                 self.fp.close()
             except Exception as e:
-                LOGGER.error(f"Error closing file: {str(e)}")
+                LOGGER.error(f"Error closing file: {e!s}")
 
         try:
             self.fp = open(self.file_path, "rb")
             if not self.tail:
-                self.fp.seek(0, os.SEEK_END)
+                self.fp.seek(0, 2)  # SEEK_END
                 self.last_complete_position = self.fp.tell()
 
-            stat = os.stat(self.file_path)
+            file_path_obj = Path(self.file_path)
+            stat = file_path_obj.stat()
             self.current_inode = stat.st_ino
             return True
         except Exception as e:
-            LOGGER.error(f"Error opening file: {str(e)}")
+            LOGGER.error(f"Error opening file: {e!s}")
             self.fp = None
             return False
 
@@ -81,13 +80,14 @@ class FileMonitor:
             try:
                 self.fp.close()
             except Exception as e:
-                LOGGER.error(f"Error closing file: {str(e)}")
+                LOGGER.error(f"Error closing file: {e!s}")
         self.fp = None
         self.buffer = bytearray()
 
     def _check_inode(self) -> bool:
         try:
-            current_stat = os.stat(self.file_path)
+            file_path_obj = Path(self.file_path)
+            current_stat = file_path_obj.stat()
             if current_stat.st_ino != self.current_inode:
                 LOGGER.info(f"File {self.file_path} rotated (inode changed)")
                 self.current_inode = current_stat.st_ino
@@ -95,7 +95,7 @@ class FileMonitor:
                 return True
             return False
         except Exception as e:
-            LOGGER.error(f"Error checking inode: {str(e)}")
+            LOGGER.error(f"Error checking inode: {e!s}")
             return False
 
     def _find_line_ending(self, start_pos: int) -> int:
@@ -109,7 +109,7 @@ class FileMonitor:
             pos += 1
         return -1
 
-    def _extract_alert(self) -> Optional[bytes]:
+    def _extract_alert(self) -> bytes | None:
         """Extract a complete alert from the buffer if available."""
         start = self.buffer.find(self.alert_prefix)
         if start == -1:
@@ -146,7 +146,7 @@ class FileMonitor:
         del self.buffer[:line_end]
         return alert_bytes
 
-    def _save_failed_alert(self, alert_bytes: bytes, alert_str: Optional[str] = None) -> None:
+    def _save_failed_alert(self, alert_bytes: bytes, alert_str: str | None = None) -> None:
         """Save failed alert to file."""
         if not self.store_failed_alerts or not self.failed_alerts_path:
             return
@@ -154,20 +154,21 @@ class FileMonitor:
         try:
             self._cleanup_failed_alerts()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            failed_file = os.path.join(self.failed_alerts_path, f"{timestamp}_failed_alert.json")
+            failed_path = Path(self.failed_alerts_path)
+            failed_file = failed_path / f"{timestamp}_failed_alert.json"
 
-            with open(failed_file, "wb") as f:
+            with failed_file.open("wb") as f:
                 f.write(alert_bytes)
 
             if alert_str:
-                replaced_file = os.path.join(self.failed_alerts_path, f"{timestamp}_replaced_alert.json")
-                with open(replaced_file, "wb") as f:
+                replaced_file = failed_path / f"{timestamp}_replaced_alert.json"
+                with replaced_file.open("wb") as f:
                     f.write(alert_str.encode("utf-8"))
                 LOGGER.info(f"Saved failed alert and replaced version to {failed_file} and {replaced_file}")
             else:
                 LOGGER.info(f"Saved failed alert to {failed_file}")
         except Exception as save_error:
-            LOGGER.error(f"Error saving failed alert: {str(save_error)}")
+            LOGGER.error(f"Error saving failed alert: {save_error!s}")
 
     def _process_alert_with_replace(self, alert_bytes: bytes) -> bool:
         """Try processing alert with character replacement."""
@@ -213,28 +214,28 @@ class FileMonitor:
             return
 
         try:
+            failed_path = Path(self.failed_alerts_path)
             files = [
-                os.path.join(self.failed_alerts_path, f)
-                for f in os.listdir(self.failed_alerts_path)
-                if "_failed_alert.json" in f or "_replaced_alert.json" in f
+                f for f in failed_path.iterdir() if "_failed_alert.json" in f.name or "_replaced_alert.json" in f.name
             ]
+
             if len(files) <= self.max_failed_files:
                 return
 
             # Sort files by creation time, oldest first
-            files.sort(key=lambda x: os.path.getctime(x))
+            files.sort(key=lambda x: x.stat().st_ctime)
 
             # Remove oldest files that exceed the limit
             files_to_remove = files[: (len(files) - self.max_failed_files)]
             for file_path in files_to_remove:
                 try:
-                    os.remove(file_path)
+                    file_path.unlink()
                     LOGGER.debug(f"Removed old failed alert file: {file_path}")
                 except Exception as e:
-                    LOGGER.error(f"Error removing old failed alert file {file_path}: {str(e)}")
+                    LOGGER.error(f"Error removing old failed alert file {file_path}: {e!s}")
 
         except Exception as e:
-            LOGGER.error(f"Error during failed alerts cleanup: {str(e)}")
+            LOGGER.error(f"Error during failed alerts cleanup: {e!s}")
 
     def _process_buffer(self) -> None:
         """Process buffer content to find and queue complete alerts."""
@@ -244,7 +245,7 @@ class FileMonitor:
                 break
             self._queue_alert(alert_bytes)
 
-    def _wait_for_data(self, wait_start: Optional[float]) -> Optional[float]:
+    def _wait_for_data(self, wait_start: float | None) -> float | None:
         """Wait for more data if buffer contains incomplete alert."""
         if len(self.buffer) > 0:
             if wait_start is None:
@@ -261,7 +262,8 @@ class FileMonitor:
         if not self.fp and not self.open():
             return False
 
-        if not os.path.exists(self.file_path):
+        file_path_obj = Path(self.file_path)
+        if not file_path_obj.exists():
             LOGGER.warning(f"File {self.file_path} no longer exists")
             return False
 
@@ -294,7 +296,7 @@ class FileMonitor:
                 alerts_found = True
                 buffer_position += buffer_size_before - len(self.buffer)
             except Exception as e:
-                LOGGER.error(f"Error processing alert: {str(e)}, alert size: {len(alert_bytes)}")
+                LOGGER.error(f"Error processing alert: {e!s}, alert size: {len(alert_bytes)}")
                 if len(alert_bytes) > 0:
                     LOGGER.debug(f"First 100 bytes of failed alert: {alert_bytes[:100].hex()}")
                 raise
@@ -336,7 +338,7 @@ class FileMonitor:
                 self.buffer.clear()
 
         except Exception as e:
-            LOGGER.error(f"Error checking file {self.file_path}: {str(e)}")
+            LOGGER.error(f"Error checking file {self.file_path}: {e!s}")
 
     def log_stats(self) -> tuple[float, float, int, int, int]:
         """Calculate and return statistics for the current interval.

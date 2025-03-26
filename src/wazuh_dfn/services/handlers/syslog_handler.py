@@ -2,11 +2,10 @@
 
 import ipaddress
 import logging
-from typing import Any, Dict
-
 from ...config import MiscConfig
 from ..kafka_service import KafkaService
 from ..wazuh_service import WazuhService
+from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class SyslogHandler:
             except ValueError as e:
                 LOGGER.warning(f"Invalid own_network format: {e}")
 
-    def process_alert(self, alert: Dict[str, Any]) -> None:
+    def process_alert(self, alert: dict[str, Any]) -> None:
         """Process a syslog alert.
 
         Args:
@@ -51,9 +50,9 @@ class SyslogHandler:
             self._process_fail2ban_alert(alert)
         except Exception as error:
             alert_id = alert.get("id", "Unknown")
-            LOGGER.error(f"Error processing Syslog alert: {alert_id}: {str(error)}", exc_info=True)
+            LOGGER.error(f"Error processing Syslog alert: {alert_id}: {error!s}", exc_info=True)
 
-    def _process_fail2ban_alert(self, alert: Dict[str, Any]) -> None:
+    def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
         """Process fail2ban-specific alert data.
 
         Args:

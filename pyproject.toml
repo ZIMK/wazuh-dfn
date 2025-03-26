@@ -1,5 +1,6 @@
 [project]
 name = "wazuh-dfn"
+version = "0.16.0"
 authors = [{ name = "Sebastian Wolf", email = "wolf@uni-trier.de" }]
 description = "Wazuh DFN"
 readme = "README.md"
@@ -14,7 +15,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 requires-python = ">=3.12"
-dynamic = ["version"]
 dependencies = [
     "psutil==7.0.0",
     "confluent-kafka==2.8.2",
@@ -22,6 +22,8 @@ dependencies = [
     "pytest-cov==6.0.0",
     "pytest-mock==3.14.0",
     "python-dotenv==1.0.1",
+    "pytest-sugar==1.0.0",
+    "PyYAML>=6.0,<7.0",
 ]
 
 [project.urls]
@@ -33,175 +35,162 @@ Tracker = "https://github.com/ZIMK/wazuh-dfn/-/issues"
 wazuh-dfn = "wazuh_dfn.main:main"
 
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
 
-[tool.flit.module]
-name = "wazuh_dfn"
+[tool.pdm]
 
-[tool.bandit]
-exclude_dirs = ["build", "dist", "tests", "scripts"]
-number = 4
-recursive = true
-targets = "src"
+[tool.pdm.dev-dependencies]
+test = [
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-cov>=6.0.0,<7.0.0",
+    "pytest-sugar>=1.0.0,<2.0.0",
+    "pytest-mock>=3.0.0,<4.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+]
+lint = [
+    "black>=25.0.0,<26.0.0",
+    "ruff>=0.9.0,<1.0.0",
+    "pyright>=1.1.350,<2.0.0",
+]
+types = [
+    "types-PyYAML",          # For YAML configuration loading
+    "types-psutil",          # For system monitoring utilities
+    "types-confluent-kafka", # For Kafka operations
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+fix = true
+unsafe-fixes = false
+exclude = [".git", ".venv", "venv", "__pycache__", "build", "dist"]
+
+[tool.ruff.lint]
+unfixable = [
+    "ERA", # do not autoremove commented out code
+]
+
+# Core rules focused on important issues
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions (reduced scope)
+    "W",   # pycodestyle warnings
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "RUF", # ruff-specific rules
+    "S",   # flake8-bandit (security)
+    "PTH", # flake8-use-pathlib
+]
+
+# Optional rules that can be enabled later or for specific modules
+extend-select = [
+    "PL",  # pylint
+    "D",   # pydocstyle
+    "TID", # flake8-tidy-imports
+    "ERA", # eradicate (commented out code)
+    "PGH", # pygrep-hooks
+    "SLF", # flake8-self
+    "SIM", # flake8-simplify
+]
+
+ignore = [
+    "D203",    # one-blank-line-before-class
+    "D212",    # multi-line-summary-first-line
+    "D100",    # Missing docstring in public module
+    "D101",    # Missing docstring in public class
+    "D102",    # missing docstring in public method
+    "D105",    # missing docstring in magic method
+    "D107",    # missing docstring in __init__
+    "D205",    # blank line after summary
+    "B904",    # Within except clause, raise with from
+    "PLR0913", # too many arguments
+    "PLR0915", # Too many statements
+    "RUF012",  # ClassVar typing
+    "RUF013",  # Optional typing style
+    "SIM108",  # Ternary operators
+    "SLF001",  # Private member access
+    "PLR2004", # Magic numbers
+    "ERA001",  # Commented code
+    "C403",    # List vs set comprehension
+    "UP038",   # isinstance tuple syntax
+    "D417",    # Missing argument descriptions
+    "SIM102",  # Nested if statements - can be more readable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = ["S101", "D", "PGH"]
+"**/__init__.py" = [
+    "I001",
+    "I002",
+] # Disable import sorting in all __init__.py files
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12 # Increased from 10 to be more practical
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+# Prevent import sorting to preserve carefully ordered imports
+no-sections = true
+force-sort-within-sections = false
+combine-as-imports = false
+split-on-trailing-comma = false
+required-imports = []
 
 [tool.black]
 line-length = 120
+target-version = ['py312']
+preview = true # Enable new formatting features
+include = '\.pyi?$'
+extend-exclude = '''
+# A regex preceded with ^/ will apply only to files and directories
+# in the root of the project.
+^/tests/data/
+'''
 
 [tool.isort]
 profile = "black"
 line_length = 120
 
-[tool.pylint.format]
-max-line-length = 120
-
-[tool.pylint.messages_control]
-disable = [
-    "import-error",
-    "missing-docstring",
-    "invalid-name",
-    "W",
-    "C",
-    "R",
-    "undefined-variable",
-    "c-extension-no-member",
-    "no-name-in-module",
-]
-
-[tool.pylint]
-extension-pkg-whitelist = [
-    "numpy",
-    "torch",
-    "cv2",
-    "pyodbc",
-    "pydantic",
-    "ciso8601",
-    "netcdf4",
-    "scipy",
-]
-ignore = "CVS"
-ignore-patterns = "test.*?py,conftest.py"
-init-hook = 'import sys; sys.setrecursionlimit(8 * sys.getrecursionlimit())'
-jobs = 0
-limit-inference-results = 100
-persistent = "yes"
-suggestion-mode = "yes"
-unsafe-load-any-extension = "no"
-
-[tool.pylint.'MESSAGES CONTROL']
-enable = "c-extension-no-member"
-
-[tool.pylint.'REPORTS']
-evaluation = "10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)"
-output-format = "text"
-reports = "no"
-score = "yes"
-
-[tool.pylint.'REFACTORING']
-max-nested-blocks = 5
-never-returning-functions = "sys.exit"
-
-[tool.pylint.'BASIC']
-argument-naming-style = "snake_case"
-attr-naming-style = "snake_case"
-bad-names = ["foo", "bar"]
-class-attribute-naming-style = "any"
-class-naming-style = "PascalCase"
-const-naming-style = "UPPER_CASE"
-docstring-min-length = -1
-function-naming-style = "snake_case"
-good-names = ["i", "j", "k", "ex", "Run", "_"]
-include-naming-hint = "yes"
-inlinevar-naming-style = "any"
-method-naming-style = "snake_case"
-module-naming-style = "any"
-no-docstring-rgx = "^_"
-property-classes = "abc.abstractproperty"
-variable-naming-style = "snake_case"
-
-[tool.pylint.'FORMAT']
-ignore-long-lines = "^\\s*(# )?.*['\"]?<?https?://\\S+>?"
-indent-after-paren = 4
-indent-string = '    '
-max-line-length = 120
-max-module-lines = 1000
-single-line-class-stmt = "no"
-single-line-if-stmt = "no"
-
-[tool.pylint.'LOGGING']
-logging-format-style = "old"
-logging-modules = "logging"
-
-[tool.pylint.'MISCELLANEOUS']
-notes = ["FIXME", "XXX", "TODO"]
-
-[tool.pylint.'SIMILARITIES']
-ignore-comments = "yes"
-ignore-docstrings = "yes"
-ignore-imports = "yes"
-min-similarity-lines = 7
-
-[tool.pylint.'SPELLING']
-max-spelling-suggestions = 4
-spelling-store-unknown-words = "no"
-
-[tool.pylint.'STRING']
-check-str-concat-over-line-jumps = "no"
-
-[tool.pylint.'TYPECHECK']
-contextmanager-decorators = "contextlib.contextmanager"
-generated-members = "numpy.*,np.*,pyspark.sql.functions,collect_list"
-ignore-mixin-members = "yes"
-ignore-none = "yes"
-ignore-on-opaque-inference = "yes"
-ignored-classes = "optparse.Values,thread._local,_thread._local,numpy,torch,swagger_client"
-ignored-modules = "numpy,torch,swagger_client,netCDF4,scipy"
-missing-member-hint = "yes"
-missing-member-hint-distance = 1
-missing-member-max-choices = 1
-
-[tool.pylint.'VARIABLES']
-additional-builtins = "dbutils"
-allow-global-unused-variables = "yes"
-callbacks = ["cb_", "_cb"]
-dummy-variables-rgx = "_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_"
-ignored-argument-names = "_.*|^ignored_|^unused_"
-init-import = "no"
-redefining-builtins-modules = "six.moves,past.builtins,future.builtins,builtins,io"
-
-[tool.pylint.'CLASSES']
-defining-attr-methods = ["__init__", "__new__", "setUp", "__post_init__"]
-exclude-protected = ["_asdict", "_fields", "_replace", "_source", "_make"]
-valid-classmethod-first-arg = "cls"
-valid-metaclass-classmethod-first-arg = "cls"
-
-[tool.pylint.'DESIGN']
-max-args = 5
-max-attributes = 7
-max-bool-expr = 5
-max-branches = 12
-max-locals = 15
-max-parents = 7
-max-public-methods = 20
-max-returns = 6
-max-statements = 50
-min-public-methods = 2
-
-[tool.pylint.'IMPORTS']
-allow-wildcard-with-all = "no"
-analyse-fallback-blocks = "no"
-deprecated-modules = "optparse,tkinter.tix"
-
-[tool.pylint.'EXCEPTIONS']
-overgeneral-exceptions = ["builtins.BaseException", "builtins.Exception"]
+[tool.pyright]
+pythonVersion = "3.12"
+include = ["src"]
+exclude = ["**/node_modules", "**/__pycache__"]
+typeCheckingMode = "standard"
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportGeneralTypeIssues = true
+reportFunctionMemberAccess = "none"
+reportPrivateImportUsage = false
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+reportOptionalCall = false
+reportOptionalIterable = false
+reportOptionalContextManager = false
+reportOptionalOperand = false
+reportUntypedFunctionDecorator = false
+useLibraryCodeForTypes = true
+reportMissingParameterType = false
+reportUnknownParameterType = false
+reportMissingReturn = false
+reportIncompatibleMethodOverride = "warning"
+reportImportCycles = "warning"
 
 [tool.coverage.run]
 branch = true
 source = ["src/wazuh_dfn"]
-omit = [
-    "tests/*",
-    "*/test_*.py",
-]
+omit = ["tests/*", "*/test_*.py"]
+relative_files = true
+dynamic_context = "test_function"
+parallel = true
 
 [tool.coverage.report]
 exclude_lines = [
@@ -211,12 +200,46 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "pass",
     "raise ImportError",
+    "@abstractmethod",
+    "@overload",
 ]
+fail_under = 80
+show_missing = true
+skip_covered = true
+sort = "Cover"
 
 [tool.pytest.ini_options]
-addopts = "--cov=src/wazuh_dfn --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html --cov-fail-under=80 --junitxml=test-results.xml --cache-clear -m 'not performance'"
+minversion = "7.0"
+addopts = """
+    --cov=src/wazuh_dfn 
+    --cov-report=term-missing 
+    --cov-report=xml:coverage.xml 
+    --cov-report=html 
+    --cov-fail-under=80
+    --junitxml=test-results.xml 
+    --strict-markers
+    --strict-config
+    --cache-clear
+    -v
+    -ra
+    --tb=short
+    --cov-branch
+    --no-cov-on-fail
+    -m 'not performance'
+"""
+required_plugins = ["pytest-cov", "pytest-sugar"]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+xfail_strict = true
+filterwarnings = [
+    "default",
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
 markers = [
-    "performance(threshold, description): marks tests as performance tests with threshold and description parameters",
+    "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
+    "integration: marks tests as integration tests",
+    "slow: marks tests as slow",
 ]

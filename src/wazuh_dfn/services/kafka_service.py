@@ -4,14 +4,12 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
-
+from .wazuh_service import WazuhService
 from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient
-
-from ..config import DFNConfig, KafkaConfig
-from ..validators import DFNConfigValidator, KafkaConfigValidator
-from .wazuh_service import WazuhService
+from typing import Any
+from wazuh_dfn.config import DFNConfig, KafkaConfig
+from wazuh_dfn.validators import DFNConfigValidator, KafkaConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -50,7 +48,7 @@ class KafkaService:
         self.dfn_config = dfn_config
         self.wazuh_handler = wazuh_handler
         self.shutdown_event = shutdown_event
-        self.producer: Optional[Producer] = None
+        self.producer: Producer | None = None
         self._lock = threading.Lock()
         self._connection_lock = threading.Lock()
 
@@ -201,7 +199,7 @@ class KafkaService:
         LOGGER.info(f"Retrying in {wait_time} seconds... (Attempt {retry_count}/{max_retries})")
         time.sleep(wait_time)
 
-    def _send_message_once(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _send_message_once(self, message: dict[str, Any]) -> dict[str, Any] | None:
         """Attempt to send a message once.
 
         Args:
@@ -234,7 +232,7 @@ class KafkaService:
                 "topic": self.dfn_config.dfn_id,
             }
 
-    def send_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def send_message(self, message: dict[str, Any]) -> dict[str, Any] | None:
         """Send message to Kafka broker.
 
         Args:
@@ -255,7 +253,9 @@ class KafkaService:
                 self.wazuh_handler.send_error(
                     {
                         "error": 503,
-                        "description": f"Kafka error. Attempt {retry_count + 1}/{max_retries}. Reinitializing producer.",
+                        "description": (
+                            f"Kafka error. Attempt {retry_count + 1}/{max_retries}. Reinitializing producer."
+                        ),
                     }
                 )
                 with self._lock:  # Thread-safe producer cleanup

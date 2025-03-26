@@ -5,19 +5,10 @@ import json
 import logging
 import logging.config
 import logging.handlers
-import os
 import signal
 import sys
 import threading
 import time
-from dataclasses import field
-from importlib.metadata import PackageNotFoundError, version
-from typing import Any
-
-from dotenv import load_dotenv
-
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
 from .services import (
@@ -29,6 +20,12 @@ from .services import (
     WazuhService,
 )
 from .validators import ConfigValidator
+from dataclasses import field
+from dotenv import load_dotenv
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Any, Union, get_args, get_origin
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -37,6 +34,32 @@ LOG_FORMAT = "%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(messag
 
 # Load environment variables from .env file if present
 load_dotenv()
+
+
+def get_argparse_type(field_type):
+    """Extract a usable type for argparse from a type annotation.
+
+    Args:
+        field_type: The type annotation from a dataclass field
+
+    Returns:
+        A callable type that can be used with argparse
+    """
+    # Handle Union types (like str | None or Union[str, None])
+    origin = get_origin(field_type)
+    if origin is Union:
+        args = get_args(field_type)
+        # Find the first non-None type in the Union
+        for arg in args:
+            if arg is not type(None):  # Check if it's not NoneType
+                return arg
+
+    # If the type is directly callable, use it
+    if isinstance(field_type, type):
+        return field_type
+
+    # Fallback to str for any other case
+    return str
 
 
 def parse_args() -> argparse.Namespace:  # NOSONAR
@@ -88,7 +111,9 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
         for field_name, field_obj in cls_obj.__dataclass_fields__.items():  # pylint: disable=no-member
             metadata = field_obj.metadata
             if "cli" in metadata:  # Check if field has CLI argument
-                parser.add_argument(metadata["cli"], help=metadata["help"], type=field_obj.type, default=None)
+                # Get appropriate type for argparse
+                arg_type = get_argparse_type(field_obj.type)
+                parser.add_argument(metadata["cli"], help=metadata["help"], type=arg_type, default=None)
                 # Store field info for help-all
                 default_val = field_obj.default
                 if default_val is field:  # Check if it's the MISSING sentinel
@@ -185,10 +210,11 @@ def setup_logging(config: Config) -> None:
 
     # Add file handler if path is specified
     if config.log.file_path:
-        if os.path.exists(config.log.file_path):
+        log_file_path = Path(config.log.file_path)
+        if log_file_path.exists():
             try:
                 file_handler = logging.handlers.TimedRotatingFileHandler(
-                    filename=config.log.file_path,
+                    filename=str(log_file_path),
                     when="midnight",
                     interval=1,
                     backupCount=config.log.keep_files,  # Use config value instead of hardcoded 5
@@ -219,18 +245,17 @@ def setup_directories(config: Config) -> None:
     Raises:
         ConfigValidationError: If required directory creation fails
     """
-
     # Optional directories that should be created if configured
     optional_dirs = []
     if config.log.file_path:
-        optional_dirs.append(os.path.dirname(config.log.file_path))
+        optional_dirs.append(Path(config.log.file_path).parent)
     if config.wazuh.store_failed_alerts and config.wazuh.failed_alerts_path:
-        optional_dirs.append(config.wazuh.failed_alerts_path)
+        optional_dirs.append(Path(config.wazuh.failed_alerts_path))
 
     # Create optional directories - log warning if this fails
     for directory in optional_dirs:
         try:
-            os.makedirs(directory, mode=0o700, exist_ok=True)
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             LOGGER.info(f"Ensured optional directory exists: {directory}")
         except Exception as e:
             LOGGER.warning(f"Failed to create optional directory {directory}: {e}")
@@ -248,7 +273,6 @@ def setup_service(config: Config) -> None:
     Raises:
         ConfigValidationError: If configuration validation fails.
     """
-
     shutdown_event = threading.Event()
     alert_queue = MaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
     service_threads = []  # Initialize service_threads list at the start

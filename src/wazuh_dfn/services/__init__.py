@@ -15,9 +15,9 @@ __maintainer__ = "Sebastian Wolf"
 
 __all__ = [
     "AlertsService",
+    "AlertsWatcherService",
     "AlertsWorkerService",
     "KafkaService",
     "LoggingService",
-    "AlertsWatcherService",
     "WazuhService",
 ]

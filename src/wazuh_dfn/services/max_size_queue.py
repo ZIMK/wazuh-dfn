@@ -1,6 +1,6 @@
 import logging
 import queue
-from typing import Any, Optional
+from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class MaxSizeQueue(queue.Queue):
             return True
         return self._discarded_count % self._log_threshold == 0
 
-    def put(self, item: Any, block: bool = True, timeout: Optional[float] = None) -> None:
+    def put(self, item: Any, block: bool = True, timeout: float | None = None) -> None:
         """Put an item into the queue, removing oldest if full.
 
         Args:

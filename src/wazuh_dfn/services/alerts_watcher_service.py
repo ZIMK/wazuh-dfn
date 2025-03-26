@@ -3,14 +3,11 @@
 import logging
 import threading
 import time
-from datetime import datetime
-from typing import Optional
-
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-
-from ..config import WazuhConfig
-from ..validators import WazuhConfigValidator
 from .file_monitor import FileMonitor
+from datetime import datetime
+from wazuh_dfn.config import WazuhConfig
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.validators import WazuhConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,8 +33,8 @@ class AlertsWatcherService:
         self.alert_queue = alert_queue
         self.shutdown_event = shutdown_event
         self.file_path = config.json_alert_file
-        self.latest_queue_put: Optional[datetime] = None
-        self.file_monitor: Optional[FileMonitor] = None
+        self.latest_queue_put: datetime | None = None
+        self.file_monitor: FileMonitor | None = None
 
     def start(self) -> None:
         """Start monitoring alert files."""
@@ -58,7 +55,7 @@ class AlertsWatcherService:
                 time.sleep(self.config.json_alert_file_poll_interval)
 
         except Exception as e:
-            LOGGER.error(f"Error monitoring file: {str(e)}")
+            LOGGER.error(f"Error monitoring file: {e!s}")
         finally:
             if self.file_monitor:
                 self.file_monitor.close()

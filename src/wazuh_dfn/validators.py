@@ -2,10 +2,10 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Union
-
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
+from pathlib import Path
+from typing import Any
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class ConfigValidator:
             if value <= 0:
                 raise ConfigValidationError(f"{field_name} must be positive")
         except TypeError as e:
-            raise ConfigValidationError(f"{field_name} validation failed: {str(e)}")
+            raise ConfigValidationError(f"{field_name} validation failed: {e!s}")
 
     @classmethod
     def validate_non_negative_integer(cls, value: int, field_name: str) -> None:
@@ -52,7 +52,7 @@ class ConfigValidator:
             if value < 0:
                 raise ConfigValidationError(f"{field_name} cannot be negative")
         except TypeError as e:
-            raise ConfigValidationError(f"{field_name} validation failed: {str(e)}")
+            raise ConfigValidationError(f"{field_name} validation failed: {e!s}")
 
     @classmethod
     def validate_non_empty_string(cls, value: str, field_name: str) -> None:
@@ -83,11 +83,11 @@ class ConfigValidator:
         """
         if not isinstance(path, str) or not path:
             raise ConfigValidationError(f"{field_name} must be a non-empty string")
-        if not cls.skip_path_validation and not os.path.exists(path):
+        if not cls.skip_path_validation and not Path(path).exists():
             raise ConfigValidationError(f"{field_name} does not exist: {path}")
 
     @classmethod
-    def validate_optional_path(cls, path: Optional[str], field_name: str) -> None:
+    def validate_optional_path(cls, path: str | None, field_name: str) -> None:
         """Validate optional path.
 
         Args:
@@ -101,11 +101,11 @@ class ConfigValidator:
             return
         if not isinstance(path, str) or not path:
             raise ConfigValidationError(f"{field_name} must be a non-empty string")
-        if not cls.skip_path_validation and not os.path.exists(path):
+        if not cls.skip_path_validation and not Path(path).exists():
             raise ConfigValidationError(f"{field_name} does not exist: {path}")
 
     @classmethod
-    def validate_config_dict(cls, config: Dict[str, Any], required_fields: List[str]) -> None:
+    def validate_config_dict(cls, config: dict[str, Any], required_fields: list[str]) -> None:
         """Validate configuration dictionary.
 
         Args:
@@ -153,7 +153,7 @@ class ConfigValidator:
         return config
 
     @classmethod
-    def validate(cls, config: Union[Dict[str, Any], Config]) -> bool:  # NOSONAR
+    def validate(cls, config: dict[str, Any] | Config) -> bool:  # NOSONAR
         """Validate configuration.
 
         Args:
@@ -196,7 +196,7 @@ class WazuhConfigValidator(ConfigValidator):
     """Validator for WazuhConfig."""
 
     @classmethod
-    def validate(cls, config: Union[Dict[str, Any], Any]) -> bool:
+    def validate(cls, config: dict[str, Any] | Any) -> bool:
         """Validate Wazuh configuration.
 
         Args:
@@ -241,7 +241,7 @@ class DFNConfigValidator(ConfigValidator):
     """DFN configuration validator."""
 
     @classmethod
-    def validate(cls, config: Union[DFNConfig, Dict[str, Any]]) -> bool:
+    def validate(cls, config: DFNConfig | dict[str, Any]) -> bool:
         """Validate DFN configuration.
 
         Args:
@@ -332,7 +332,7 @@ class KafkaConfigValidator(ConfigValidator):
                 # Convert to KafkaConfig after validation
                 config = KafkaConfig(**config)
             except (TypeError, ValueError) as e:
-                raise ConfigValidationError(f"Invalid configuration: {str(e)}")
+                raise ConfigValidationError(f"Invalid configuration: {e!s}")
 
         else:
             # Validate KafkaConfig fields
@@ -362,9 +362,10 @@ class LogConfigValidator(ConfigValidator):
             return
 
         """Validate file path exists and is readable."""
-        if not os.path.exists(file_path):
+        path_obj = Path(file_path)
+        if not path_obj.exists():
             raise ConfigValidationError(f"Log file path does not exist: {file_path}")
-        if not os.access(file_path, os.R_OK):
+        if not os.access(file_path, os.R_OK):  # Import os solely for access check
             raise ConfigValidationError(f"Log file is not readable: {file_path}")
 
     @staticmethod
@@ -386,7 +387,7 @@ class LogConfigValidator(ConfigValidator):
             raise ConfigValidationError(f"Invalid keep_files: {keep_files}, must be a positive integer")
 
     @staticmethod
-    def validate(config: Union[Dict[str, Any], LogConfig]) -> bool:
+    def validate(config: dict[str, Any] | LogConfig) -> bool:
         """Validate log configuration.
 
         Raises:
@@ -439,10 +440,10 @@ class MiscConfigValidator(ConfigValidator):
 
             ipaddress.ip_network(cidr, strict=True)
         except ValueError as e:
-            raise ConfigValidationError(f"Invalid CIDR notation: {str(e)}")
+            raise ConfigValidationError(f"Invalid CIDR notation: {e!s}")
 
     @staticmethod
-    def validate(config: Union[MiscConfig, Dict[str, Any]]) -> bool:
+    def validate(config: MiscConfig | dict[str, Any]) -> bool:
         """Validate miscellaneous configuration.
 
         Raises:
@@ -470,7 +471,7 @@ class ValidatorFactory:
     """Factory for creating configuration validators."""
 
     @staticmethod
-    def create_validator(config: Union[Dict[str, Any], Any]) -> ConfigValidator:  # NOSONAR
+    def create_validator(config: dict[str, Any] | Any) -> ConfigValidator:  # NOSONAR
         """Create a validator for the given configuration.
 
         Args:

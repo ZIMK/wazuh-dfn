@@ -1,12 +1,11 @@
 """Alerts service module for handling alert processing."""
 
 import logging
-
-from ..config import MiscConfig
-from ..validators import MiscConfigValidator
 from .handlers import SyslogHandler, WindowsHandler
 from .kafka_service import KafkaService
 from .wazuh_service import WazuhService
+from wazuh_dfn.config import MiscConfig
+from wazuh_dfn.validators import MiscConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,13 +50,12 @@ class AlertsService:
             alert: Alert data to process
 
         """
-
         try:
             self.windows_handler.process_alert(alert)
         except Exception as err:
-            LOGGER.error(f"Got error in WindowAlertsHandler.send: {str(err)}", exc_info=True)
+            LOGGER.error(f"Got error in WindowAlertsHandler.send: {err!s}", exc_info=True)
 
         try:
             self.syslog_handler.process_alert(alert)
         except Exception as err:
-            LOGGER.error(f"Got error in SyslogAlertsHandler.send: {str(err)}", exc_info=True)
+            LOGGER.error(f"Got error in SyslogAlertsHandler.send: {err!s}", exc_info=True)

@@ -5,21 +5,19 @@ import logging
 import sys
 import threading
 import time
-from socket import SOCK_DGRAM
+from socket import SOCK_DGRAM, socket
 from socket import error as socket_error
-from socket import socket
-from typing import Any, Dict, Optional
-
-from ..config import WazuhConfig
-from ..validators import WazuhConfigValidator
+from typing import Any
+from wazuh_dfn.config import WazuhConfig
+from wazuh_dfn.validators import WazuhConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
 # Use AF_UNIX for Unix systems, fallback to AF_INET for Windows
 try:
-    from socket import AF_UNIX as AF
+    from socket import AF_UNIX as AF  # type: ignore[reportAttributeAccessIssue]
 except ImportError:
-    from socket import AF_INET as AF
+    from socket import AF_INET as AF  # type: ignore[reportAttributeAccessIssue]
 
 
 class WazuhService:
@@ -45,7 +43,7 @@ class WazuhService:
         """
         WazuhConfigValidator.validate(config)
         self.config = config
-        self._socket: Optional[socket] = None
+        self._socket: socket | None = None
 
         self._lock = threading.Lock()
         self._is_reconnecting = False
@@ -118,11 +116,11 @@ class WazuhService:
 
     def send_event(
         self,
-        alert: Dict[str, Any],
+        alert: dict[str, Any],
         event_format: str = "json",
-        event_id: Optional[str] = None,
-        win_timestamp: Optional[str] = None,
-        wz_timestamp: Optional[str] = None,
+        event_id: str | None = None,
+        win_timestamp: str | None = None,
+        wz_timestamp: str | None = None,
     ) -> None:
         """Send event to Wazuh server.
 
@@ -134,7 +132,7 @@ class WazuhService:
             wz_timestamp: Wazuh event timestamp
         """
         retry_count = 0
-        alert_id = alert.get("id", None)
+        alert_id = alert.get("id")
         agent_id = alert.get("agent", {}).get("id", None)
         agent_name = alert.get("agent", {}).get("name", None)
         agent_ip = alert.get("agent", {}).get("ip", "any")
@@ -203,9 +201,9 @@ class WazuhService:
     def _send(
         self,
         msg: dict,
-        agent_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
-        agent_ip: Optional[str] = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
+        agent_ip: str | None = None,
     ) -> None:
         """Format and send a message to the Wazuh server.
 
@@ -224,11 +222,7 @@ class WazuhService:
         if not agent_id or not agent_name:
             event = f"1:dfn:{json.dumps(msg)}"
         else:
-            location = "[{0}] ({1}) {2}".format(
-                agent_id,
-                agent_name,
-                agent_ip,
-            )
+            location = f"[{agent_id}] ({agent_name}) {agent_ip}"
             location = location.replace("|", "||").replace(":", "|:")
             event = f"1:{location}->dfn:{json.dumps(msg)}"
         self._send_event(event)
@@ -310,12 +304,12 @@ class WazuhService:
             try:
                 self._socket.send(event.encode())
                 return
-            except socket_error as e:
+            except OSError as e:
                 if not self._handle_socket_error(e, attempt, max_attempts):
                     break
                 attempt += 1
 
-        raise socket_error(f"Failed to send event after {max_attempts} attempts")
+        raise OSError(f"Failed to send event after {max_attempts} attempts")
 
     def close(self) -> None:
         """Close the connection to Wazuh server.

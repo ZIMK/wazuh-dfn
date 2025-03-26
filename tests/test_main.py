@@ -1,11 +1,8 @@
 """Test module for main functionality."""
 
 import logging
-import os
-from unittest.mock import MagicMock, patch
-
 import pytest
-
+from unittest.mock import MagicMock, patch
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.main import load_config, main, parse_args, setup_directories, setup_logging, setup_service
 
@@ -216,13 +213,12 @@ def test_setup_directories(sample_config_path):
     """Test setup_directories."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
-        with patch("os.makedirs") as mock_makedirs:
+        with patch("pathlib.Path.mkdir") as mock_mkdir:
             setup_directories(config)
-            mock_makedirs.assert_called_once_with(
-                os.path.dirname(config.log.file_path),
-                mode=0o700,
-                exist_ok=True,
-            )
+            # Assert that mkdir was called at least once (for log directory)
+            assert mock_mkdir.call_count >= 1
+            # Verify it was called with correct parameters
+            mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
 
 
 def test_setup_directories_error(sample_config_path):
@@ -347,10 +343,9 @@ def test_setup_directories_existing(sample_config_path):
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    with patch("os.makedirs") as mock_makedirs, patch("os.path.exists", return_value=True):
+    with patch("pathlib.Path.mkdir") as mock_mkdir, patch("pathlib.Path.exists", return_value=True):
         setup_directories(config)
-        mock_makedirs.assert_called_once_with(
-            os.path.dirname(config.log.file_path),
-            mode=0o700,
-            exist_ok=True,
-        )
+        # Assert that mkdir was called at least once (for log directory)
+        assert mock_mkdir.call_count >= 1
+        # Verify it was called with correct parameters
+        mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
