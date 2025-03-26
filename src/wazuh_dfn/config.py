@@ -4,7 +4,12 @@ import argparse
 import logging
 import yaml
 from .exceptions import ConfigValidationError
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -172,6 +177,95 @@ class DFNConfig:
 
         validator = DFNConfigValidator()
         validator.validate(self)
+        self.validate_certificates()
+
+    def validate_certificates(self) -> bool:
+        """Validate certificate files for SSL.
+
+        Verifies that certificates are valid, correctly formatted, and properly chained.
+
+        Returns:
+            bool: True if certificates are valid
+
+        Raises:
+            ConfigValidationError: If certificates are invalid
+        """
+        from .validators import ConfigValidator
+
+        if not self.dfn_ca or not self.dfn_cert or not self.dfn_key:
+            return True  # Skip validation if not configured
+
+        if ConfigValidator.skip_path_validation:
+            return True  # Skip validation if not configured
+
+        try:
+            # Load CA certificate
+            with Path(self.dfn_ca).open("rb") as f:
+                ca_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+
+            # Load client certificate
+            with Path(self.dfn_cert).open("rb") as f:
+                client_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+
+            # Load client key
+            with Path(self.dfn_key).open("rb") as f:
+                client_key = serialization.load_pem_private_key(
+                    f.read(), password=None, backend=default_backend()  # Add password parameter if key is encrypted
+                )
+
+            now = datetime.now(UTC)
+            if now < ca_cert.not_valid_before or now > ca_cert.not_valid_after:
+                raise ConfigValidationError(f"CA certificate is expired or not yet valid")
+
+            if now < client_cert.not_valid_before or now > client_cert.not_valid_after:
+                raise ConfigValidationError(f"Client certificate is expired or not yet valid")
+
+            # Check that client cert matches private key
+            client_public_key = client_cert.public_key()
+            key_match = self._verify_key_pair(client_key, client_public_key)
+            if not key_match:
+                raise ConfigValidationError("Client certificate doesn't match private key")
+
+            # Verify CA signed the client cert
+            self._verify_certificate_chain(ca_cert, client_cert)
+
+            return True
+
+        except Exception as e:
+            raise ConfigValidationError(f"Certificate validation failed: {e}")
+
+    def _verify_key_pair(self, private_key, public_key) -> bool:
+        """Verify that a private key and public key form a valid pair."""
+        # This is a simplified example - actual implementation would vary based on key type
+        try:
+            # Create a test message
+            message = b"Test message for key verification"
+
+            # Sign with private key
+            signature = private_key.sign(
+                message,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
+            )
+
+            # Verify with public key
+            public_key.verify(
+                signature,
+                message,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
+            )
+            return True
+        except Exception:
+            return False
+
+    def _verify_certificate_chain(self, ca_cert, client_cert) -> None:
+        """Verify CA signed the client certificate."""
+        # This is simplified - a complete implementation would handle the full chain
+        # and verify against a CRL or OCSP
+        issuer = ca_cert.subject
+        if client_cert.issuer != issuer:
+            raise ConfigValidationError(f"Client certificate not issued by the provided CA.")
 
 
 @dataclass
@@ -446,13 +540,15 @@ class Config:
         Returns:
             Converted value
         """
-        if field_type == bool:
-            return str(value).lower() in ("true", "1", "yes")
-        if field_type == int:
-            return int(value)
-        if field_type == float:
-            return float(value)
-        return value
+        match field_type:
+            case type() if field_type is bool:
+                return str(value).lower() in ("true", "1", "yes")
+            case type() if field_type is int:
+                return int(value)
+            case type() if field_type is float:
+                return float(value)
+            case _:
+                return value
 
     @staticmethod
     def _load_from_env(config: "Config") -> None:

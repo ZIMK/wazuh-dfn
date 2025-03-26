@@ -166,30 +166,31 @@ class ConfigValidator:
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if isinstance(config, dict):
-            cls.validate_config_dict(config, [])
-            if "dfn" in config:
-                DFNConfigValidator.validate(config["dfn"])
-            if "wazuh" in config:
-                WazuhConfigValidator.validate(config["wazuh"])
-            if "kafka" in config:
-                KafkaConfigValidator.validate(config["kafka"])
-            if "log" in config:
-                LogConfigValidator.validate(config["log"])
-            if "misc" in config:
-                MiscConfigValidator.validate(config["misc"])
-        else:
-            cls.validate_dataclass(config)
-            if hasattr(config, "dfn"):
-                DFNConfigValidator.validate(config.dfn)
-            if hasattr(config, "wazuh"):
-                WazuhConfigValidator.validate(config.wazuh)
-            if hasattr(config, "kafka"):
-                KafkaConfigValidator.validate(config.kafka)
-            if hasattr(config, "log"):
-                LogConfigValidator.validate(config.log)
-            if hasattr(config, "misc"):
-                MiscConfigValidator.validate(config.misc)
+        match config:
+            case dict():
+                cls.validate_config_dict(config, [])
+                if "dfn" in config:
+                    DFNConfigValidator.validate(config["dfn"])
+                if "wazuh" in config:
+                    WazuhConfigValidator.validate(config["wazuh"])
+                if "kafka" in config:
+                    KafkaConfigValidator.validate(config["kafka"])
+                if "log" in config:
+                    LogConfigValidator.validate(config["log"])
+                if "misc" in config:
+                    MiscConfigValidator.validate(config["misc"])
+            case _:  # Any other type including Config
+                cls.validate_dataclass(config)
+                if hasattr(config, "dfn"):
+                    DFNConfigValidator.validate(config.dfn)
+                if hasattr(config, "wazuh"):
+                    WazuhConfigValidator.validate(config.wazuh)
+                if hasattr(config, "kafka"):
+                    KafkaConfigValidator.validate(config.kafka)
+                if hasattr(config, "log"):
+                    LogConfigValidator.validate(config.log)
+                if hasattr(config, "misc"):
+                    MiscConfigValidator.validate(config.misc)
         return True
 
 
@@ -209,31 +210,34 @@ class WazuhConfigValidator(ConfigValidator):
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if isinstance(config, dict):
-            # Only include truly required fields
-            required_fields = [
-                "json_alert_file",
-                "unix_socket_path",
-            ]
-            ConfigValidator.validate_config_dict(config, required_fields)
+        match config:
+            case dict():
+                # Only include truly required fields
+                required_fields = [
+                    "json_alert_file",
+                    "unix_socket_path",
+                ]
+                ConfigValidator.validate_config_dict(config, required_fields)
 
-            # Optional fields: validate only if present
-            if "max_event_size" in config and config["max_event_size"] <= 0:
-                raise ConfigValidationError([f"Invalid max_event_size: {config['max_event_size']}. Must be positive"])
+                # Optional fields: validate only if present
+                if "max_event_size" in config and config["max_event_size"] <= 0:
+                    raise ConfigValidationError(
+                        [f"Invalid max_event_size: {config['max_event_size']}. Must be positive"]
+                    )
 
-            if "json_alert_queue_size" in config and config["json_alert_queue_size"] <= 0:
-                raise ConfigValidationError(
-                    [f"Invalid json_alert_queue_size: {config['json_alert_queue_size']}. Must be positive"]
-                )
+                if "json_alert_queue_size" in config and config["json_alert_queue_size"] <= 0:
+                    raise ConfigValidationError(
+                        [f"Invalid json_alert_queue_size: {config['json_alert_queue_size']}. Must be positive"]
+                    )
 
-            if "json_alert_file_poll_interval" in config and config["json_alert_file_poll_interval"] <= 0:
-                raise ConfigValidationError(
-                    [
-                        f"Invalid json_alert_file_poll_interval: {config['json_alert_file_poll_interval']}. Must be positive"
-                    ]
-                )
-        else:
-            ConfigValidator.validate_dataclass(config)
+                if "json_alert_file_poll_interval" in config and config["json_alert_file_poll_interval"] <= 0:
+                    raise ConfigValidationError(
+                        [
+                            f"Invalid json_alert_file_poll_interval: {config['json_alert_file_poll_interval']}. Must be positive"
+                        ]
+                    )
+            case _:
+                ConfigValidator.validate_dataclass(config)
 
         return True
 
@@ -254,35 +258,38 @@ class DFNConfigValidator(ConfigValidator):
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if isinstance(config, dict):
-            required_fields = ["dfn_broker"]
-            ConfigValidator.validate_config_dict(config, required_fields)
+        match config:
+            case dict():
+                required_fields = ["dfn_broker"]
+                ConfigValidator.validate_config_dict(config, required_fields)
 
-            # Validate non-empty strings
-            cls.validate_non_empty_string(config["dfn_broker"], "dfn_broker")
-            if "dfn_id" in config:
-                cls.validate_non_empty_string(config["dfn_id"], "dfn_id")
+                # Validate non-empty strings
+                cls.validate_non_empty_string(config["dfn_broker"], "dfn_broker")
+                if "dfn_id" in config:
+                    cls.validate_non_empty_string(config["dfn_id"], "dfn_id")
 
-            # Validate optional paths if present
-            if "dfn_ca" in config:
-                cls.validate_optional_path(config["dfn_ca"], "dfn_ca")
-            if "dfn_cert" in config:
-                cls.validate_optional_path(config["dfn_cert"], "dfn_cert")
-            if "dfn_key" in config:
-                cls.validate_optional_path(config["dfn_key"], "dfn_key")
+                # Validate optional paths if present
+                if "dfn_ca" in config:
+                    cls.validate_optional_path(config["dfn_ca"], "dfn_ca")
+                if "dfn_cert" in config:
+                    cls.validate_optional_path(config["dfn_cert"], "dfn_cert")
+                if "dfn_key" in config:
+                    cls.validate_optional_path(config["dfn_key"], "dfn_key")
 
-        else:
-            ConfigValidator.validate_dataclass(config)
+            case DFNConfig():
+                ConfigValidator.validate_dataclass(config)
 
-            # Validate non-empty strings
-            cls.validate_non_empty_string(config.dfn_broker, "dfn_broker")
-            if config.dfn_id:
-                cls.validate_non_empty_string(config.dfn_id, "dfn_id")
+                # Validate non-empty strings
+                cls.validate_non_empty_string(config.dfn_broker, "dfn_broker")
+                if config.dfn_id:
+                    cls.validate_non_empty_string(config.dfn_id, "dfn_id")
 
-            # Validate optional paths
-            cls.validate_optional_path(config.dfn_ca, "dfn_ca")
-            cls.validate_optional_path(config.dfn_cert, "dfn_cert")
-            cls.validate_optional_path(config.dfn_key, "dfn_key")
+                # Validate optional paths
+                cls.validate_optional_path(config.dfn_ca, "dfn_ca")
+                cls.validate_optional_path(config.dfn_cert, "dfn_cert")
+                cls.validate_optional_path(config.dfn_key, "dfn_key")
+            case _:
+                raise ConfigValidationError("Invalid configuration type")
 
         return True
 
@@ -303,51 +310,52 @@ class KafkaConfigValidator(ConfigValidator):
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if isinstance(config, dict):
-            # First validate the dict has all required fields
-            required_fields = [
-                "timeout",
-                "retry_interval",
-                "connection_max_retries",
-                "send_max_retries",
-                "max_wait_time",
-                "admin_timeout",
-                "producer_config",
-            ]
-            cls.validate_config_dict(config, required_fields)
+        match config:
+            case dict():
+                # First validate the dict has all required fields
+                required_fields = [
+                    "timeout",
+                    "retry_interval",
+                    "connection_max_retries",
+                    "send_max_retries",
+                    "max_wait_time",
+                    "admin_timeout",
+                    "producer_config",
+                ]
+                cls.validate_config_dict(config, required_fields)
 
-            # Now validate each field
-            try:
-                cls.validate_positive_integer(config["timeout"], "timeout")
-                cls.validate_positive_integer(config["retry_interval"], "retry_interval")
-                cls.validate_positive_integer(config["connection_max_retries"], "connection_max_retries")
-                cls.validate_positive_integer(config["send_max_retries"], "send_max_retries")
-                cls.validate_positive_integer(config["max_wait_time"], "max_wait_time")
-                cls.validate_positive_integer(config["admin_timeout"], "admin_timeout")
+                # Now validate each field
+                try:
+                    cls.validate_positive_integer(config["timeout"], "timeout")
+                    cls.validate_positive_integer(config["retry_interval"], "retry_interval")
+                    cls.validate_positive_integer(config["connection_max_retries"], "connection_max_retries")
+                    cls.validate_positive_integer(config["send_max_retries"], "send_max_retries")
+                    cls.validate_positive_integer(config["max_wait_time"], "max_wait_time")
+                    cls.validate_positive_integer(config["admin_timeout"], "admin_timeout")
 
-                if not isinstance(config["producer_config"], dict):
+                    if not isinstance(config["producer_config"], dict):
+                        raise ConfigValidationError(
+                            f"producer_config must be a dictionary, but got: {type(config['producer_config'])}"
+                        )
+
+                except (TypeError, ValueError) as e:
+                    raise ConfigValidationError(f"Invalid configuration: {e!s}")
+
+            case KafkaConfig():
+                # Validate KafkaConfig fields
+                cls.validate_positive_integer(config.timeout, "timeout")
+                cls.validate_positive_integer(config.retry_interval, "retry_interval")
+                cls.validate_positive_integer(config.connection_max_retries, "connection_max_retries")
+                cls.validate_positive_integer(config.send_max_retries, "send_max_retries")
+                cls.validate_positive_integer(config.max_wait_time, "max_wait_time")
+                cls.validate_positive_integer(config.admin_timeout, "admin_timeout")
+
+                if not isinstance(config.producer_config, dict):
                     raise ConfigValidationError(
-                        f"producer_config must be a dictionary, but got: {type(config['producer_config'])}"
+                        f"producer_config must be a dictionary, but got: {type(config.producer_config)}"
                     )
-
-                # Convert to KafkaConfig after validation
-                config = KafkaConfig(**config)
-            except (TypeError, ValueError) as e:
-                raise ConfigValidationError(f"Invalid configuration: {e!s}")
-
-        else:
-            # Validate KafkaConfig fields
-            cls.validate_positive_integer(config.timeout, "timeout")
-            cls.validate_positive_integer(config.retry_interval, "retry_interval")
-            cls.validate_positive_integer(config.connection_max_retries, "connection_max_retries")
-            cls.validate_positive_integer(config.send_max_retries, "send_max_retries")
-            cls.validate_positive_integer(config.max_wait_time, "max_wait_time")
-            cls.validate_positive_integer(config.admin_timeout, "admin_timeout")
-
-            if not isinstance(config.producer_config, dict):
-                raise ConfigValidationError(
-                    f"producer_config must be a dictionary, but got: {type(config.producer_config)}"
-                )
+            case _:
+                raise ConfigValidationError(f"Invalid configuration type: {type(config)}")
 
         return True
 
@@ -403,28 +411,35 @@ class LogConfigValidator(ConfigValidator):
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if not isinstance(config, (dict, LogConfig)):
-            raise ConfigValidationError("Invalid log configuration type")
+        match config:
+            case dict():
+                # Required fields
+                required = ["file_path"]
+                for field in required:
+                    if field not in config:
+                        raise ConfigValidationError(f"Missing required field: {field}")
 
-        config_dict = config if isinstance(config, dict) else config.__dict__
+                # Validate fields
+                LogConfigValidator._validate_file_path(config["file_path"])
 
-        # Required fields
-        required = ["file_path"]
-        for field in required:
-            if field not in config_dict:
-                raise ConfigValidationError(f"Missing required field: {field}")
+                if "level" in config:
+                    LogConfigValidator._validate_log_level(config["level"])
 
-        # Validate fields
-        LogConfigValidator._validate_file_path(config_dict["file_path"])
+                if "keep_files" in config:
+                    LogConfigValidator._validate_keep_files(config["keep_files"])
 
-        if "level" in config_dict:
-            LogConfigValidator._validate_log_level(config_dict["level"])
+                if "interval" in config:
+                    LogConfigValidator._validate_interval(config["interval"])
+            case LogConfig():
+                # Required fields
+                LogConfigValidator._validate_file_path(config.file_path)
 
-        if "keep_files" in config_dict:
-            LogConfigValidator._validate_keep_files(config_dict["keep_files"])
-
-        if "interval" in config_dict:
-            LogConfigValidator._validate_interval(config_dict["interval"])
+                # Validate fields
+                LogConfigValidator._validate_log_level(config.level)
+                LogConfigValidator._validate_keep_files(config.keep_files)
+                LogConfigValidator._validate_interval(config.interval)
+            case _:
+                raise ConfigValidationError("Invalid log configuration type")
 
         return True
 
@@ -459,20 +474,25 @@ class MiscConfigValidator(ConfigValidator):
         Raises:
             ConfigValidationError: If configuration is invalid
         """
-        if not isinstance(config, (dict, MiscConfig)):
-            raise ConfigValidationError("Invalid configuration type")
+        match config:
+            case dict():
+                # Required fields
+                if "num_workers" not in config:
+                    raise ConfigValidationError("Missing required field: num_workers")
 
-        config_dict = config if isinstance(config, dict) else config.__dict__
+                # Validate fields
+                MiscConfigValidator._validate_num_workers(config["num_workers"])
 
-        # Required fields
-        if "num_workers" not in config_dict:
-            raise ConfigValidationError("Missing required field: num_workers")
+                if config.get("own_network"):
+                    MiscConfigValidator._validate_cidr(config["own_network"])
+            case MiscConfig():
+                # Validate fields
+                MiscConfigValidator._validate_num_workers(config.num_workers)
 
-        # Validate fields
-        MiscConfigValidator._validate_num_workers(config_dict["num_workers"])
-
-        if config_dict.get("own_network"):
-            MiscConfigValidator._validate_cidr(config_dict["own_network"])
+                if config.own_network:
+                    MiscConfigValidator._validate_cidr(config.own_network)
+            case _:
+                raise ConfigValidationError("Invalid configuration type")
 
         return True
 

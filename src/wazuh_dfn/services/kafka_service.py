@@ -2,13 +2,14 @@
 
 import json
 import logging
+import ssl
 import threading
 import time
 from .wazuh_service import WazuhService
 from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, TypedDict
 from wazuh_dfn.config import DFNConfig, KafkaConfig
 from wazuh_dfn.validators import DFNConfigValidator, KafkaConfigValidator
 
@@ -21,6 +22,37 @@ class KafkaErrorCode(StrEnum):
     TIMED_OUT = auto()
     TOPIC_AUTHORIZATION_FAILED = auto()
     BROKER_NOT_AVAILABLE = auto()
+
+
+class KafkaMessage(TypedDict, total=False):
+    """Type definition for a Kafka message."""
+
+    # Required fields
+    timestamp: str
+    event_format: str
+    event_forward: bool
+    event_parser: str
+    event_source: str
+    body: str
+
+    # Optional fields
+    event_raw: str
+    hostName: str
+    structuredData: str
+    appName: str
+    appInst: str
+    procId: str
+    facility: str
+    priority: int
+    severity: int
+    data: dict[str, Any]
+
+
+class KafkaResponse(TypedDict):
+    """Type definition for a Kafka response."""
+
+    success: bool
+    topic: str
 
 
 class KafkaService:
@@ -62,7 +94,7 @@ class KafkaService:
         self._connection_lock = threading.Lock()
 
     def _create_producer(self) -> None:
-        """Create a new Kafka producer instance.
+        """Create a new Kafka producer instance with enhanced SSL security.
 
         Raises:
             KafkaException: If producer creation fails
@@ -74,8 +106,38 @@ class KafkaService:
                 LOGGER.warning(f"Error closing existing Kafka producer: {e}")
             self.producer = None
 
+        # Before creating the producer, validate certificates
+        if self.dfn_config.dfn_ca and self.dfn_config.dfn_cert and self.dfn_config.dfn_key:
+            self.dfn_config.validate_certificates()
+
+            # We could create a custom SSL context for even more control
+            # self._create_custom_ssl_context()
+
         kafka_config = self.config.get_kafka_config(self.dfn_config)
         self.producer = Producer(kafka_config)
+
+    def _create_custom_ssl_context(self) -> ssl.SSLContext:
+        """Create a custom SSL context for more control over SSL/TLS settings.
+
+        Returns:
+            ssl.SSLContext: Configured SSL context
+        """
+        # Create a custom SSL context with modern security settings
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(certfile=self.dfn_config.dfn_cert, keyfile=self.dfn_config.dfn_key)
+        context.load_verify_locations(cafile=self.dfn_config.dfn_ca)
+
+        # Use only modern TLS versions
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+
+        # Set modern cipher suites
+        context.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20")
+
+        # More strict security options
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+
+        return context
 
     def _test_connection(self) -> None:
         """Verify that configured topic exists in Kafka cluster.
@@ -208,14 +270,14 @@ class KafkaService:
         LOGGER.info(f"Retrying in {wait_time} seconds... (Attempt {retry_count}/{max_retries})")
         time.sleep(wait_time)
 
-    def _send_message_once(self, message: dict[str, Any]) -> dict[str, Any] | None:
+    def _send_message_once(self, message: KafkaMessage) -> KafkaResponse | None:
         """Attempt to send a message once.
 
         Args:
             message: Message to send
 
         Returns:
-            Optional[Dict[str, Any]]: Response dictionary if successful, None if failed
+            Optional[KafkaResponse]: Response dictionary if successful, None if failed
 
         Raises:
             KafkaException: If there is a Kafka-specific error
@@ -241,14 +303,14 @@ class KafkaService:
                 "topic": self.dfn_config.dfn_id,
             }
 
-    def send_message(self, message: dict[str, Any]) -> dict[str, Any] | None:
+    def send_message(self, message: KafkaMessage) -> KafkaResponse | None:
         """Send message to Kafka broker.
 
         Args:
             message: Message to send
 
         Returns:
-            Optional[Dict[str, Any]]: Response dictionary if successful, None if failed
+            Optional[KafkaResponse]: Response dictionary if successful, None if failed
         """
         retry_count = 0
         max_retries = self.config.send_max_retries

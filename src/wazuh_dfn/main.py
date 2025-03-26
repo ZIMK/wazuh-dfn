@@ -407,25 +407,37 @@ def main() -> None:
     try:
         args = parse_args()
 
-        # Load config from file
-        config = load_config(args)
+        # Handle command-line arguments with pattern matching for Python 3.12+
+        match args:
+            case argparse.Namespace() if getattr(args, "generate_sample_config", False):
+                output_path = getattr(args, "output_path", "config.yaml")
+                Config._generate_sample_config(output_path)
+                LOGGER.info(f"Generated sample configuration at {output_path}")
+                return
+            case argparse.Namespace() if getattr(args, "print_config_only", False):
+                # Load config from file
+                config = load_config(args)
+                json_config = json.dumps(config.__dict__, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+                print(f"Loaded config: {json_config}")
+                return
+            case _:
+                # Regular execution path
+                # Load config from file
+                config = load_config(args)
 
-        if args.print_config_only:
-            json_config = json.dumps(config.__dict__, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-            print(f"Loaded config: {json_config}")
-        else:
-            if not config.dfn.dfn_id:
-                print("DFN ID not specified in config. Please set it in the config file.")
-                return sys.exit(1)
+                if not config.dfn.dfn_id:
+                    LOGGER.warning("No DFN ID has been configured. This is required for operation.")
+                    LOGGER.warning("Please set dfn_id in your configuration.")
+                    sys.exit(1)
 
-            # Set up required directories first
-            setup_directories(config)
+                # Set up required directories first
+                setup_directories(config)
 
-            # Setup logging
-            setup_logging(config)
+                # Setup logging
+                setup_logging(config)
 
-            LOGGER.info(f"Starting Wazuh DFN version {version('wazuh-dfn')}")
-            setup_service(config)
+                LOGGER.info(f"Starting Wazuh DFN version {version('wazuh-dfn')}")
+                setup_service(config)
     except ConfigValidationError as e:
         LOGGER.error(f"Configuration validation failed: {e}")
         sys.exit(1)

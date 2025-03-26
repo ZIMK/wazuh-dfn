@@ -8,7 +8,7 @@ import time
 from enum import StrEnum
 from socket import SOCK_DGRAM, socket
 from socket import error as socket_error
-from typing import Any
+from typing import Any, TypedDict
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.validators import WazuhConfigValidator
 
@@ -28,6 +28,24 @@ class RecoverableSocketError(StrEnum):
     EPIPE_WIN = "32"  # Windows equivalent
     EBADF = "9"  # Bad file descriptor
     ECONNREFUSED = "111"  # Connection refused
+
+
+class WazuhErrorMessage(TypedDict, total=False):
+    """Type definition for a Wazuh error message."""
+
+    integration: str
+    error: int
+    description: str
+
+
+class WazuhEventMessage(TypedDict, total=False):
+    """Type definition for a Wazuh event message."""
+
+    integration: str
+    alert_id: str
+    agent_name: str
+    dfn: dict[str, Any]
+    description: str
 
 
 class WazuhService:
@@ -152,7 +170,7 @@ class WazuhService:
                 if not self._socket:
                     self.connect()
 
-                msg = {
+                msg: WazuhEventMessage = {
                     "integration": "dfn",
                     "alert_id": alert_id,
                     "agent_name": agent_name,
@@ -210,7 +228,7 @@ class WazuhService:
 
     def _send(
         self,
-        msg: dict,
+        msg: WazuhEventMessage,
         agent_id: str | None = None,
         agent_name: str | None = None,
         agent_ip: str | None = None,
@@ -237,7 +255,7 @@ class WazuhService:
             event = f"1:{location}->dfn:{json.dumps(msg)}"
         self._send_event(event)
 
-    def send_error(self, msg: dict) -> None:
+    def send_error(self, msg: WazuhErrorMessage) -> None:
         """Send an error message to the Wazuh server.
 
         Ensures the message is properly formatted as a DFN integration error

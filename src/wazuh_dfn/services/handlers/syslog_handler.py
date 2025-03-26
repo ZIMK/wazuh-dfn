@@ -2,12 +2,23 @@
 
 import ipaddress
 import logging
-from typing import Any
+from typing import Any, TypedDict
 from wazuh_dfn.config import MiscConfig
-from wazuh_dfn.services.kafka_service import KafkaService
+from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
+
+
+class SyslogAlert(TypedDict):
+    """Type definition for a Syslog alert from Wazuh."""
+    
+    timestamp: str
+    id: str
+    agent: dict[str, Any]
+    rule: dict[str, Any]
+    data: dict[str, Any]
+    full_log: str
 
 
 class SyslogHandler:
@@ -40,7 +51,7 @@ class SyslogHandler:
             except ValueError as e:
                 LOGGER.warning(f"Invalid own_network format: {e}")
 
-    def process_alert(self, alert: dict[str, Any]) -> None:
+    def process_alert(self, alert: SyslogAlert) -> None:
         """Process a syslog alert.
 
         Args:
@@ -52,7 +63,7 @@ class SyslogHandler:
             alert_id = alert.get("id", "Unknown")
             LOGGER.error(f"Error processing Syslog alert: {alert_id}: {error!s}", exc_info=True)
 
-    def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
+    def _process_fail2ban_alert(self, alert: SyslogAlert) -> None:
         """Process fail2ban-specific alert data.
 
         Args:
@@ -123,7 +134,7 @@ class SyslogHandler:
         except Exception:
             return False
 
-    def _create_message_data(self, alert: dict) -> dict:
+    def _create_message_data(self, alert: SyslogAlert) -> KafkaMessage:
         """Create message data for Kafka.
 
         Args:
@@ -132,14 +143,15 @@ class SyslogHandler:
         Returns:
             Dict containing formatted message data
         """
-        msg_data = {
+        msg_data: KafkaMessage = {
             "timestamp": alert["timestamp"],
             "event_format": "syslog5424-json",
             "event_forward": True,
             "event_parser": "wazuh",
             "event_source": "soc-agent",
-            "hostName": alert["agent"]["name"],
+            "hostName": alert["agent"]["name"],  # Include the hostname from the agent name
             "structuredData": "",
+            "body": "",  # Will be set below
         }
 
         if "program_name" in alert["data"]:

@@ -2,10 +2,20 @@
 
 import logging
 import xml.etree.ElementTree as ET
-from wazuh_dfn.services.kafka_service import KafkaService
+from typing import Any, TypedDict
+from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
+
+
+class WindowsAlert(TypedDict):
+    """Type definition for a Windows alert from Wazuh."""
+
+    id: str
+    timestamp: str
+    agent: dict[str, Any]
+    data: dict[str, Any]
 
 
 class WindowsHandler:
@@ -29,7 +39,7 @@ class WindowsHandler:
         self.kafka_service = kafka_service
         self.wazuh_service = wazuh_service
 
-    def process_alert(self, alert: dict) -> None:
+    def process_alert(self, alert: WindowsAlert) -> None:
         """Process a Windows alert.
 
         Args:
@@ -94,7 +104,7 @@ class WindowsHandler:
         else:
             LOGGER.debug("No windows alert to process")
 
-    def _create_message_data(self, alert: dict, event_id: str) -> dict:
+    def _create_message_data(self, alert: WindowsAlert, event_id: str) -> KafkaMessage:
         """Create message data for Kafka.
 
         Args:
@@ -108,7 +118,7 @@ class WindowsHandler:
         win_event_xml = self._create_xml_event(alert, event_id)
 
         # Create message data
-        message_data = {
+        message_data: KafkaMessage = {
             "timestamp": alert["timestamp"],
             "event_raw": ET.tostring(win_event_xml, encoding="unicode"),
             "body": ET.tostring(win_event_xml, encoding="unicode"),
