@@ -5,6 +5,7 @@ import logging
 import sys
 import threading
 import time
+from enum import StrEnum
 from socket import SOCK_DGRAM, socket
 from socket import error as socket_error
 from typing import Any
@@ -18,6 +19,15 @@ try:
     from socket import AF_UNIX as AF  # type: ignore[reportAttributeAccessIssue]
 except ImportError:
     from socket import AF_INET as AF  # type: ignore[reportAttributeAccessIssue]
+
+
+class RecoverableSocketError(StrEnum):
+    """Socket error codes that can be recovered from."""
+
+    EPIPE = "107"  # Broken pipe
+    EPIPE_WIN = "32"  # Windows equivalent
+    EBADF = "9"  # Bad file descriptor
+    ECONNREFUSED = "111"  # Connection refused
 
 
 class WazuhService:
@@ -254,12 +264,13 @@ class WazuhService:
         error_code = getattr(e, "errno", None)
         LOGGER.warning(f"Socket error (attempt {attempt + 1}/{max_attempts}): {e} (errno: {error_code})")
 
-        if error_code not in (107, 32, 9, 111):
+        # Check if error code is in recoverable errors
+        if str(error_code) not in RecoverableSocketError.__members__.values():
             LOGGER.error(f"Unrecoverable socket error: {e}")
             raise e
 
         if attempt >= max_attempts:
-            if error_code == 111:
+            if str(error_code) == RecoverableSocketError.ECONNREFUSED:
                 LOGGER.error("Wazuh is not running after maximum retries")
                 sys.exit(6)
             return False
@@ -291,9 +302,9 @@ class WazuhService:
     def _send_event(self, event: str) -> None:
         """Send an event through the Wazuh socket connection."""
         if len(event) > self.config.max_event_size:
-            LOGGER.debug(f"Message size exceeds the maximum allowed limit of {self.config.max_event_size} bytes.")
+            LOGGER.debug(f"{len(event)=} bytes exceeds the maximum allowed limit of {self.config.max_event_size} bytes")
 
-        LOGGER.debug(event)
+        LOGGER.debug(event[:1000])
         attempt = 0
         max_attempts = self.config.max_retries
 

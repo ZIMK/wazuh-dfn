@@ -2,10 +2,10 @@
 
 import ipaddress
 import logging
-from ...config import MiscConfig
-from ..kafka_service import KafkaService
-from ..wazuh_service import WazuhService
 from typing import Any
+from wazuh_dfn.config import MiscConfig
+from wazuh_dfn.services.kafka_service import KafkaService
+from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
 

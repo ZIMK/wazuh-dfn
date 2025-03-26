@@ -4,6 +4,7 @@ import logging
 import os
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
+from enum import StrEnum, auto
 from pathlib import Path
 from typing import Any
 
@@ -351,10 +352,18 @@ class KafkaConfigValidator(ConfigValidator):
         return True
 
 
+class LogLevel(StrEnum):
+    """Log level enumeration."""
+
+    DEBUG = auto()
+    INFO = auto()
+    WARNING = auto()
+    ERROR = auto()
+    CRITICAL = auto()
+
+
 class LogConfigValidator(ConfigValidator):
     """Validator for log configuration."""
-
-    VALID_LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
     @staticmethod
     def _validate_file_path(file_path: str) -> None:
@@ -365,13 +374,14 @@ class LogConfigValidator(ConfigValidator):
         path_obj = Path(file_path)
         if not path_obj.exists():
             raise ConfigValidationError(f"Log file path does not exist: {file_path}")
+        # Use Path.is_readable() in Python 3.10+
         if not os.access(file_path, os.R_OK):  # Import os solely for access check
             raise ConfigValidationError(f"Log file is not readable: {file_path}")
 
     @staticmethod
     def _validate_log_level(level: str) -> None:
         """Validate log level is valid."""
-        if not level or level.upper() not in LogConfigValidator.VALID_LOG_LEVELS:
+        if not level or level.upper() not in LogLevel.__members__:
             raise ConfigValidationError(f"Invalid log level: {level}")
 
     @staticmethod
@@ -471,6 +481,8 @@ class ValidatorFactory:
     """Factory for creating configuration validators."""
 
     @staticmethod
+    # Remove the cache decorator as it causes issues with unhashable types
+    # and provides minimal benefit for startup-only validation
     def create_validator(config: dict[str, Any] | Any) -> ConfigValidator:  # NOSONAR
         """Create a validator for the given configuration.
 

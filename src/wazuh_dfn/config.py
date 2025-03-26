@@ -279,8 +279,7 @@ class KafkaConfig:
             "socket.timeout.ms": self.timeout * 1000,
             "message.timeout.ms": self.timeout * 1000,
             "retry.backoff.ms": self.retry_interval * 1000,
-        }
-        config.update(self.producer_config)
+        } | self.producer_config
         return config
 
 
@@ -375,6 +374,7 @@ class Config:
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     log: LogConfig = field(default_factory=LogConfig)
     misc: MiscConfig = field(default_factory=MiscConfig)
+    _config_cache: dict[str, str] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_yaml(cls, yaml_path: str, config: Optional["Config"] = None) -> "Config":  # NOSONAR
@@ -403,8 +403,7 @@ class Config:
 
         print(f"Loading config from {yaml_path}")
         try:
-            with yaml_path_obj.open() as f:
-                config_dict = yaml.safe_load(f)
+            config_dict = yaml.safe_load(yaml_path_obj.read_text())
         except yaml.YAMLError as e:
             raise ConfigValidationError(f"Invalid YAML content: {e}")
 
@@ -491,12 +490,22 @@ class Config:
         Returns:
             str: Configuration value or default.
         """
+        # Check instance-level cache first
+        if key in self._config_cache:
+            return self._config_cache[key]
+
         try:
             section, option = key.split(".")
             config_section = getattr(self, section)
-            return str(getattr(config_section, option))
+            value = str(getattr(config_section, option))
+            # Store in instance cache
+            self._config_cache[key] = value
+            return value
         except (AttributeError, ValueError):
-            return default if default is not None else ""
+            default_value = default if default is not None else ""
+            # Cache the default lookup too
+            self._config_cache[key] = default_value
+            return default_value
 
     @classmethod
     def _generate_sample_config(cls, output_path: str) -> None:
@@ -530,5 +539,4 @@ class Config:
 
         output_path_obj = Path(output_path)
         output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-        with output_path_obj.open("w") as f:
-            f.writelines(yaml_lines)
+        output_path_obj.write_text("".join(yaml_lines))

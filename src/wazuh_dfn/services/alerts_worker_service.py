@@ -116,14 +116,10 @@ class AlertsWorkerService:
             random_suffix = str(secrets.randbelow(999999) + 100000)
             alert_suffix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{random_suffix}"
 
-            # Create a temporary file
-            with tempfile.NamedTemporaryFile(
-                mode="w", delete=False, prefix="dfn-alert-", suffix=f"_{alert_id}_{alert_suffix}.json"
-            ) as tmp_file:
-                # Write the alert as JSON to the temporary file
-                json.dump(alert, tmp_file)
-                # Return the name of the temporary file
-                return tmp_file.name
+            # Create a temp file with pathlib
+            temp_path = Path(tempfile.gettempdir()) / f"dfn-alert-{alert_id}_{alert_suffix}.json"
+            temp_path.write_text(json.dumps(alert, indent=2))
+            return str(temp_path)
         except Exception as e:
             LOGGER.error(f"Error writing alert to tmp file: {e!s}")
             return None

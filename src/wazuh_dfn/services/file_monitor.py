@@ -1,5 +1,6 @@
 import json
 import logging
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -61,12 +62,12 @@ class FileMonitor:
                 LOGGER.error(f"Error closing file: {e!s}")
 
         try:
-            self.fp = open(self.file_path, "rb")
+            file_path_obj = Path(self.file_path)
+            self.fp = file_path_obj.open("rb")
             if not self.tail:
                 self.fp.seek(0, 2)  # SEEK_END
                 self.last_complete_position = self.fp.tell()
 
-            file_path_obj = Path(self.file_path)
             stat = file_path_obj.stat()
             self.current_inode = stat.st_ino
             return True
@@ -114,12 +115,12 @@ class FileMonitor:
         start = self.buffer.find(self.alert_prefix)
         if start == -1:
             if len(self.buffer) > MAX_MESSAGE_SIZE:
-                LOGGER.debug(f"Clearing buffer of size {len(self.buffer)} - no alert prefix found")
+                LOGGER.debug(f"{len(self.buffer)=} - no alert prefix found, clearing buffer")
                 self.buffer.clear()
             return None
 
         if start > 0:
-            LOGGER.debug(f"Removing {start} bytes of leading data before alert prefix")
+            LOGGER.debug(f"{start=} bytes of leading data before alert prefix, removing")
             del self.buffer[:start]
 
         end = self.buffer.find(self.alert_suffix, len(self.alert_prefix))
@@ -153,17 +154,17 @@ class FileMonitor:
 
         try:
             self._cleanup_failed_alerts()
+            # Add random component to timestamp to ensure uniqueness
+            random_suffix = str(secrets.randbelow(999999) + 100000)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             failed_path = Path(self.failed_alerts_path)
-            failed_file = failed_path / f"{timestamp}_failed_alert.json"
+            failed_file = failed_path / f"{timestamp}_{random_suffix}_failed_alert.json"
 
-            with failed_file.open("wb") as f:
-                f.write(alert_bytes)
+            failed_file.write_bytes(alert_bytes)
 
             if alert_str:
-                replaced_file = failed_path / f"{timestamp}_replaced_alert.json"
-                with replaced_file.open("wb") as f:
-                    f.write(alert_str.encode("utf-8"))
+                replaced_file = failed_path / f"{timestamp}_{random_suffix}_replaced_alert.json"
+                replaced_file.write_bytes(alert_str.encode("utf-8"))
                 LOGGER.info(f"Saved failed alert and replaced version to {failed_file} and {replaced_file}")
             else:
                 LOGGER.info(f"Saved failed alert to {failed_file}")
@@ -239,10 +240,7 @@ class FileMonitor:
 
     def _process_buffer(self) -> None:
         """Process buffer content to find and queue complete alerts."""
-        while True:
-            alert_bytes = self._extract_alert()
-            if not alert_bytes:
-                break
+        while alert_bytes := self._extract_alert():
             self._queue_alert(alert_bytes)
 
     def _wait_for_data(self, wait_start: float | None) -> float | None:
@@ -279,7 +277,7 @@ class FileMonitor:
         if not chunk:
             return False, 0
 
-        LOGGER.debug(f"Read chunk of {len(chunk)} bytes at position {self.fp.tell()}")
+        LOGGER.debug(f"{len(chunk)=} bytes at position {self.fp.tell()}")
         self.buffer.extend(chunk)
 
         buffer_position = 0
@@ -306,7 +304,7 @@ class FileMonitor:
     def check_file(self) -> None:
         """Check file for new alerts."""
         try:
-            LOGGER.debug(f"Checking file, current buffer size: {len(self.buffer)}")
+            LOGGER.debug(f"{len(self.buffer)=}, checking file")
 
             if not self._handle_file_status():
                 return
@@ -332,7 +330,7 @@ class FileMonitor:
 
             if len(self.buffer) > 0 and not alerts_found:
                 LOGGER.debug(
-                    f"No complete alerts found, reverting to position {self.last_complete_position}, buffer size: {len(self.buffer)}"
+                    f"No complete alerts found, reverting to position {self.last_complete_position=}, {len(self.buffer)=}"
                 )
                 self.fp.seek(self.last_complete_position)
                 self.buffer.clear()

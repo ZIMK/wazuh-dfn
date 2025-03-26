@@ -44,8 +44,8 @@ class MaxSizeQueue(queue.Queue):
                     self._discarded_count += 1
                     if self._should_log():
                         LOGGER.warning(
-                            f"Queue overflow: discarded {self._discarded_count} items "
-                            f"(logging every {self._log_threshold} items)"
+                            f"{self._discarded_count=} items discarded due to queue overflow "
+                            f"(logging every {self._log_threshold=} items)"
                         )
                 except queue.Empty:
                     pass  # Should not happen, but just in case

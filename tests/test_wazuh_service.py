@@ -1,14 +1,12 @@
 """Test module for WazuhService."""
 
 import logging
+import pytest
 import socket
 import sys
 import threading
 from socket import error as socket_error
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.wazuh_service import AF, SOCK_DGRAM, WazuhService
@@ -227,7 +225,7 @@ def test_wazuh_service_send_large_event(mock_socket, wazuh_config, caplog, mock_
         with caplog.at_level(logging.DEBUG):
             service.send_event(large_alert)
             # Check if the size warning was logged
-            assert any("Message size exceeds the maximum allowed limit" in record.message for record in caplog.records)
+            assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
             # Verify the event was still sent despite being large
             assert mock_socket_instance.send.called
 
@@ -429,7 +427,7 @@ def test_wazuh_service_event_size_limit(mock_socket, wazuh_config, mock_socket_i
         with caplog.at_level(logging.DEBUG):
             service.send_event(large_alert)
             # Check if the size warning was logged
-            assert any("Message size exceeds the maximum allowed limit" in record.message for record in caplog.records)
+            assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
             # Verify the event was still sent despite being large
             assert mock_socket_instance.send.called
 

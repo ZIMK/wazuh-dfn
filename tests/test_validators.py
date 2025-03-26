@@ -1,9 +1,7 @@
 """Test configuration validators."""
 
-from dataclasses import dataclass
-
 import pytest
-
+from dataclasses import dataclass
 from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.validators import (
     ConfigValidator,
@@ -232,10 +230,8 @@ def test_validator_factory():
     wazuh_config = {
         "json_alert_file": "/var/ossec/logs/alerts/alerts.json",
         "unix_socket_path": "/var/ossec/queue/sockets/queue",
-        "max_event_size": 65535,
         "json_alert_prefix": '{"timestamp"',
-        "json_alert_suffix": "}",
-        "json_alert_file_poll_interval": 1.0,
+        "json_alert_suffix": "}"
     }
     validator = ValidatorFactory.create_validator(wazuh_config)
     assert isinstance(validator, WazuhConfigValidator)
@@ -518,8 +514,10 @@ def test_log_config_validator_comprehensive():
     """Test comprehensive log configuration validation."""
     validator = LogConfigValidator()
 
-    # Test all valid log levels
-    for level in LogConfigValidator.VALID_LOG_LEVELS:
+    # Test all valid log levels from the LogLevel enum
+    from wazuh_dfn.validators import LogLevel
+
+    for level in LogLevel.__members__:
         config = {"level": level, "console": True, "file_path": "/path/to/log"}
         assert validator.validate(config) is True
 

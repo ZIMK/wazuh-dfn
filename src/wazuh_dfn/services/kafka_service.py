@@ -7,11 +7,20 @@ import time
 from .wazuh_service import WazuhService
 from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient
+from enum import StrEnum, auto
 from typing import Any
 from wazuh_dfn.config import DFNConfig, KafkaConfig
 from wazuh_dfn.validators import DFNConfigValidator, KafkaConfigValidator
 
 LOGGER = logging.getLogger(__name__)
+
+
+class KafkaErrorCode(StrEnum):
+    """Enumeration of Kafka error codes."""
+
+    TIMED_OUT = auto()
+    TOPIC_AUTHORIZATION_FAILED = auto()
+    BROKER_NOT_AVAILABLE = auto()
 
 
 class KafkaService:
@@ -144,11 +153,11 @@ class KafkaService:
         """
         if err is not None:
             if err.code() == KafkaError._TIMED_OUT:
-                LOGGER.error("Message delivery timed out")
+                LOGGER.error(f"Message delivery {KafkaErrorCode.TIMED_OUT}")
             elif err.code() == KafkaError._TOPIC_AUTHORIZATION_FAILED:
-                LOGGER.error("Topic authorization failed - check topic permissions")
+                LOGGER.error(f"{KafkaErrorCode.TOPIC_AUTHORIZATION_FAILED} - check topic permissions")
             elif err.code() == KafkaError._BROKER_NOT_AVAILABLE:
-                LOGGER.error("Broker not available - check broker health")
+                LOGGER.error(f"{KafkaErrorCode.BROKER_NOT_AVAILABLE} - check broker health")
             else:
                 LOGGER.error(f"Message delivery failed: {err.str()}")
             self._on_send_error(err)
@@ -162,7 +171,7 @@ class KafkaService:
             record_metadata: Metadata about the sent message
         """
         LOGGER.debug(
-            f"Alert sent to topic {record_metadata.topic()} partition {record_metadata.partition()} offset {record_metadata.offset()}"
+            f"Alert sent to topic {record_metadata.topic()=} partition {record_metadata.partition()=} offset {record_metadata.offset()=}"
         )
 
     def _on_send_error(self, exc) -> None:

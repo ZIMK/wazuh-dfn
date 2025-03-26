@@ -200,7 +200,9 @@ test-results.xml
 test_alerts.json
 
 digest.txt
+digest*.txt
 improvements.md
+improvements*.md
 
 .pdm-python
 .pdm-build

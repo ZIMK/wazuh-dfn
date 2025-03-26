@@ -224,7 +224,7 @@ def setup_logging(config: Config) -> None:
             except Exception as e:
                 print(f"Failed to create log file handler: {e}", file=sys.stderr)
         else:
-            print(f"Log file {config.log.file_path} does not exist. Skip adding to loggers", file=sys.stderr)
+            print(f"Log file {log_file_path} does not exist. Skip adding to loggers", file=sys.stderr)
 
     # Update root logger
     root_logger = logging.getLogger()
