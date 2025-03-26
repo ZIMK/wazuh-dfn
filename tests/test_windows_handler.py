@@ -1,10 +1,8 @@
 """Test module for Windows Handler."""
 
 import logging
-from unittest.mock import MagicMock, patch
-
 import pytest
-
+from unittest.mock import MagicMock, patch
 from wazuh_dfn.services.handlers.windows_handler import WindowsHandler
 
 LOGGER = logging.getLogger(__name__)

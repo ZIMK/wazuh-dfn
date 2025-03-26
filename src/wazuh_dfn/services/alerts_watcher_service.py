@@ -7,7 +7,6 @@ from .file_monitor import FileMonitor
 from datetime import datetime
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-from wazuh_dfn.validators import WazuhConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,11 +23,11 @@ class AlertsWatcherService:
         """Initialize AlertsWatcherService.
 
         Args:
-            config: Wazuh-specific configuration
-            alert_queue: Queue to put alerts into
+            config: Wazuh configuration
+            alert_queue: Queue for alerts
             shutdown_event: Event to signal shutdown
         """
-        WazuhConfigValidator.validate(config)
+        # Validation is handled by Pydantic automatically
         self.config = config
         self.alert_queue = alert_queue
         self.shutdown_event = shutdown_event

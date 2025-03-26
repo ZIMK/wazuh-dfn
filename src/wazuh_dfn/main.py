@@ -19,13 +19,11 @@ from .services import (
     LoggingService,
     WazuhService,
 )
-from .validators import ConfigValidator
-from dataclasses import field
+from .services.max_size_queue import MaxSizeQueue
 from dotenv import load_dotenv
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Union, get_args, get_origin
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -80,6 +78,14 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
         help="Path to configuration file",
     )
     parser.add_argument(
+        "-t",
+        "--config-format",
+        dest="config_format",
+        choices=["yaml", "toml"],
+        default="yaml",
+        help="Configuration file format (yaml or toml)",
+    )
+    parser.add_argument(
         "-v",
         "--version",
         action="version",
@@ -99,6 +105,12 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
     )
     parser.add_argument("--generate-sample-config", action="store_true", help="Generate a sample configuration file")
     parser.add_argument(
+        "--output-format",
+        choices=["yaml", "toml"],
+        default="toml",
+        help="Format for sample configuration (yaml or toml)",
+    )
+    parser.add_argument(
         "--help-all",
         action="store_true",
         help="Show all configuration fields with their CLI arguments and environment variables",
@@ -108,26 +120,32 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
     config_fields = []
     for cls_obj in [WazuhConfig, DFNConfig, KafkaConfig, LogConfig, MiscConfig]:
         cls_name = cls_obj.__name__.replace("Config", "")  # Remove "Config" suffix for cleaner display
-        for field_name, field_obj in cls_obj.__dataclass_fields__.items():  # pylint: disable=no-member
-            metadata = field_obj.metadata
-            if "cli" in metadata:  # Check if field has CLI argument
+        for field_name, field_info in cls_obj.model_fields.items():
+            if field_name.startswith("_"):  # Skip private fields
+                continue
+
+            json_schema_extra = field_info.json_schema_extra or {}
+            if "cli" in json_schema_extra:  # Check if field has CLI argument
                 # Get appropriate type for argparse
-                arg_type = get_argparse_type(field_obj.type)
-                parser.add_argument(metadata["cli"], help=metadata["help"], type=arg_type, default=None)
+                field_type = field_info.annotation
+                arg_type = get_argparse_type(field_type)
+                parser.add_argument(json_schema_extra["cli"], help=field_info.description, type=arg_type, default=None)
+
                 # Store field info for help-all
-                default_val = field_obj.default
-                if default_val is field:  # Check if it's the MISSING sentinel
+                default_val = field_info.default
+                if default_val is None:
                     default_val = "None"
                 elif isinstance(default_val, str):
                     default_val = f'"{default_val}"'  # Quote string defaults
+
                 config_fields.append(
                     {
                         "section": cls_name,
                         "field": field_name,
-                        "cli": metadata["cli"],
-                        "env": metadata.get("env_var", ""),
-                        "help": metadata.get("help", ""),
-                        "type": str(field_obj.type).replace("<class '", "").replace("'>", ""),  # Clean up type display
+                        "cli": json_schema_extra["cli"],
+                        "env": json_schema_extra.get("env_var", ""),
+                        "help": field_info.description or "",
+                        "type": str(field_type).replace("<class '", "").replace("'>", ""),  # Clean up type display
                         "default": str(default_val),
                     }
                 )
@@ -164,7 +182,7 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
 
 
 def load_config(args: argparse.Namespace) -> Config:
-    """Load configuration from YAML file.
+    """Load configuration from file.
 
     Args:
         args: command line arguments.
@@ -176,17 +194,22 @@ def load_config(args: argparse.Namespace) -> Config:
         ConfigValidationError: If configuration validation fails.
     """
     print(f"Loading config from {args.config}")
-    ConfigValidator.skip_path_validation = args.skip_path_validation
 
-    config = Config.from_yaml(args.config)
+    # Set DFNConfig's skip_path_validation attribute
+    config = Config()
+    config.dfn.skip_path_validation = args.skip_path_validation  # Update reference here
+
+    # Load from file based on format
+    if args.config_format == "toml":
+        config = Config.from_toml(args.config, config)
+    else:
+        config = Config.from_yaml(args.config, config)
 
     # Load from environment variables
     Config._load_from_env(config)
 
     # Load from CLI arguments
     Config._load_from_cli(config, args)
-
-    ConfigValidator.validate(config)
 
     return config
 
@@ -410,14 +433,16 @@ def main() -> None:
         # Handle command-line arguments with pattern matching for Python 3.12+
         match args:
             case argparse.Namespace() if getattr(args, "generate_sample_config", False):
-                output_path = getattr(args, "output_path", "config.yaml")
-                Config._generate_sample_config(output_path)
+                output_path = getattr(args, "output_path", "config." + args.output_format)
+                Config._generate_sample_config(output_path, args.output_format)
                 LOGGER.info(f"Generated sample configuration at {output_path}")
                 return
             case argparse.Namespace() if getattr(args, "print_config_only", False):
                 # Load config from file
                 config = load_config(args)
-                json_config = json.dumps(config.__dict__, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+                # Convert Pydantic model to dict for JSON serialization
+                config_dict = config.model_dump()
+                json_config = json.dumps(config_dict, sort_keys=True, indent=4)
                 print(f"Loaded config: {json_config}")
                 return
             case _:

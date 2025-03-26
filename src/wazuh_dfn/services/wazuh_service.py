@@ -10,7 +10,6 @@ from socket import SOCK_DGRAM, socket
 from socket import error as socket_error
 from typing import Any, TypedDict
 from wazuh_dfn.config import WazuhConfig
-from wazuh_dfn.validators import WazuhConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,12 +63,12 @@ class WazuhService:
         """Initialize WazuhService with configuration.
 
         Args:
-            config: Wazuh-specific configuration settings
+            config: Configuration settings for Wazuh connection
 
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        WazuhConfigValidator.validate(config)
+        # Validation is handled by Pydantic automatically
         self.config = config
         self._socket: socket | None = None
 

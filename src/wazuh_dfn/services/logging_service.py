@@ -8,7 +8,6 @@ from .alerts_worker_service import AlertsWorkerService
 from .kafka_service import KafkaService
 from wazuh_dfn.config import LogConfig
 from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-from wazuh_dfn.validators import LogConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,18 +33,16 @@ class LoggingService:
 
         Args:
             config: Logging configuration
-            alert_queue: Queue for alerts
-            kafka_service: Kafka service instance
-            alerts_watcher_service: Observer service instance
-            alerts_worker_service: Alerts worker service instance
+            alert_queue: Queue containing alerts
+            kafka_service: KafkaService instance
+            alerts_watcher_service: AlertsWatcherService instance
+            alerts_worker_service: AlertsWorkerService instance
             shutdown_event: Event to signal shutdown
 
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        # Validate configuration - will raise ConfigValidationError if invalid
-        LogConfigValidator.validate(config)
-
+        # Validation is handled by Pydantic automatically
         self.config = config
         self.alert_queue = alert_queue
         self.kafka_service = kafka_service
@@ -53,7 +50,6 @@ class LoggingService:
         self.alerts_worker_service = alerts_worker_service
         self.shutdown_event = shutdown_event
         self.process = psutil.Process()
-        # No need to store file_monitors since we'll access the single instance directly
 
     def start(self) -> None:
         """Start periodic statistics logging and keep running until shutdown."""

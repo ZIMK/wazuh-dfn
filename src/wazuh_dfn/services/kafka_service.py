@@ -11,7 +11,6 @@ from confluent_kafka.admin import AdminClient
 from enum import StrEnum, auto
 from typing import Any, TypedDict
 from wazuh_dfn.config import DFNConfig, KafkaConfig
-from wazuh_dfn.validators import DFNConfigValidator, KafkaConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,18 +72,15 @@ class KafkaService:
         """Initialize KafkaService.
 
         Args:
-            config: Kafka-specific configuration
-            dfn_config: DFN configuration containing broker and SSL settings
-            wazuh_handler: Service for Wazuh operations
-            shutdown_event: Event to signal shutdown
+            config: Kafka configuration
+            dfn_config: DFN configuration
+            wazuh_handler: WazuhService instance
+            shutdown_event: Threading event to signal shutdown
 
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        # Validate both configs
-        KafkaConfigValidator.validate(config)
-        DFNConfigValidator.validate(dfn_config)
-
+        # Validation is handled by Pydantic automatically
         self.config = config
         self.dfn_config = dfn_config
         self.wazuh_handler = wazuh_handler

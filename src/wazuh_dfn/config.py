@@ -2,182 +2,245 @@
 
 import argparse
 import logging
+from pathlib import Path
+from typing import Any, get_args
+
+# Import tomllib from stdlib for Python 3.11+ or tomli as fallback
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[]
+    except ImportError:
+        tomllib = None
+
 import yaml
 from .exceptions import ConfigValidationError
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Optional
+from enum import Enum
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Logging
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
-class WazuhConfig:
+class LogLevel(str, Enum):
+    """Valid logging levels."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class WazuhConfig(BaseModel):
     """Wazuh configuration settings."""
 
-    unix_socket_path: str = field(
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    unix_socket_path: str | tuple[str, int] = Field(
         default="/var/ossec/queue/sockets/queue",
-        metadata={
-            "help": "Path to Wazuh socket for receiving alerts",
+        description="Path to Wazuh socket (str for Unix socket or tuple of (host, port) for TCP)",
+        json_schema_extra={
             "env_var": "WAZUH_UNIX_SOCKET_PATH",
             "cli": "--wazuh-unix-socket-path",
         },
     )
-    max_event_size: int = field(
+    max_event_size: int = Field(
         default=65535,
-        metadata={
-            "help": "Maximum size of events to process",
+        description="Maximum size of events to process",
+        json_schema_extra={
             "env_var": "WAZUH_MAX_EVENT_SIZE",
             "cli": "--wazuh-max-event-size",
         },
+        gt=0,
     )
-    json_alert_file: str = field(
+    json_alert_file: str = Field(
         default="/var/ossec/logs/alerts/alerts.json",
-        metadata={
-            "help": "Full path to the JSON alerts file to monitor",
+        description="Full path to the JSON alerts file to monitor",
+        json_schema_extra={
             "env_var": "WAZUH_JSON_ALERT_FILE",
             "cli": "--wazuh-json-alert-file",
         },
     )
-    json_alert_prefix: str = field(
+    json_alert_prefix: str = Field(
         default='{"timestamp"',
-        metadata={
-            "help": "Expected prefix of JSON alert lines",
+        description="Expected prefix of JSON alert lines",
+        json_schema_extra={
             "env_var": "WAZUH_JSON_ALERT_PREFIX",
             "cli": "--wazuh-json-prefix",
         },
     )
-    json_alert_suffix: str = field(
+    json_alert_suffix: str = Field(
         default="}",
-        metadata={
-            "help": "Expected suffix of JSON alert lines",
+        description="Expected suffix of JSON alert lines",
+        json_schema_extra={
             "env_var": "WAZUH_JSON_ALERT_SUFFIX",
             "cli": "--wazuh-json-suffix",
         },
     )
-    max_retries: int = field(
+    max_retries: int = Field(
         default=42,
-        metadata={
-            "help": "Maximum number of retries",
+        description="Maximum number of retries",
+        json_schema_extra={
             "env_var": "WAZUH_MAX_RETRIES",
             "cli": "--wazuh-max-retries",
         },
+        gt=0,
     )
-    retry_interval: int = field(
+    retry_interval: int = Field(
         default=5,
-        metadata={
-            "help": "Interval between retries in seconds",
+        description="Interval between retries in seconds",
+        json_schema_extra={
             "env_var": "WAZUH_RETRY_INTERVAL",
             "cli": "--wazuh-retry-interval",
         },
+        gt=0,
     )
-    json_alert_file_poll_interval: float = field(
+    json_alert_file_poll_interval: float = Field(
         default=1.0,
-        metadata={
-            "help": "Interval in seconds between JSON alert file checks",
+        description="Interval in seconds between JSON alert file checks",
+        json_schema_extra={
             "env_var": "WAZUH_JSON_ALERT_FILE_POLL_INTERVAL",
             "cli": "--wazuh-json-alert-file-poll-interval",
         },
+        gt=0,
     )
-    store_failed_alerts: bool = field(
+    store_failed_alerts: bool = Field(
         default=False,
-        metadata={
-            "help": "Whether to store failed alerts for later analysis",
+        description="Whether to store failed alerts for later analysis",
+        json_schema_extra={
             "env_var": "WAZUH_STORE_FAILED_ALERTS",
             "cli": "--wazuh-store-failed-alerts",
         },
     )
-    failed_alerts_path: str = field(
+    failed_alerts_path: str = Field(
         default="/opt/wazuh-dfn/failed-alerts",
-        metadata={
-            "help": "Directory path to store failed alerts",
+        description="Directory path to store failed alerts",
+        json_schema_extra={
             "env_var": "WAZUH_FAILED_ALERTS_PATH",
             "cli": "--wazuh-failed-alerts-path",
         },
     )
-    max_failed_files: int = field(
+    max_failed_files: int = Field(
         default=100,
-        metadata={
-            "help": "Maximum number of failed alert files to keep",
+        description="Maximum number of failed alert files to keep",
+        json_schema_extra={
             "env_var": "WAZUH_MAX_FAILED_FILES",
             "cli": "--wazuh-max-failed-files",
         },
+        gt=0,
     )
-    json_alert_queue_size: int = field(
+    json_alert_queue_size: int = Field(
         default=100000,
-        metadata={
-            "help": "Maximum number of alerts to queue for processing",
+        description="Maximum number of alerts to queue for processing",
+        json_schema_extra={
             "env_var": "WAZUH_JSON_ALERT_QUEUE_SIZE",
             "cli": "--wazuh-json-alert-queue-size",
         },
+        gt=0,
     )
 
-    def __post_init__(self):
+    # Add model validator to validate required fields
+    @model_validator(mode="after")
+    def validate_wazuh_config(self) -> "WazuhConfig":
         """Validate configuration after initialization."""
-        from .validators import WazuhConfigValidator
+        if not self.unix_socket_path:
+            raise ValueError("unix_socket_path cannot be empty")
 
-        validator = WazuhConfigValidator()
-        validator.validate(self)
+        # Validate unix_socket_path type
+        if isinstance(self.unix_socket_path, str):
+            # For Unix socket path, check if file exists when it's not a default value
+            if self.unix_socket_path != "/var/ossec/queue/sockets/queue":
+                socket_path = Path(self.unix_socket_path)
+                if not socket_path.exists() and not socket_path.is_socket():
+                    LOGGER.warning(f"Unix socket path does not exist: {self.unix_socket_path}")
+        elif isinstance(self.unix_socket_path, tuple):
+            # Validate host/port tuple format
+            if len(self.unix_socket_path) != 2:
+                raise ValueError("Host/port tuple must have exactly 2 elements: (host, port)")
+
+            host, port = self.unix_socket_path
+            if not isinstance(host, str) or not host:
+                raise ValueError("Host must be a non-empty string")
+            if not isinstance(port, int) or port <= 0 or port > 65535:
+                raise ValueError("Port must be an integer between 1 and 65535")
+        else:
+            raise ValueError("unix_socket_path must be either a string path or a (host, port) tuple")
+
+        if not self.json_alert_file:
+            raise ValueError("json_alert_file cannot be empty")
+        return self
+
+    @field_validator("unix_socket_path")
+    @classmethod
+    def validate_socket_path(cls, v):
+        """Validate the unix_socket_path format."""
+        # If it's a string representation of a tuple like "(localhost, 1514)", convert to actual tuple
+        if isinstance(v, str) and v.startswith("(") and v.endswith(")"):
+            try:
+                # Parse tuple string like "(host, port)"
+                parts = v.strip("()").split(",")
+                if len(parts) == 2:
+                    host = parts[0].strip().strip("'\"")
+                    port = int(parts[1].strip())
+                    return (host, port)
+            except (ValueError, IndexError):
+                raise ValueError(f"Invalid host/port format: {v}. Expected format: '(host, port)'")
+        return v
 
 
-@dataclass
-class DFNConfig:
+class DFNConfig(BaseModel):
     """DFN-specific configuration parameters."""
 
-    dfn_broker: str = field(
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    dfn_broker: str = Field(
         default="kafka.example.org:443",
-        metadata={
-            "help": "DFN Kafka broker address",
+        description="DFN Kafka broker address",
+        json_schema_extra={
             "env_var": "DFN_BROKER_ADDRESS",
             "cli": "--dfn-broker-address",
         },
     )
-    dfn_ca: str = field(
+    dfn_ca: str = Field(
         default="/opt/wazuh-dfn/certs/dfn-ca.pem",
-        metadata={
-            "help": "Path to CA certificate for Kafka SSL",
+        description="Path to CA certificate for Kafka SSL",
+        json_schema_extra={
             "env_var": "DFN_CA_PATH",
             "cli": "--dfn-ca-path",
         },
     )
-    dfn_cert: str = field(
+    dfn_cert: str = Field(
         default="/opt/wazuh-dfn/certs/dfn-cert.pem",
-        metadata={
-            "help": "Path to client certificate for Kafka SSL",
+        description="Path to client certificate for Kafka SSL",
+        json_schema_extra={
             "env_var": "DFN_CERT_PATH",
             "cli": "--dfn-cert-path",
         },
     )
-    dfn_key: str = field(
+    dfn_key: str = Field(
         default="/opt/wazuh-dfn/certs/dfn-key.pem",
-        metadata={
-            "help": "Path to client key for Kafka SSL",
+        description="Path to client key for Kafka SSL",
+        json_schema_extra={
             "env_var": "DFN_KEY_PATH",
             "cli": "--dfn-key-path",
         },
     )
-    dfn_id: str = field(
+    dfn_id: str | None = Field(
         default=None,
-        metadata={
-            "help": "DFN customer ID",
+        description="DFN customer ID",
+        json_schema_extra={
             "env_var": "DFN_CUSTOMER_ID",
             "cli": "--dfn-customer-id",
         },
     )
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        from .validators import DFNConfigValidator
-
-        validator = DFNConfigValidator()
-        validator.validate(self)
-        self.validate_certificates()
+    skip_path_validation: bool = Field(default=False, exclude=True)
 
     def validate_certificates(self) -> bool:
         """Validate certificate files for SSL.
@@ -190,12 +253,10 @@ class DFNConfig:
         Raises:
             ConfigValidationError: If certificates are invalid
         """
-        from .validators import ConfigValidator
-
         if not self.dfn_ca or not self.dfn_cert or not self.dfn_key:
             return True  # Skip validation if not configured
 
-        if ConfigValidator.skip_path_validation:
+        if self.skip_path_validation:
             return True  # Skip validation if not configured
 
         try:
@@ -214,11 +275,17 @@ class DFNConfig:
                 )
 
             now = datetime.now(UTC)
-            if now < ca_cert.not_valid_before or now > ca_cert.not_valid_after:
-                raise ConfigValidationError(f"CA certificate is expired or not yet valid")
 
-            if now < client_cert.not_valid_before or now > client_cert.not_valid_after:
-                raise ConfigValidationError(f"Client certificate is expired or not yet valid")
+            # More explicit date validation for better tests
+            if ca_cert.not_valid_before > now:
+                raise ConfigValidationError("CA certificate is not yet valid")
+            if now > ca_cert.not_valid_after:
+                raise ConfigValidationError("CA certificate is expired")
+
+            if client_cert.not_valid_before > now:
+                raise ConfigValidationError("Client certificate is not yet valid")
+            if now > client_cert.not_valid_after:
+                raise ConfigValidationError("Client certificate is expired")
 
             # Check that client cert matches private key
             client_public_key = client_cert.public_key()
@@ -231,6 +298,9 @@ class DFNConfig:
 
             return True
 
+        except ConfigValidationError:
+            # Re-raise ConfigValidationError directly without wrapping
+            raise
         except Exception as e:
             raise ConfigValidationError(f"Certificate validation failed: {e}")
 
@@ -265,70 +335,78 @@ class DFNConfig:
         # and verify against a CRL or OCSP
         issuer = ca_cert.subject
         if client_cert.issuer != issuer:
-            raise ConfigValidationError(f"Client certificate not issued by the provided CA.")
+            raise ConfigValidationError("Client certificate not issued by the provided CA.")
 
 
-@dataclass
-class KafkaConfig:
+class KafkaConfig(BaseModel):
     """Kafka configuration."""
 
-    timeout: int = field(
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    timeout: int = Field(
         default=60,
-        metadata={
-            "help": "Kafka request timeout in seconds",
+        description="Kafka request timeout in seconds",
+        json_schema_extra={
             "env_var": "KAFKA_TIMEOUT",
             "cli": "--kafka-timeout",
         },
+        gt=0,
     )
-    retry_interval: int = field(
+    retry_interval: int = Field(
         default=5,
-        metadata={
-            "help": "Interval between retries in seconds",
+        description="Interval between retries in seconds",
+        json_schema_extra={
             "env_var": "KAFKA_RETRY_INTERVAL",
             "cli": "--kafka-retry-interval",
         },
+        gt=0,
     )
-    connection_max_retries: int = field(
+    connection_max_retries: int = Field(
         default=5,
-        metadata={
-            "help": "Maximum number of connection retries",
+        description="Maximum number of connection retries",
+        json_schema_extra={
             "env_var": "KAFKA_CONNECTION_MAX_RETRIES",
             "cli": "--kafka-connection-max-retries",
         },
+        gt=0,
     )
-    send_max_retries: int = field(
+    send_max_retries: int = Field(
         default=5,
-        metadata={
-            "help": "Maximum number of send retries",
+        description="Maximum number of send retries",
+        json_schema_extra={
             "env_var": "KAFKA_SEND_MAX_RETRIES",
             "cli": "--kafka-send-max-retries",
         },
+        gt=0,
     )
-    max_wait_time: int = field(
+    max_wait_time: int = Field(
         default=60,
-        metadata={
-            "help": "Maximum wait time between retries in seconds",
+        description="Maximum wait time between retries in seconds",
+        json_schema_extra={
             "env_var": "KAFKA_MAX_WAIT_TIME",
             "cli": "--kafka-max-wait-time",
         },
+        gt=0,
     )
-    admin_timeout: int = field(
+    admin_timeout: int = Field(
         default=10,
-        metadata={
-            "help": "Timeout for admin operations in seconds",
+        description="Timeout for admin operations in seconds",
+        json_schema_extra={
             "env_var": "KAFKA_ADMIN_TIMEOUT",
             "cli": "--kafka-admin-timeout",
         },
+        gt=0,
     )
-    service_retry_interval: int = field(
+    service_retry_interval: int = Field(
         default=5,
-        metadata={
-            "help": "Interval between service retries in seconds",
+        description="Interval between service retries in seconds",
+        json_schema_extra={
             "env_var": "KAFKA_SERVICE_RETRY_INTERVAL",
             "cli": "--kafka-service-retry-interval",
         },
+        gt=0,
     )
-    producer_config: dict[str, Any] = field(
+    producer_config: dict[str, Any] = Field(
         default_factory=lambda: {
             "request.timeout.ms": 60000,
             "connections.max.idle.ms": 540000,  # 9 minutes
@@ -341,19 +419,12 @@ class KafkaConfig:
             "statistics.interval.ms": 0,  # Disable stats for better performance
             "log_level": 0,  # Only log errors
         },
-        metadata={
-            "help": "Kafka producer configuration",
+        description="Kafka producer configuration",
+        json_schema_extra={
             "env_var": "KAFKA_PRODUCER_CONFIG",
             "cli": "--kafka-producer-config",
         },
     )
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        from .validators import KafkaConfigValidator
-
-        validator = KafkaConfigValidator()
-        validator.validate(self)
 
     def get_kafka_config(self, dfn_config: DFNConfig) -> dict:
         """Get Kafka configuration dictionary.
@@ -377,101 +448,129 @@ class KafkaConfig:
         return config
 
 
-@dataclass
-class LogConfig:
+class LogConfig(BaseModel):
     """Logging configuration."""
 
-    console: bool = field(
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    console: bool = Field(
         default=True,
-        metadata={
-            "help": "Enable console logging",
+        description="Enable console logging",
+        json_schema_extra={
             "env_var": "LOG_CONSOLE_ENABLED",
             "cli": "--log-console-enabled",
         },
     )
-    file_path: str = field(
+    file_path: str = Field(
         default="/opt/wazuh-dfn/logs/wazuh-dfn.log",
-        metadata={
-            "help": "Path to log file",
+        description="Path to log file",
+        json_schema_extra={
             "env_var": "LOG_FILE_PATH",
             "cli": "--log-file-path",
         },
     )
-    keep_files: int = field(
+    keep_files: int = Field(
         default=5,
-        metadata={
-            "help": "Number of log files to keep when rotating",
+        description="Number of log files to keep when rotating",
+        json_schema_extra={
             "env_var": "LOG_KEEP_FILES",
             "cli": "--log-keep-files",
         },
+        gt=0,
     )
-    interval: int = field(
+    interval: int = Field(
         default=600,
-        metadata={
-            "help": "Statistics logging interval in seconds",
+        description="Statistics logging interval in seconds",
+        json_schema_extra={
             "env_var": "LOG_INTERVAL",
             "cli": "--log-interval",
         },
+        gt=0,
     )
-    level: str = field(
+    level: str = Field(
         default="INFO",
-        metadata={
-            "help": "Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+        json_schema_extra={
             "env_var": "LOG_LEVEL",
             "cli": "--log-level",
         },
     )
 
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        from .validators import LogConfigValidator
+    @field_validator("level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        """Validate log level is valid."""
+        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if v not in valid_levels:
+            raise ValueError(f"Invalid log level: {v}")
+        return v
 
-        validator = LogConfigValidator()
-        validator.validate(self)
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """Validate file path exists and is readable."""
+        # Skip validation for now - we'll implement a proper path validator later
+        # that respects the skip_path_validation setting
+        return v
 
 
-@dataclass
-class MiscConfig:
+class MiscConfig(BaseModel):
     """Miscellaneous configuration."""
 
-    num_workers: int = field(
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    num_workers: int = Field(
         default=10,
-        metadata={
-            "help": "Number of worker threads",
+        description="Number of worker threads",
+        json_schema_extra={
             "env_var": "MISC_NUM_WORKERS",
             "cli": "--misc-num-workers",
         },
+        gt=0,
     )
-    own_network: str | None = field(
+    own_network: str | None = Field(
         default=None,
-        metadata={
-            "help": "Own network CIDR notation (optional)",
+        description="Own network CIDR notation (optional)",
+        json_schema_extra={
             "env_var": "MISC_OWN_NETWORK",
             "cli": "--misc-own-network",
         },
     )
 
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        from .validators import MiscConfigValidator
+    @field_validator("own_network")
+    @classmethod
+    def validate_cidr(cls, v: str | None) -> str | None:
+        """Validate CIDR notation."""
+        if v is None:
+            return v
 
-        validator = MiscConfigValidator()
-        validator.validate(self)
+        if not v or "/" not in v:
+            raise ValueError(f"Invalid CIDR format: {v}")
+
+        try:
+            import ipaddress
+
+            ipaddress.ip_network(v, strict=True)
+        except ValueError as e:
+            raise ValueError(f"Invalid CIDR notation: {e!s}")
+
+        return v
 
 
-@dataclass
-class Config:
+class Config(BaseModel):
     """Main configuration class."""
 
-    dfn: DFNConfig = field(default_factory=DFNConfig)
-    wazuh: WazuhConfig = field(default_factory=WazuhConfig)
-    kafka: KafkaConfig = field(default_factory=KafkaConfig)
-    log: LogConfig = field(default_factory=LogConfig)
-    misc: MiscConfig = field(default_factory=MiscConfig)
-    _config_cache: dict[str, str] = field(default_factory=dict, repr=False)
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    dfn: DFNConfig = Field(default_factory=DFNConfig)
+    wazuh: WazuhConfig = Field(default_factory=WazuhConfig)
+    kafka: KafkaConfig = Field(default_factory=KafkaConfig)
+    log: LogConfig = Field(default_factory=LogConfig)
+    misc: MiscConfig = Field(default_factory=MiscConfig)
+    config_cache: dict[str, str] = Field(default_factory=dict, exclude=True)  # Renamed from _config_cache
 
     @classmethod
-    def from_yaml(cls, yaml_path: str, config: Optional["Config"] = None) -> "Config":  # NOSONAR
+    def from_yaml(cls, yaml_path: str, config: "Config | None" = None) -> "Config":
         """Create Config instance from YAML file.
 
         Args:
@@ -493,7 +592,7 @@ class Config:
 
         yaml_path_obj = Path(yaml_path)
         if not yaml_path_obj.exists():
-            raise FileNotFoundError
+            raise FileNotFoundError(f"Configuration file not found: {yaml_path}")
 
         print(f"Loading config from {yaml_path}")
         try:
@@ -504,30 +603,63 @@ class Config:
         if not isinstance(config_dict, dict):
             raise ConfigValidationError("Invalid configuration format")
 
-        # Load YAML values
-        if "dfn" in config_dict:
-            for k, v in config_dict["dfn"].items():
-                setattr(config.dfn, k, v)
-        if "wazuh" in config_dict:
-            for k, v in config_dict["wazuh"].items():
-                setattr(config.wazuh, k, v)
-        if "kafka" in config_dict:
-            for k, v in config_dict["kafka"].items():
-                setattr(config.kafka, k, v)
-        if "log" in config_dict:
-            for k, v in config_dict["log"].items():
-                setattr(config.log, k, v)
-        if "misc" in config_dict:
-            for k, v in config_dict["misc"].items():
-                setattr(config.misc, k, v)
+        # Load YAML values into config model
+        config_data = {}
+        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            if section in config_dict:
+                config_data[section] = config_dict[section]
 
-        """Validate configuration after initialization."""
-        from .validators import ConfigValidator
+        # Create a new config with the updated values
+        return Config(**config_data)
 
-        validator = ConfigValidator()
-        validator.validate(config)
+    @classmethod
+    def from_toml(cls, toml_path: str, config: "Config | None" = None) -> "Config":
+        """Create Config instance from TOML file.
 
-        return config
+        Args:
+            toml_path: Path to TOML configuration file.
+            config: Optional existing config object to use as base. If None, creates new config with defaults.
+
+        Returns:
+            Config: Configuration instance.
+
+        Raises:
+            ConfigValidationError: If configuration validation fails
+        """
+        if not tomllib:
+            raise ImportError(
+                "tomllib or tomli package is required for TOML support. " "Install tomli for Python < 3.11"
+            )
+
+        # Start with defaults or use provided config
+        if config is None:
+            config = cls()
+
+        if not toml_path:
+            return config
+
+        toml_path_obj = Path(toml_path)
+        if not toml_path_obj.exists():
+            raise FileNotFoundError(f"Configuration file not found: {toml_path}")
+
+        print(f"Loading config from {toml_path}")
+        try:
+            with Path(toml_path_obj).open("rb") as f:
+                config_dict = tomllib.load(f)
+        except Exception as e:
+            raise ConfigValidationError(f"Invalid TOML content: {e}")
+
+        if not isinstance(config_dict, dict):
+            raise ConfigValidationError("Invalid configuration format")
+
+        # Load TOML values into config model
+        config_data = {}
+        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            if section in config_dict:
+                config_data[section] = config_dict[section]
+
+        # Create a new config with the updated values
+        return Config(**config_data)
 
     @staticmethod
     def _convert_value(value: str, field_type: type) -> Any:
@@ -547,6 +679,20 @@ class Config:
                 return int(value)
             case type() if field_type is float:
                 return float(value)
+            case _ if hasattr(field_type, "__or__"):
+                # Handle pipe syntax (|) in modern Python
+                if isinstance(value, str) and tuple[str, int] in get_args(field_type):
+                    # Check if the string represents a tuple
+                    if value.startswith("(") and value.endswith(")"):
+                        try:
+                            parts = value.strip("()").split(",")
+                            if len(parts) == 2:
+                                host = parts[0].strip().strip("'\"")
+                                port = int(parts[1].strip())
+                                return (host, port)
+                        except (ValueError, IndexError):
+                            pass
+                return value
             case _:
                 return value
 
@@ -555,26 +701,85 @@ class Config:
         """Load configuration from environment variables."""
         import os  # Import os only for environment variables access
 
-        for cls_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
-            config_section = getattr(config, cls_name)
-            for field_name, field_obj in config_section.__class__.__dataclass_fields__.items():
-                env_var = field_obj.metadata.get("env_var")
+        env_updates = {}
+
+        for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            section_updates = {}
+            section_model = getattr(config, section_name)
+
+            for field_name, field_info in section_model.model_fields.items():
+                if field_name.startswith("_"):  # Skip private fields
+                    continue
+
+                env_var = field_info.json_schema_extra.get("env_var") if field_info.json_schema_extra else None
                 if env_var and env_var in os.environ:
                     value = os.environ[env_var]
-                    setattr(config_section, field_name, Config._convert_value(value, field_obj.type))
+                    field_type = field_info.annotation
+
+                    # For modern pipe syntax types (like str | None)
+                    if hasattr(field_type, "__or__"):
+                        args = get_args(field_type)
+                        # Find the first non-None type
+                        for arg in args:
+                            if arg is not type(None):  # Check if it's not NoneType
+                                field_type = arg
+                                break
+
+                    section_updates[field_name] = Config._convert_value(value, field_type)
+
+            if section_updates:
+                # Create a new section model with the updates
+                section_cls = type(section_model)
+                env_updates[section_name] = section_cls(**{**section_model.model_dump(), **section_updates})
+
+        # Apply all the updates to the config
+        for section_name, updated_section in env_updates.items():
+            setattr(config, section_name, updated_section)
 
     @staticmethod
     def _load_from_cli(config: "Config", args: argparse.Namespace) -> None:
         """Load configuration from command line arguments."""
-        for cls_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
-            config_section = getattr(config, cls_name)
-            for field_name, field_obj in config_section.__class__.__dataclass_fields__.items():
-                cli_flag = field_obj.metadata.get("cli")
+        cli_updates = {}
+
+        for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            section_updates = {}
+            section_model = getattr(config, section_name)
+
+            for field_name, field_info in section_model.model_fields.items():
+                if field_name.startswith("_"):  # Skip private fields
+                    continue
+
+                cli_flag = field_info.json_schema_extra.get("cli") if field_info.json_schema_extra else None
                 if cli_flag:
                     arg_name = cli_flag.lstrip("-").replace("-", "_")
                     value = getattr(args, arg_name, None)
+
                     if value is not None:
-                        setattr(config_section, field_name, Config._convert_value(value, field_obj.type))
+                        field_type = field_info.annotation
+
+                        # For modern pipe syntax types (like str | None)
+                        if hasattr(field_type, "__or__"):
+                            args_types = get_args(field_type)
+                            # Find the first non-None type
+                            for arg_type in args_types:
+                                if arg_type is not type(None):  # Check if it's not NoneType
+                                    field_type = arg_type
+                                    break
+
+                        # Special handling for integers from CLI
+                        if field_type is int and isinstance(value, str) and value.isdigit():
+                            value = int(value)
+
+                        section_updates[field_name] = Config._convert_value(str(value), field_type)
+
+            if section_updates:
+                # Create a new section model with the updates
+                section_cls = type(section_model)
+                cli_updates[section_name] = section_cls(**{**section_model.model_dump(), **section_updates})
+
+        # Apply all the updates to the config
+        for section_name, updated_section in cli_updates.items():
+            setattr(config, section_name, updated_section)
 
     def get(self, key: str, default: str | None = None) -> str:
         """Get configuration value.
@@ -587,52 +792,103 @@ class Config:
             str: Configuration value or default.
         """
         # Check instance-level cache first
-        if key in self._config_cache:
-            return self._config_cache[key]
+        if key in self.config_cache:  # Updated reference
+            return self.config_cache[key]  # Updated reference
 
         try:
             section, option = key.split(".")
             config_section = getattr(self, section)
             value = str(getattr(config_section, option))
             # Store in instance cache
-            self._config_cache[key] = value
+            self.config_cache[key] = value  # Updated reference
             return value
         except (AttributeError, ValueError):
             default_value = default if default is not None else ""
             # Cache the default lookup too
-            self._config_cache[key] = default_value
+            self.config_cache[key] = default_value  # Updated reference
             return default_value
 
     @classmethod
-    def _generate_sample_config(cls, output_path: str) -> None:
-        """Generate a sample configuration file."""
+    def _generate_sample_config(cls, output_path: str, format: str = "toml") -> None:
+        """Generate a sample configuration file.
+
+        Args:
+            output_path: Path to write the sample configuration to
+            format: Output format ('toml' or 'yaml')
+        """
         config = cls()
         sample_dict = {"dfn": {}, "wazuh": {}, "kafka": {}, "log": {}, "misc": {}}
 
+        # Extract fields and their descriptions from each section
         for section_name, section_dict in sample_dict.items():
             section = getattr(config, section_name)
-            section_dict.update(
-                {
-                    field_name: field_obj.default
-                    for field_name, field_obj in section.__class__.__dataclass_fields__.items()  # pylint: disable=no-member
-                }
-            )
 
-        # Add comments with help text
-        yaml_lines = ["# Wazuh DFN Configuration\n"]
+            for field_name, field_info in section.model_fields.items():
+                if field_name.startswith("_"):  # Skip private fields
+                    continue
 
-        for section_name in sample_dict:
-            section = getattr(config, section_name)
-            yaml_lines.append(f"\n# {section_name.upper()} Configuration\n{section_name}:\n")
-
-            for field_name, field_obj in section.__class__.__dataclass_fields__.items():  # pylint: disable=no-member
-                if "metadata" in field_obj.metadata:
-                    metadata = field_obj.metadata["metadata"]
-                    yaml_lines.append(f"  # {metadata['help']}\n")
-                    if "env_var" in metadata:
-                        yaml_lines.append(f"  # Environment variable: {metadata['env_var']}\n")
-                    yaml_lines.append(f"  {field_name}: {field_obj.default}\n")
+                # Get the default value
+                default_value = field_info.default
+                section_dict[field_name] = default_value
 
         output_path_obj = Path(output_path)
         output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-        output_path_obj.write_text("".join(yaml_lines))
+
+        if format.lower() == "toml":
+            # Write TOML file with comments
+            toml_lines = ["# Wazuh DFN Configuration\n"]
+
+            for section_name in sample_dict:
+                section = getattr(config, section_name)
+                toml_lines.append(f"\n# {section_name.upper()} Configuration\n[{section_name}]\n")
+
+                for field_name, field_info in section.model_fields.items():
+                    if field_name.startswith("_"):  # Skip private fields
+                        continue
+
+                    description = field_info.description if field_info.description else "No description"
+                    toml_lines.append(f"# {description}\n")
+
+                    if field_info.json_schema_extra and "env_var" in field_info.json_schema_extra:
+                        toml_lines.append(f"# Environment variable: {field_info.json_schema_extra['env_var']}\n")
+
+                    # Format the default value properly for TOML
+                    default_value = field_info.default
+                    if isinstance(default_value, str):
+                        toml_lines.append(f'{field_name} = "{default_value}"\n')
+                    elif isinstance(default_value, dict):
+                        toml_lines.append(f"{field_name} = {default_value}\n")
+                    elif default_value is None:
+                        toml_lines.append(f"# {field_name} = null\n")
+                    else:
+                        toml_lines.append(f"{field_name} = {default_value}\n")
+
+            output_path_obj.write_text("".join(toml_lines))
+        else:
+            # Write YAML file with comments
+            yaml_lines = ["# Wazuh DFN Configuration\n"]
+
+            for section_name in sample_dict:
+                section = getattr(config, section_name)
+                yaml_lines.append(f"\n# {section_name.upper()} Configuration\n{section_name}:\n")
+
+                for field_name, field_info in section.model_fields.items():
+                    if field_name.startswith("_"):  # Skip private fields
+                        continue
+
+                    description = field_info.description if field_info.description else "No description"
+                    yaml_lines.append(f"  # {description}\n")
+
+                    if field_info.json_schema_extra and "env_var" in field_info.json_schema_extra:
+                        yaml_lines.append(f"  # Environment variable: {field_info.json_schema_extra['env_var']}\n")
+
+                    # Format the default value properly for YAML
+                    default_value = field_info.default
+                    if isinstance(default_value, str):
+                        yaml_lines.append(f'  {field_name}: "{default_value}"\n')
+                    elif default_value is None:
+                        yaml_lines.append(f"  # {field_name}: null\n")
+                    else:
+                        yaml_lines.append(f"  {field_name}: {default_value}\n")
+
+            output_path_obj.write_text("".join(yaml_lines))

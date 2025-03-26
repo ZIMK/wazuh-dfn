@@ -1,16 +1,15 @@
 """Test module for Logging Service."""
 
+import contextlib
 import logging
+import psutil
+import pytest
 import queue
 import threading
 import time
+from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
-
-import psutil
-import pytest
-
 from wazuh_dfn.config import LogConfig
-from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.logging_service import LoggingService
 
 
@@ -65,13 +64,21 @@ def test_logging_service_invalid_config(tmp_path):
     valid_log_file = tmp_path / "test.log"
     valid_log_file.touch()
 
-    # Test invalid level
-    with pytest.raises(ConfigValidationError):
+    # Test invalid level - use try/except instead of pytest.raises
+    try:
         LogConfig(console=True, file_path=str(valid_log_file), level="INVALID_LEVEL", interval=1)  # Invalid level
+        pytest.fail("ValidationError not raised")  # Should not reach here
+    except ValidationError:
+        # Test passed as expected
+        pass
 
-    # Test invalid interval
-    with pytest.raises(ConfigValidationError):
+    # Test invalid interval - use try/except instead of pytest.raises
+    try:
         LogConfig(console=True, file_path=str(valid_log_file), level="INFO", interval=-1)  # Invalid interval
+        pytest.fail("ValidationError not raised")  # Should not reach here
+    except ValidationError:
+        # Test passed as expected
+        pass
 
 
 def test_logging_service_log_stats(logging_service, caplog):
@@ -156,17 +163,13 @@ def test_logging_service_memory_error(mock_process, logging_service, caplog):
 
 def test_logging_service_error_handling(logging_service, caplog):
     """Test LoggingService error handling during operation."""
-    with caplog.at_level(logging.ERROR):
-        # Mock _log_stats to raise an error
-        with patch.object(logging_service, "_log_stats") as mock_log_stats:
-            # Set up the mock to raise an exception
-            mock_log_stats.side_effect = Exception("Test error")
+    with caplog.at_level(logging.ERROR), patch.object(logging_service, "_log_stats") as mock_log_stats:
+        # Set up the mock to raise an exception
+        mock_log_stats.side_effect = Exception("Test error")
 
-            try:
-                # Start the service which should trigger the error
-                logging_service.start()
-            except Exception:
-                pass  # Expected exception
+        with contextlib.suppress(Exception):
+            # Start the service which should trigger the error
+            logging_service.start()
 
-            # Verify the error was logged
-            assert any("Error in logging service: Test error" in record.message for record in caplog.records)
+        # Verify the error was logged
+        assert any("Error in logging service: Test error" in record.message for record in caplog.records)

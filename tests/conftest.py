@@ -1,26 +1,26 @@
 """Test configuration and fixtures."""
 
 import logging
-import os
+import pytest
 import shutil
 import tempfile
 import threading
+from contextlib import suppress
+from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
-from wazuh_dfn.validators import ConfigValidator
 
 
 @pytest.fixture(autouse=True)
 def disable_path_validation():
     """Disable path validation for all tests."""
-    ConfigValidator.skip_path_validation = True
+    # Update: With Pydantic we need to modify the skip_path_validation attribute
+    config = Config()
+    config.dfn.skip_path_validation = True
     yield
-    ConfigValidator.skip_path_validation = False
+    config.dfn.skip_path_validation = False
 
 
 @pytest.fixture(autouse=True)
@@ -42,39 +42,46 @@ def alerts_dir():
 @pytest.fixture
 def sample_config(tmp_path):
     """Create a sample configuration for testing."""
-    config = Config()
-    config.dfn = DFNConfig(
-        dfn_id="test-id", dfn_broker="test:9092", dfn_ca="ca.pem", dfn_cert="cert.pem", dfn_key="key.pem"
-    )
     alerts_file = tmp_path / "alerts.json"
     alerts_file.touch()  # Create the file
-    config.wazuh = WazuhConfig(
-        json_alert_file=str(alerts_file),
-        unix_socket_path="/var/ossec/queue/sockets/queue",
-        max_event_size=65535,
-        json_alert_prefix="{",
-        json_alert_suffix="}",
-        json_alert_file_poll_interval=1.0,
-        max_retries=5,
-        retry_interval=5,
-    )
-    config.kafka = KafkaConfig(
-        timeout=60,
-        retry_interval=5,
-        connection_max_retries=5,
-        send_max_retries=5,
-        max_wait_time=60,
-        admin_timeout=10,
-        producer_config={},
-    )
-    config.log = LogConfig(
-        console=True,
-        file_path=str(tmp_path / "wazuh-dfn.log"),
-        interval=1,
-        level="DEBUG",
-    )
-    config.misc = MiscConfig(
-        num_workers=1,
+
+    config = Config(
+        dfn=DFNConfig(
+            dfn_id="test-id",
+            dfn_broker="test:9092",
+            dfn_ca="ca.pem",
+            dfn_cert="cert.pem",
+            dfn_key="key.pem",
+            skip_path_validation=True,  # Update reference here
+        ),
+        wazuh=WazuhConfig(
+            json_alert_file=str(alerts_file),
+            unix_socket_path="/var/ossec/queue/sockets/queue",
+            max_event_size=65535,
+            json_alert_prefix="{",
+            json_alert_suffix="}",
+            json_alert_file_poll_interval=1.0,
+            max_retries=5,
+            retry_interval=5,
+        ),
+        kafka=KafkaConfig(
+            timeout=60,
+            retry_interval=5,
+            connection_max_retries=5,
+            send_max_retries=5,
+            max_wait_time=60,
+            admin_timeout=10,
+            producer_config={},
+        ),
+        log=LogConfig(
+            console=True,
+            file_path=str(tmp_path / "wazuh-dfn.log"),
+            interval=1,
+            level="DEBUG",
+        ),
+        misc=MiscConfig(
+            num_workers=1,
+        ),
     )
     return config
 
@@ -144,7 +151,6 @@ def mock_socket(monkeypatch):
         if isinstance(addr, str):
             # Convert Unix socket path to a tuple for Windows testing
             addr = ("127.0.0.1", 1514)  # Default Wazuh port NOSONAR
-        return None
 
     mock_socket.connect = mock_connect
     mock_socket.close = MagicMock()
@@ -217,14 +223,12 @@ def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
     from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 
     # Create the alerts directory if it doesn't exist
-    os.makedirs(sample_config.wazuh.alerts_directory, exist_ok=True)
+    Path(sample_config.wazuh.alerts_directory).mkdir(parents=True, exist_ok=True)
 
     # Create the service
     service = AlertsWatcherService(sample_config.wazuh, alert_queue, shutdown_event)
     yield service
 
     # Cleanup
-    try:
+    with suppress(Exception):
         service.stop()
-    except Exception:
-        pass

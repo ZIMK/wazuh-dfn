@@ -1,11 +1,10 @@
 import logging
-import os
+import pytest
 import tempfile
 import time
+from contextlib import suppress
 from datetime import datetime
-
-import pytest
-
+from pathlib import Path
 from wazuh_dfn.services.file_monitor import FileMonitor
 from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
@@ -30,12 +29,13 @@ def safe_cleanup(reader: FileMonitor, file_path: str, max_retries: int = 5, dela
 
     time.sleep(delay)  # Always wait before attempting to remove file
 
-    if not os.path.exists(file_path):
+    path_obj = Path(file_path)
+    if not path_obj.exists():
         return
 
     for i in range(max_retries):
         try:
-            os.unlink(file_path)
+            path_obj.unlink()
             return
         except OSError as e:
             if i < max_retries - 1:
@@ -46,10 +46,20 @@ def safe_cleanup(reader: FileMonitor, file_path: str, max_retries: int = 5, dela
 
 @pytest.fixture
 def temp_log_file():
-    with tempfile.NamedTemporaryFile(mode="w+b", delete=False) as f:
-        yield f.name
-    if os.path.exists(f.name):
-        os.unlink(f.name)
+    with tempfile.NamedTemporaryFile(mode="w+b", suffix=".log", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        yield str(tmp_path)
+        # Safely remove the temporary file with retries
+        for attempt in range(5):
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                break
+            except PermissionError as e:
+                if attempt < 4:  # Try 5 times
+                    time.sleep(0.2)  # Increase delay between attempts
+                    continue
+                LOGGER.warning(f"Could not remove temp file {tmp_path}: {e}")
 
 
 @pytest.fixture
@@ -100,8 +110,8 @@ def test_close_file(file_monitor):
 
 def test_process_valid_alert(file_monitor, temp_log_file):
     valid_alert = '{"alert": {"field": "value"}}\n'
-    with open(temp_log_file, "w") as f:
-        f.write(valid_alert)
+    file_path = Path(temp_log_file)
+    file_path.write_text(valid_alert)
 
     file_monitor.open()
     file_monitor.check_file()
@@ -112,8 +122,8 @@ def test_process_valid_alert(file_monitor, temp_log_file):
 
 def test_process_invalid_json(file_monitor, temp_log_file):
     invalid_alert = '{"alert": invalid_json}\n'
-    with open(temp_log_file, "w") as f:
-        f.write(invalid_alert)
+    file_path = Path(temp_log_file)
+    file_path.write_text(invalid_alert)
 
     file_monitor.open()
     file_monitor.check_file()
@@ -124,8 +134,8 @@ def test_process_invalid_json(file_monitor, temp_log_file):
 
 def test_file_rotation(file_monitor, temp_log_file):
     # Write initial content
-    with open(temp_log_file, "w") as f:
-        f.write('{"alert": {"id": "1"}}\n')
+    file_path = Path(temp_log_file)
+    file_path.write_text('{"alert": {"id": "1"}}\n')
 
     file_monitor.open()
     file_monitor.check_file()
@@ -134,14 +144,11 @@ def test_file_rotation(file_monitor, temp_log_file):
     file_monitor.close()
     time.sleep(0.1)  # Small delay is enough with safe_cleanup
 
-    try:
-        os.unlink(temp_log_file)
-    except OSError:
-        pass  # Ignore errors, we'll create new file anyway
+    with suppress(OSError):
+        file_path.unlink()
 
     # Write new file
-    with open(temp_log_file, "w") as f:
-        f.write('{"alert": {"id": "2"}}\n')
+    file_path.write_text('{"alert": {"id": "2"}}\n')
 
     file_monitor.open()
     file_monitor.check_file()
@@ -160,15 +167,16 @@ def test_file_rotation(file_monitor, temp_log_file):
 
 def test_failed_alerts_storage(file_monitor, temp_log_file, temp_failed_alerts_dir):
     # Write an alert with invalid UTF-8 bytes to trigger both failed and replaced files
-    invalid_bytes = b'{"alert": "\xFF\xFE invalid utf8"}\n'
-    with open(temp_log_file, "wb") as f:
-        f.write(invalid_bytes)
+    invalid_bytes = b'{"alert": "\xff\xfe invalid utf8"}\n'
+    file_path = Path(temp_log_file)
+    file_path.write_bytes(invalid_bytes)
 
     file_monitor.open()
     file_monitor.check_file()
 
     # Check if failed alert file was created
-    failed_files = sorted(os.listdir(temp_failed_alerts_dir))
+    failed_dir = Path(temp_failed_alerts_dir)
+    failed_files = sorted(file.name for file in failed_dir.iterdir())
     assert len(failed_files) == 2  # Should have both failed and replaced versions
     # Check naming pattern
     assert any(f.endswith("_failed_alert.json") for f in failed_files)
@@ -204,17 +212,18 @@ def test_stats_calculation(file_monitor):
 def test_cleanup_failed_alerts(file_monitor, temp_failed_alerts_dir):
     # Create max_failed_files pairs of files (original and replaced)
     target_total = file_monitor.max_failed_files + 5
+    failed_dir = Path(temp_failed_alerts_dir)
+
     for _ in range(target_total):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         # Create only failed alert files (not pairs) to test exact limit
-        failed_path = os.path.join(temp_failed_alerts_dir, f"{timestamp}_failed_alert.json")
-        with open(failed_path, "w") as f:
-            f.write("{}")
+        failed_path = failed_dir / f"{timestamp}_failed_alert.json"
+        failed_path.write_text("{}")
         time.sleep(0.001)  # Ensure unique timestamps
 
     file_monitor._cleanup_failed_alerts()
 
-    remaining_files = os.listdir(temp_failed_alerts_dir)
+    remaining_files = list(failed_dir.iterdir())
     assert len(remaining_files) == file_monitor.max_failed_files
 
 
@@ -223,8 +232,8 @@ def test_large_alert_spanning_chunks(file_monitor, temp_log_file):
     large_data = "x" * 20000  # Create string longer than CHUNK_SIZE
     large_alert = f'{{"alert": {{"field": "{large_data}"}}}}\n'
 
-    with open(temp_log_file, "w") as f:
-        f.write(large_alert)
+    file_path = Path(temp_log_file)
+    file_path.write_text(large_alert)
 
     file_monitor.open()
     file_monitor.check_file()

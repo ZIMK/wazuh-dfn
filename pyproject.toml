@@ -19,9 +19,11 @@ dependencies = [
     # Core dependencies with version ranges for better compatibility
     "psutil>=7.0.0,<8.0.0",           # System monitoring utilities
     "confluent-kafka>=2.8.0,<3.0.0",  # Kafka client 
-    "PyYAML>=6.0,<7.0",               # YAML configuration
+    "PyYAML>=6.0,<7.0.0",               # YAML configuration
     "python-dotenv>=1.0.0,<2.0.0",    # Environment variable loading
     "cryptography>=44.0.0,<45.0.0",   # Cryptographic operations for SSL/TLS
+    "pydantic>=2.0.0",                # Pydantic for data validation
+    "tomli;python_version<'3.11'",    # TOML parsing for Python < 3.11
 ]
 
 [project.urls]

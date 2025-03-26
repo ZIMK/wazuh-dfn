@@ -52,33 +52,26 @@ Notes:
     - Windows systems may require elevated privileges for some operations
 """
 
-import sys
-
-if sys.version_info < (3, 12):
-    raise RuntimeError("This code requires Python 3.12 or higher")
-
 import ctypes
 import gc
 import json
 import logging
 import os
 import platform
+import pytest
 import queue
 import secrets
 import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from multiprocessing import Value
 from pathlib import Path
 from queue import Empty, Queue
-from typing import List, TextIO
+from typing import TextIO
 from unittest.mock import MagicMock
-
-import pytest
-
 from wazuh_dfn.config import MiscConfig, WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.handlers.syslog_handler import SyslogHandler
@@ -91,8 +84,9 @@ logging.getLogger().setLevel(logging.DEBUG)  # Changed from INFO to DEBUG
 
 # Configure regular file handler (INFO level)
 log_file = "performance_test.log"
-if os.path.exists(log_file):
-    os.remove(log_file)
+log_file_path = Path(log_file)
+if log_file_path.exists():
+    log_file_path.unlink()
 
 file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.INFO)
@@ -100,8 +94,9 @@ file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelnam
 
 # Configure debug file handler (DEBUG level)
 debug_log_file = "performance_test_debug.log"
-if os.path.exists(debug_log_file):
-    os.remove(debug_log_file)
+debug_log_file_path = Path(debug_log_file)
+if debug_log_file_path.exists():
+    debug_log_file_path.unlink()
 
 debug_file_handler = logging.FileHandler(debug_log_file)
 debug_file_handler.setLevel(logging.DEBUG)  # Ensure this is set to DEBUG
@@ -194,7 +189,7 @@ def create_fail2ban_alert() -> dict:
     }
 
 
-def generate_mixed_alerts(count: int) -> List[dict]:
+def generate_mixed_alerts(count: int) -> list[dict]:
     """Generate a mix of Windows and Fail2ban alerts."""
     alerts = []
 
@@ -251,7 +246,7 @@ class AlertWriter(threading.Thread):
 
     def __init__(self, file_path: str, alerts_per_second: int):
         super().__init__()
-        self.file_path = file_path
+        self.file_path = Path(file_path)
         self.alerts_per_second = alerts_per_second
         self.running = False
         self._stop_event = threading.Event()
@@ -274,7 +269,8 @@ class AlertWriter(threading.Thread):
         self.running = True
 
         try:
-            self._file_handle = open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size)
+            # Use Path.open() instead of open()
+            self._file_handle = self.file_path.open("w", encoding="utf-8", buffering=self.buffer_size)
             LOGGER.info("File opened successfully")
             while not self._stop_event.is_set() and self.progress < 60:  # Run for 60 iterations
                 if threading.current_thread().daemon:  # Check if being terminated
@@ -479,7 +475,7 @@ def configure_logging(caplog):
 
 
 @pytest.mark.performance(threshold="1000/s", description="Mixed alert processing throughput test")
-def test_mixed_alerts_performance(caplog):  # NOSONAR
+def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
     """Test processing 1000 mixed alerts/second from file."""
     # Set level for this specific test
     caplog.set_level(logging.INFO)
@@ -496,8 +492,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR
             alerts_per_second = TEST_ALERTS_PER_SECOND
             num_workers = TEST_NUM_WORKERS
 
-            # Create temporary alert file
-            alert_file = Path(os.path.join(os.getcwd(), "test_alerts.json"))
+            # Create temporary alert file using Path
+            alert_file = Path.cwd() / "test_alerts.json"
             if alert_file.exists():
                 try:
                     # Force close any open handles before deletion
@@ -618,10 +614,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR
                         # 2. Force stop watcher
                         watcher_shutdown.set()
                         if hasattr(watcher, "json_reader"):
-                            try:
+                            with suppress(Exception):
                                 watcher.json_reader.close()
-                            except Exception:
-                                pass
 
                         # 3. Aggressive queue clearing
                         while not alert_queue.empty() and not is_timeout():
@@ -675,15 +669,14 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR
                 LOGGER.info(f"Actual file size: {actual_file_size}")
 
                 # Read the file content for verification
-                with open(alert_file, "rb") as f:
-                    content = f.read()
-                    last_bytes = content[-10:] if len(content) >= 10 else content
-                    LOGGER.info(f"Last few bytes (hex): {last_bytes.hex()}")
+                content = alert_file.read_bytes()
+                last_bytes = content[-10:] if len(content) >= 10 else content
+                LOGGER.info(f"Last few bytes (hex): {last_bytes.hex()}")
 
-                    # Count actual newlines
-                    actual_newlines = content.count(b"\n")
-                    LOGGER.info(f"Actual newlines in file: {actual_newlines}")
-                    LOGGER.info(f"Expected newlines: {writer.alert_count}")
+                # Count actual newlines
+                actual_newlines = content.count(b"\n")
+                LOGGER.info(f"Actual newlines in file: {actual_newlines}")
+                LOGGER.info(f"Expected newlines: {writer.alert_count}")
 
                 # Detailed mismatch information
                 if actual_file_size != writer.total_bytes:
@@ -772,11 +765,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR
                             gc.collect()  # Force garbage collection
                             time.sleep(0.1)  # Short delay for handle closure
 
-                            if platform.system() == "Windows":
-                                # On Windows, use os.remove() which might handle some edge cases better
-                                os.remove(str(alert_file))
-                            else:
-                                alert_file.unlink()
+                            # Use Path.unlink() instead of os.remove()
+                            alert_file.unlink()
 
                             LOGGER.info("Test file deleted successfully")
                             break

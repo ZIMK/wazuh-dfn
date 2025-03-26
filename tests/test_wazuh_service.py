@@ -5,10 +5,9 @@ import pytest
 import socket
 import sys
 import threading
-from socket import error as socket_error
+from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
 from wazuh_dfn.config import WazuhConfig
-from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.services.wazuh_service import AF, SOCK_DGRAM, WazuhService
 
 LOGGER = logging.getLogger(__name__)
@@ -58,19 +57,15 @@ def test_wazuh_service_initialization(mock_socket, wazuh_config):
     mock_socket.assert_not_called()
 
 
-@patch("wazuh_dfn.validators.WazuhConfigValidator.validate")
-def test_wazuh_service_initialization_invalid_config(mock_validate):
+def test_wazuh_service_initialization_invalid_config():
     """Test WazuhService initialization with invalid config."""
-    mock_validate.side_effect = ConfigValidationError("Invalid config")
-    with pytest.raises(ConfigValidationError, match="Invalid config"):
-        WazuhService(
-            WazuhConfig(
-                unix_socket_path=("localhost", -1),  # Invalid port
-                max_event_size=65536,
-                max_retries=3,
-                retry_interval=1,
-            )
-        )
+    # Use try/except instead of pytest.raises
+    try:
+        WazuhConfig(unix_socket_path="", json_alert_file="invalid")  # Invalid config
+        pytest.fail("ValidationError not raised")  # Should not reach here
+    except ValidationError:
+        # Test passed as expected
+        pass
 
 
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
@@ -89,7 +84,7 @@ def test_wazuh_service_connect(mock_socket, wazuh_config, mock_socket_instance):
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_connect_failure(mock_socket, wazuh_config, mock_socket_instance):
     """Test WazuhService connect method failure."""
-    mock_socket_instance.connect.side_effect = socket.error("Connection refused")
+    mock_socket_instance.connect.side_effect = OSError("Connection refused")
     mock_socket.return_value = mock_socket_instance
 
     service = WazuhService(wazuh_config)
@@ -103,7 +98,7 @@ def test_wazuh_service_connect_failure(mock_socket, wazuh_config, mock_socket_in
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_connect_wazuh_not_running(mock_socket, wazuh_config, mock_socket_instance):
     """Test WazuhService connect when Wazuh is not running."""
-    error = socket.error("Connection refused")
+    error = OSError("Connection refused")
     error.errno = 111  # Connection refused errno
     mock_socket_instance.connect.side_effect = error
     mock_socket.return_value = mock_socket_instance
@@ -143,15 +138,14 @@ def test_wazuh_service_send_event_with_optional_params(mock_socket, wazuh_config
 def test_wazuh_service_send_event_no_agent_details(mock_socket, wazuh_config, mock_socket_instance, caplog):
     """Test WazuhService send_event method without agent details."""
     mock_socket.return_value = mock_socket_instance
-    mock_socket_instance.send.side_effect = socket.error("Connection lost")
+    mock_socket_instance.send.side_effect = OSError("Connection lost")
 
     alert = {"id": "test-alert-2"}  # Alert without agent details
     service = WazuhService(wazuh_config)
     service.connect()
 
-    with caplog.at_level(logging.ERROR):
-        with patch("time.sleep"):  # Mock sleep to speed up retries
-            service.send_event(alert)  # Should log error about missing agent details
+    with patch("time.sleep"), caplog.at_level(logging.ERROR):  # Convert nested with to single with
+        service.send_event(alert)  # Should log error about missing agent details
 
     # Verify error message contains alert ID and unknown agent ID
     assert any(
@@ -162,7 +156,7 @@ def test_wazuh_service_send_event_no_agent_details(mock_socket, wazuh_config, mo
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_send_event_with_retry(mock_socket, wazuh_config, sample_alert, mock_socket_instance):
     """Test WazuhService send_event method with retry."""
-    mock_socket_instance.send.side_effect = [socket.error("Connection lost"), None]
+    mock_socket_instance.send.side_effect = [OSError("Connection lost"), None]
     mock_socket.return_value = mock_socket_instance
 
     service = WazuhService(wazuh_config)
@@ -219,35 +213,35 @@ def test_wazuh_service_send_large_event(mock_socket, wazuh_config, caplog, mock_
     service.connect()
 
     # Mock json.dumps to return a predictably large string
-    with patch("json.dumps") as mock_dumps:
+    with patch("json.dumps") as mock_dumps, caplog.at_level(logging.DEBUG):
         mock_dumps.return_value = "x" * (wazuh_config.max_event_size + 1000)  # Ensure event exceeds max_size
-
-        with caplog.at_level(logging.DEBUG):
-            service.send_event(large_alert)
-            # Check if the size warning was logged
-            assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
-            # Verify the event was still sent despite being large
-            assert mock_socket_instance.send.called
+        service.send_event(large_alert)
+        # Check if the size warning was logged
+        assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
+        # Verify the event was still sent despite being large
+        assert mock_socket_instance.send.called
 
 
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_reconnection_backoff(mock_socket, wazuh_config, mock_socket_instance):
     """Test exponential backoff during reconnection attempts."""
-    mock_socket_instance.send.side_effect = socket.error(107, "Transport endpoint is not connected")
+    mock_socket_instance.send.side_effect = OSError(107, "Transport endpoint is not connected")
     mock_socket.return_value = mock_socket_instance
 
     service = WazuhService(wazuh_config)
     service.connect()
 
-    with patch("time.sleep"):  # Mock sleep to speed up tests
-        with pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"):
-            service._send_event("test event")
+    with (
+        patch("time.sleep"),
+        pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"),
+    ):  # Convert nested with to single with
+        service._send_event("test event")
 
 
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_max_retries_exceeded(mock_socket, wazuh_config, sample_alert, mock_socket_instance, caplog):
     """Test behavior when max retries are exceeded."""
-    error = socket.error("Connection lost")
+    error = OSError("Connection lost")
     error.errno = 107  # Transport endpoint not connected
     mock_socket_instance.send.side_effect = error
     mock_socket.return_value = mock_socket_instance
@@ -255,9 +249,8 @@ def test_wazuh_service_max_retries_exceeded(mock_socket, wazuh_config, sample_al
     service = WazuhService(wazuh_config)
     service.connect()
 
-    with caplog.at_level(logging.ERROR):
-        with patch("time.sleep"):  # Mock sleep to speed up tests
-            service.send_event(sample_alert)  # Should log error after max retries
+    with patch("time.sleep"), caplog.at_level(logging.ERROR):  # Mock sleep to speed up tests
+        service.send_event(sample_alert)  # Should log error after max retries
 
     # Verify error logging and retry behavior
     assert mock_socket_instance.send.call_count >= 3  # Should try max_reconnect_attempts times
@@ -348,7 +341,7 @@ def test_wazuh_service_start_failure_cleanup(mock_socket, wazuh_config, mock_soc
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_reconnection(mock_socket, wazuh_config, mock_socket_instance):
     """Test WazuhService reconnection logic."""
-    mock_socket_instance.send.side_effect = [socket.error("Connection lost"), None]
+    mock_socket_instance.send.side_effect = [OSError("Connection lost"), None]
     mock_socket.return_value = mock_socket_instance
 
     service = WazuhService(wazuh_config)
@@ -365,7 +358,7 @@ def test_wazuh_service_reconnection(mock_socket, wazuh_config, mock_socket_insta
 def test_wazuh_service_max_retries(mock_socket, wazuh_config, mock_socket_instance):
     """Test WazuhService respects max retries configuration."""
     mock_socket.return_value = mock_socket_instance
-    error = socket.error("Connection lost")
+    error = OSError("Connection lost")
     error.errno = 107  # Transport endpoint not connected
     mock_socket_instance.send.side_effect = error
 
@@ -421,29 +414,29 @@ def test_wazuh_service_event_size_limit(mock_socket, wazuh_config, mock_socket_i
     }
 
     # Mock json.dumps to return a predictably large string
-    with patch("json.dumps") as mock_dumps:
+    with patch("json.dumps") as mock_dumps, caplog.at_level(logging.DEBUG):
         mock_dumps.return_value = "x" * (wazuh_config.max_event_size + 1000)  # Ensure event exceeds max_size
-
-        with caplog.at_level(logging.DEBUG):
-            service.send_event(large_alert)
-            # Check if the size warning was logged
-            assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
-            # Verify the event was still sent despite being large
-            assert mock_socket_instance.send.called
+        service.send_event(large_alert)
+        # Check if the size warning was logged
+        assert any("bytes exceeds the maximum allowed limit" in record.message for record in caplog.records)
+        # Verify the event was still sent despite being large
+        assert mock_socket_instance.send.called
 
 
 @patch("wazuh_dfn.services.wazuh_service.socket", autospec=True)
 def test_wazuh_service_exponential_backoff(mock_socket, wazuh_config, mock_socket_instance):
     """Test exponential backoff in retry logic."""
     mock_socket.return_value = mock_socket_instance
-    mock_socket_instance.send.side_effect = socket.error(107, "Transport endpoint is not connected")
+    mock_socket_instance.send.side_effect = OSError(107, "Transport endpoint is not connected")
 
     service = WazuhService(wazuh_config)
     service.connect()
 
-    with patch("time.sleep"):  # Mock sleep to speed up tests
-        with pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"):
-            service._send_event("test event")
+    with (
+        patch("time.sleep"),
+        pytest.raises(socket.error, match=r"Failed to send event after 3 attempts"),
+    ):  # Convert nested with to single with
+        service._send_event("test event")
 
     # Verify retry attempts
     assert mock_socket_instance.send.call_count >= wazuh_config.max_retries
@@ -453,7 +446,7 @@ def test_wazuh_service_exponential_backoff(mock_socket, wazuh_config, mock_socke
 def test_wazuh_service_connect_socket_close_error(mock_socket, wazuh_config, mock_socket_instance):
     """Test WazuhService handles socket close errors during reconnection."""
     mock_socket.return_value = mock_socket_instance
-    mock_socket_instance.close.side_effect = socket.error("Close failed")
+    mock_socket_instance.close.side_effect = OSError("Close failed")
 
     service = WazuhService(wazuh_config)
     service._socket = mock_socket_instance  # Set initial socket
@@ -500,12 +493,12 @@ def test_wazuh_service_concurrent_reconnection_during_outage(mock_socket, wazuh_
         attempt_counter["value"] += 1
         if attempt_counter["value"] <= 3:
             # Initial connection refused (Wazuh down)
-            error = socket_error("Connection refused")
+            error = OSError("Connection refused")
             error.errno = 111
             raise error
         elif attempt_counter["value"] <= 8:
             # Transport endpoint not connected
-            error = socket_error("Transport endpoint is not connected")
+            error = OSError("Transport endpoint is not connected")
             error.errno = 107
             raise error
         # After 8 attempts, succeed

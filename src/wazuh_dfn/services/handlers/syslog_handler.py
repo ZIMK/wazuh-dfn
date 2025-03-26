@@ -12,7 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 class SyslogAlert(TypedDict):
     """Type definition for a Syslog alert from Wazuh."""
-    
+
     timestamp: str
     id: str
     agent: dict[str, Any]

@@ -3,7 +3,6 @@
 import threading
 import time
 from unittest.mock import MagicMock, patch
-
 from wazuh_dfn.exceptions import AlertProcessingError
 from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
 
@@ -89,7 +88,6 @@ def test_alerts_worker_service_error_recovery(alerts_worker_service, alert_queue
             error_count += 1
             raise AlertProcessingError("Test error")
         success_count += 1
-        return None
 
     alerts_worker_service.alerts_service.process_alert = MagicMock(side_effect=process_with_errors)
 

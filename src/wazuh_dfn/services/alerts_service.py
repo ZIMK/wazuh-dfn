@@ -5,7 +5,8 @@ from .handlers import SyslogHandler, WindowsHandler
 from .kafka_service import KafkaService
 from .wazuh_service import WazuhService
 from wazuh_dfn.config import MiscConfig
-from wazuh_dfn.validators import MiscConfigValidator
+from wazuh_dfn.services.handlers.syslog_handler import SyslogAlert
+from wazuh_dfn.services.handlers.windows_handler import WindowsAlert
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,13 +29,13 @@ class AlertsService:
 
         Args:
             config: Miscellaneous configuration
-            kafka_service: Service for Kafka operations
-            wazuh_service: Service for Wazuh operations
+            kafka_service: KafkaService instance
+            wazuh_service: WazuhService instance
 
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        MiscConfigValidator.validate(config)
+        # Validation is handled by Pydantic automatically
         self.config = config
         self.kafka_service = kafka_service
         self.wazuh_service = wazuh_service
@@ -43,7 +44,7 @@ class AlertsService:
         self.syslog_handler = SyslogHandler(config, kafka_service, wazuh_service)
         self.windows_handler = WindowsHandler(kafka_service, wazuh_service)
 
-    def process_alert(self, alert: dict) -> None:
+    def process_alert(self, alert: SyslogAlert | WindowsAlert) -> None:
         """Process an alert.
 
         Args:

@@ -1,10 +1,8 @@
 """Test module for Syslog Handler."""
 
 import logging
-from unittest.mock import MagicMock, patch
-
 import pytest
-
+from unittest.mock import MagicMock, patch
 from wazuh_dfn.services.handlers import SyslogHandler
 
 # Configure logging

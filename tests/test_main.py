@@ -2,8 +2,9 @@
 
 import logging
 import pytest
+from contextlib import suppress
+from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
-from wazuh_dfn.exceptions import ConfigValidationError
 from wazuh_dfn.main import load_config, main, parse_args, setup_directories, setup_logging, setup_service
 
 # Configure logging
@@ -143,23 +144,40 @@ def test_main_print_config(sample_config_path, capsys):
 
 def test_main_missing_dfn_id(sample_config_path):
     """Test main function with missing DFN ID."""
-    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
-        with patch("wazuh_dfn.main.load_config") as mock_load:
-            mock_config = MagicMock()
-            mock_config.dfn.dfn_id = None
-            mock_load.return_value = mock_config
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+    with (
+        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
+        patch("wazuh_dfn.main.load_config") as mock_load,
+    ):
+        mock_config = MagicMock()
+        mock_config.dfn.dfn_id = None
+        mock_load.return_value = mock_config
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
 
 
 def test_main_config_validation_error(sample_config_path):
     """Test main function with config validation error."""
-    with patch("sys.argv", ["script.py", "-c", sample_config_path]):
-        with patch("wazuh_dfn.main.load_config", side_effect=ConfigValidationError("Invalid config")):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+    # Use a single with statement with multiple contexts
+    with patch("sys.argv", ["script.py", "-c", sample_config_path]), patch("wazuh_dfn.main.load_config") as mock_load:
+        # Use a simple exception - let Pydantic convert it to ValidationError
+        try:
+            # Create a dummy model and validation error
+            from pydantic import BaseModel, Field
+
+            class TestModel(BaseModel):
+                field: str = Field(min_length=10)
+
+            TestModel(field="short")  # This will fail validation
+            pytest.fail("ValidationError wasn't raised")  # Should not reach this
+        except ValidationError as e:
+            # Use the caught error
+            mock_load.side_effect = e
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
 
 
 @pytest.fixture
@@ -211,23 +229,27 @@ def mock_services():
 
 def test_setup_directories(sample_config_path):
     """Test setup_directories."""
-    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
+    with (
+        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
+        patch("pathlib.Path.mkdir") as mock_mkdir,
+    ):
         config = load_config(parse_args())
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
-            setup_directories(config)
-            # Assert that mkdir was called at least once (for log directory)
-            assert mock_mkdir.call_count >= 1
-            # Verify it was called with correct parameters
-            mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
+        setup_directories(config)
+        # Assert that mkdir was called at least once (for log directory)
+        assert mock_mkdir.call_count >= 1
+        # Verify it was called with correct parameters
+        mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
 
 
 def test_setup_directories_error(sample_config_path):
     """Test setup_directories error handling."""
-    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
+    with (
+        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
+        patch("os.makedirs", side_effect=PermissionError("Access denied")),
+    ):
         config = load_config(parse_args())
-        with patch("os.makedirs", side_effect=PermissionError("Access denied")):
-            # Should not raise ConfigValidationError since directories are optional
-            setup_directories(config)
+        # Should not raise ConfigValidationError since directories are optional
+        setup_directories(config)
 
 
 def test_setup_service(sample_config_path, mock_services):
@@ -316,11 +338,9 @@ def test_setup_service_cleanup(sample_config_path, mock_services):
 
     # Mock time.sleep to avoid delays
     with patch("time.sleep"), patch("signal.signal"):
-        # Run service setup
-        try:
+        # Run service setup with SystemExit suppressed
+        with suppress(SystemExit):
             setup_service(config)
-        except SystemExit:  # NOSONAR
-            pass  # Ignore sys.exit from signal handler
 
         # Set shutdown event to trigger cleanup
         mock_event.set()
@@ -340,10 +360,12 @@ def test_setup_service_cleanup(sample_config_path, mock_services):
 
 def test_setup_directories_existing(sample_config_path):
     """Test setup_directories with existing directories."""
-    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
+    with (
+        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
+        patch("pathlib.Path.mkdir") as mock_mkdir,
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         config = load_config(parse_args())
-
-    with patch("pathlib.Path.mkdir") as mock_mkdir, patch("pathlib.Path.exists", return_value=True):
         setup_directories(config)
         # Assert that mkdir was called at least once (for log directory)
         assert mock_mkdir.call_count >= 1

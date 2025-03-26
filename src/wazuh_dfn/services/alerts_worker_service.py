@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 from wazuh_dfn.config import MiscConfig
-from wazuh_dfn.validators import MiscConfigValidator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,14 +34,14 @@ class AlertsWorkerService:
 
         Args:
             config: Miscellaneous configuration
-            alert_queue: Queue to get alerts from
-            alerts_service: Service for processing alerts
+            alert_queue: Queue containing alerts to process
+            alerts_service: AlertsService instance
             shutdown_event: Event to signal shutdown
 
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        MiscConfigValidator.validate(config)
+        # Validation is handled by Pydantic automatically
         self.config = config
         self.alert_queue = alert_queue
         self.alerts_service = alerts_service
