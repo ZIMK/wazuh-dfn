@@ -62,6 +62,7 @@ import pytest
 import queue
 import secrets
 import signal
+import sys  # Add this import
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -76,7 +77,8 @@ from wazuh_dfn.config import MiscConfig, WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.handlers.syslog_handler import SyslogHandler
 from wazuh_dfn.services.handlers.windows_handler import WindowsHandler
-from wazuh_dfn.services.kafka_service import KafkaService
+from wazuh_dfn.services.kafka_service import KafkaResponse, KafkaService
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 # Configure root logger to handle all levels
@@ -115,6 +117,12 @@ root_logger.handlers = []  # Clear any existing handlers
 root_logger.addHandler(file_handler)
 root_logger.addHandler(debug_file_handler)
 root_logger.addHandler(console_handler)
+
+# Force output to stdout to bypass pytest capture
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+root_logger.addHandler(stdout_handler)
 
 # Configure the test logger with propagation enabled
 LOGGER = logging.getLogger(__name__)
@@ -166,7 +174,7 @@ def create_windows_alert(event_id: str) -> dict:
                     "targetUserName": f"user-{secrets.randbelow(1000)}",
                     "workstationName": f"WKS-{secrets.randbelow(100)}",
                 },
-            }
+            },
         },
     }
 
@@ -232,13 +240,13 @@ class MockKafkaService(KafkaService):
         self.fail2ban_count = 0
         self.lock = threading.Lock()
 
-    def send_message(self, message):
+    def send_message(self, message) -> KafkaResponse | None:
         with self.lock:
             if "win" in message.get("data", {}):
                 self.windows_count += 1
             elif message.get("event_format") == "syslog5424-json":
                 self.fail2ban_count += 1
-        return True
+        return {"success": True, "topic": "mock-topic"}
 
 
 class AlertWriter(threading.Thread):
@@ -345,7 +353,8 @@ class AlertWriter(threading.Thread):
         if platform.system() == "Windows":
             os._exit(1)  # Force exit on Windows
         else:
-            os.kill(os.getpid(), signal.SIGKILL)  # Force kill on Unix
+            # Use signal.SIGTERM instead of SIGKILL
+            os.kill(os.getpid(), signal.SIGTERM)
 
 
 def process_alert(args):
@@ -474,16 +483,27 @@ def configure_logging(caplog):
         root_logger.removeHandler(handler)
 
 
+# Add a direct log to console function for critical messages
+def log_to_console(message):
+    """Log message directly to console, bypassing pytest capture."""
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+    # Also log through the regular logger
+    LOGGER.info(message)
+
+
 @pytest.mark.performance(threshold="1000/s", description="Mixed alert processing throughput test")
 def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
     """Test processing 1000 mixed alerts/second from file."""
     # Set level for this specific test
     caplog.set_level(logging.INFO)
 
+    # Force output to console for this test
+    log_to_console("Starting performance test - logs should be visible during execution")
+
     try:
         with handle_termination() as stop_event:
             LOGGER.info("=" * 80)
-            LOGGER.info("Starting new performance test run")
+            log_to_console("Starting new performance test run")
             LOGGER.info("=" * 80)
 
             LOGGER.info("Starting performance test")
@@ -492,14 +512,21 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
             alerts_per_second = TEST_ALERTS_PER_SECOND
             num_workers = TEST_NUM_WORKERS
 
+            # Initialize variables that might be referenced in finally block
+            writer = None
+            watcher = None
+            watcher_thread = None
+            watcher_shutdown = None
+            progress_reporter = None
+            # Initialize alert_queue variable
+            alert_queue = None
+
             # Create temporary alert file using Path
             alert_file = Path.cwd() / "test_alerts.json"
             if alert_file.exists():
                 try:
                     # Force close any open handles before deletion
                     gc.collect()  # Collect any lingering file handles
-                    if hasattr(alert_file, "_handle"):
-                        alert_file._handle.close()
                     alert_file.unlink()
                 except PermissionError as e:
                     LOGGER.warning(f"Could not delete existing file: {e}")
@@ -508,7 +535,7 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
             try:
                 # Initialize services
                 LOGGER.info(f"Initializing test with {num_workers} workers")
-                alert_queue = Queue(maxsize=alerts_per_second * TEST_QUEUE_MULTIPLIER)  # Increased queue size
+                alert_queue = MaxSizeQueue(maxsize=alerts_per_second * TEST_QUEUE_MULTIPLIER)  # Fix queue type
                 kafka_service = MockKafkaService()
                 wazuh_service = MagicMock(spec=WazuhService)
                 windows_handler = WindowsHandler(kafka_service, wazuh_service)
@@ -597,7 +624,6 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                                     LOGGER.info("Shutdown requested, stopping processing")
                                     break
                                 continue
-
                     finally:
                         LOGGER.info("Starting shutdown sequence...")
 
@@ -612,13 +638,14 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                         writer.join(timeout=2)
 
                         # 2. Force stop watcher
-                        watcher_shutdown.set()
-                        if hasattr(watcher, "json_reader"):
+                        if watcher_shutdown:
+                            watcher_shutdown.set()
+                        if watcher and hasattr(watcher, "file_monitor"):
                             with suppress(Exception):
-                                watcher.json_reader.close()
+                                watcher.file_monitor.close()
 
                         # 3. Aggressive queue clearing
-                        while not alert_queue.empty() and not is_timeout():
+                        while alert_queue and not alert_queue.empty() and not is_timeout():
                             try:
                                 alert_queue.get_nowait()
                                 alert_queue.task_done()
@@ -626,7 +653,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                                 break
 
                         # 4. Quick watcher thread cleanup
-                        watcher_thread.join(timeout=2)
+                        if watcher_thread:
+                            watcher_thread.join(timeout=2)
 
                         # 5. Cancel all pending futures immediately
                         for future in futures:
@@ -704,7 +732,6 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                 assert (
                     processed_fail2ban >= fail2ban_count.value * 0.99
                 ), f"Lost too many Fail2ban alerts: {lost_fail2ban} ({(lost_fail2ban/fail2ban_count.value)*100:.1f}%)"
-
             finally:
                 # Enhanced cleanup with timeouts
                 LOGGER.info("Performing final cleanup")
@@ -719,8 +746,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                 if "watcher" in locals():
                     LOGGER.debug("Stopping watcher...")
                     watcher_shutdown.set()
-                    if hasattr(watcher, "json_reader"):
-                        watcher.json_reader.close()
+                    if hasattr(watcher, "file_monitor"):
+                        watcher.file_monitor.close()
 
                 if "watcher_thread" in locals() and watcher_thread.is_alive():
                     watcher_thread.join(timeout=5)
@@ -728,9 +755,12 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                         LOGGER.warning("Force terminating watcher thread")
                         # On Windows, we can't force terminate threads safely
                         if platform.system() != "Windows":
-                            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                                ctypes.c_long(watcher_thread.ident), ctypes.py_object(SystemExit)
-                            )
+                            if watcher_thread and watcher_thread.ident:
+                                result = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                                    ctypes.c_long(watcher_thread.ident), ctypes.py_object(SystemExit)
+                                )
+                                if result == 0:
+                                    LOGGER.error("Invalid thread ID, could not force termination")
 
                 # 2. Clear queue
                 if "alert_queue" in locals():
@@ -743,7 +773,7 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                             break
 
                 # 3. Stop progress reporter
-                if "progress_reporter" in locals():
+                if progress_reporter:
                     LOGGER.debug("Stopping progress reporter...")
                     progress_reporter.stop()
                     progress_reporter.join(timeout=2)
@@ -759,8 +789,8 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                             # Force close any remaining file handles
                             if "writer" in locals() and writer._file_handle:
                                 writer._close_file()
-                            if hasattr(watcher, "json_reader"):
-                                watcher.json_reader.close()
+                            if hasattr(watcher, "file_monitor"):
+                                watcher.file_monitor.close()
 
                             gc.collect()  # Force garbage collection
                             time.sleep(0.1)  # Short delay for handle closure
@@ -781,7 +811,6 @@ def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
                             break
 
                 LOGGER.info("Cleanup completed")
-
     except GracefulExit:
         LOGGER.info("Test cancelled by user")
         # Optionally check logs for specific messages

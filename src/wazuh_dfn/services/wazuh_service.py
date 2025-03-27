@@ -56,7 +56,7 @@ class WazuhService:
 
     Attributes:
         config (WazuhConfig): Configuration settings for Wazuh connection
-        _socket (Optional[socket]): Socket connection to Wazuh server
+        _socket (socket | None): Socket connection to Wazuh server
     """
 
     def __init__(self, config: WazuhConfig) -> None:
@@ -171,8 +171,8 @@ class WazuhService:
 
                 msg: WazuhEventMessage = {
                     "integration": "dfn",
-                    "alert_id": alert_id,
-                    "agent_name": agent_name,
+                    "alert_id": str(alert_id),
+                    "agent_name": str(agent_name),
                     "dfn": {
                         "event_format": event_format,
                         "event_id": event_id,

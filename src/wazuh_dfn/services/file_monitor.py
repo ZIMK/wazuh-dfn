@@ -330,7 +330,8 @@ class FileMonitor:
 
             if len(self.buffer) > 0 and not alerts_found:
                 LOGGER.debug(
-                    f"No complete alerts found, reverting to position {self.last_complete_position=}, {len(self.buffer)=}"
+                    f"No complete alerts found, reverting to position {self.last_complete_position=},"
+                    f" {len(self.buffer)=}"
                 )
                 self.fp.seek(self.last_complete_position)
                 self.buffer.clear()

@@ -55,7 +55,6 @@ lint = [
 types = [
     "types-PyYAML",                    # For YAML configuration loading
     "types-psutil",                    # For system monitoring utilities
-    "types-confluent-kafka>=1.3.0; python_version <= '3.13' and python_version >= '3.12'",  # For Kafka operations with Python 3.12 compatibility
 ]
 
 [tool.ruff]
@@ -238,7 +237,5 @@ filterwarnings = [
     "ignore::UserWarning",
 ]
 markers = [
-    "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
-    "integration: marks tests as integration tests",
-    "slow: marks tests as slow",
+    "performance(threshold, description): marks tests as performance tests with threshold and description parameters",
 ]

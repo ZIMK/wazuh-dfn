@@ -164,7 +164,10 @@ class KafkaService:
         wait_time = min(self.config.retry_interval * (2**retry_count), self.config.max_wait_time)
         if isinstance(e, KafkaException):
             LOGGER.error(
-                f"Kafka broker not available. Attempt {retry_count}/{max_retries}. Retrying in {wait_time} seconds... Error: {e}"
+                (
+                    f"Kafka broker not available. Attempt {retry_count}/{max_retries}.",
+                    f" Retrying in {wait_time} seconds... Error: {e}",
+                )
             )
             self.wazuh_handler.send_error(
                 {
@@ -174,7 +177,10 @@ class KafkaService:
             )
         else:
             LOGGER.error(
-                f"Error connecting to Kafka: {e}. Attempt {retry_count}/{max_retries}. Retrying in {wait_time} seconds..."
+                (
+                    f"Error connecting to Kafka: {e}. Attempt {retry_count}/{max_retries}.",
+                    f" Retrying in {wait_time} seconds...",
+                )
             )
         time.sleep(wait_time)
 
@@ -229,7 +235,10 @@ class KafkaService:
             record_metadata: Metadata about the sent message
         """
         LOGGER.debug(
-            f"Alert sent to topic {record_metadata.topic()=} partition {record_metadata.partition()=} offset {record_metadata.offset()=}"
+            (
+                f"Alert sent to topic {record_metadata.topic()=} partition {record_metadata.partition()=}",
+                f" offset {record_metadata.offset()=}",
+            )
         )
 
     def _on_send_error(self, exc) -> None:
@@ -296,7 +305,7 @@ class KafkaService:
 
             return {
                 "success": True,
-                "topic": self.dfn_config.dfn_id,
+                "topic": str(self.dfn_config.dfn_id),
             }
 
     def send_message(self, message: KafkaMessage) -> KafkaResponse | None:

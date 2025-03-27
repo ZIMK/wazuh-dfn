@@ -8,8 +8,15 @@ import threading
 from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
 from wazuh_dfn.config import WazuhConfig
-from wazuh_dfn.services.wazuh_service import AF, SOCK_DGRAM, WazuhService
+from wazuh_dfn.services.wazuh_service import SOCK_DGRAM, WazuhErrorMessage, WazuhService
 
+# Use AF_UNIX for Unix systems, fallback to AF_INET for Windows
+try:
+    from socket import AF_UNIX as AF  # type: ignore[reportAttributeAccessIssue]
+except ImportError:
+    from socket import AF_INET as AF  # type: ignore[reportAttributeAccessIssue]
+
+# Set up logging
 LOGGER = logging.getLogger(__name__)
 
 
@@ -144,7 +151,7 @@ def test_wazuh_service_send_event_no_agent_details(mock_socket, wazuh_config, mo
     service = WazuhService(wazuh_config)
     service.connect()
 
-    with patch("time.sleep"), caplog.at_level(logging.ERROR):  # Convert nested with to single with
+    with patch("time.sleep"), caplog.at_level(logging.ERROR):
         service.send_event(alert)  # Should log error about missing agent details
 
     # Verify error message contains alert ID and unknown agent ID
@@ -173,7 +180,7 @@ def test_wazuh_service_send_error(mock_socket, wazuh_config, mock_socket_instanc
     """Test WazuhService send_error method."""
     mock_socket.return_value = mock_socket_instance
 
-    error_msg = {"error": "test error"}
+    error_msg: WazuhErrorMessage = {"description": "test error"}
     service = WazuhService(wazuh_config)
     service.connect()
     service.send_error(error_msg)

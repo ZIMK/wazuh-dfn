@@ -4,9 +4,8 @@ import logging
 from .handlers import SyslogHandler, WindowsHandler
 from .kafka_service import KafkaService
 from .wazuh_service import WazuhService
+from typing import Any
 from wazuh_dfn.config import MiscConfig
-from wazuh_dfn.services.handlers.syslog_handler import SyslogAlert
-from wazuh_dfn.services.handlers.windows_handler import WindowsAlert
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class AlertsService:
         self.syslog_handler = SyslogHandler(config, kafka_service, wazuh_service)
         self.windows_handler = WindowsHandler(kafka_service, wazuh_service)
 
-    def process_alert(self, alert: SyslogAlert | WindowsAlert) -> None:
+    def process_alert(self, alert: dict[str, Any]) -> None:
         """Process an alert.
 
         Args:

@@ -89,6 +89,7 @@ def test_file_monitor_processing():
 
     # Write alerts to temp file
     temp_file = write_alerts_to_temp_file(alerts)
+    monitor = None
 
     try:
         # Set up FileMonitor
@@ -129,6 +130,7 @@ def test_file_monitor_rotation():
     alerts_batch2 = [load_json_alert("lin_fail2ban-1.json")]
 
     temp_file = write_alerts_to_temp_file(alerts_batch1)
+    monitor = None
 
     try:
         # Set up monitoring

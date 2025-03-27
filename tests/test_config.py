@@ -326,9 +326,9 @@ def test_unix_socket_path_validation():
     assert config.unix_socket_path[0] == "localhost"
     assert config.unix_socket_path[1] == 1514
 
-    # Test with invalid tuple format
+    # Test with invalid tuple format - now using a proper (host, port) tuple
     with pytest.raises(ValueError):
-        WazuhConfig(unix_socket_path=("localhost",))
+        WazuhConfig(unix_socket_path=("localhost", 0))  # Invalid port
 
     # Test with invalid host
     with pytest.raises(ValueError):
@@ -344,7 +344,7 @@ def test_unix_socket_path_validation():
 
     # Test with invalid type
     with pytest.raises(ValueError):
-        WazuhConfig(unix_socket_path=123)
+        WazuhConfig(unix_socket_path=123)  # type: ignore
 
 
 def test_socket_path_with_existing_path():

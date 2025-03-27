@@ -10,6 +10,7 @@ from .alerts_service import AlertsService
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
+from typing import Any
 from wazuh_dfn.config import MiscConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class AlertsWorkerService:
 
         LOGGER.info("Stopping worker thread")
 
-    def _dump_alert(self, alert: dict) -> str | None:
+    def _dump_alert(self, alert: dict[str, Any]) -> str | None:
         try:
             alert_id = alert.get("id", "unknown")
             random_suffix = str(secrets.randbelow(999999) + 100000)

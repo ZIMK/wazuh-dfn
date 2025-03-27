@@ -461,14 +461,6 @@ class LogConfig(BaseModel):
             "cli": "--log-console-enabled",
         },
     )
-    file_path: str = Field(
-        default="/opt/wazuh-dfn/logs/wazuh-dfn.log",
-        description="Path to log file",
-        json_schema_extra={
-            "env_var": "LOG_FILE_PATH",
-            "cli": "--log-file-path",
-        },
-    )
     keep_files: int = Field(
         default=5,
         description="Number of log files to keep when rotating",
@@ -493,6 +485,14 @@ class LogConfig(BaseModel):
         json_schema_extra={
             "env_var": "LOG_LEVEL",
             "cli": "--log-level",
+        },
+    )
+    file_path: str | None = Field(
+        default=None,
+        description="Path to log file",
+        json_schema_extra={
+            "env_var": "LOG_FILE_PATH",
+            "cli": "--log-file-path",
         },
     )
 
@@ -628,7 +628,7 @@ class Config(BaseModel):
         """
         if not tomllib:
             raise ImportError(
-                "tomllib or tomli package is required for TOML support. " "Install tomli for Python < 3.11"
+                "tomllib or tomli package is required for TOML support. ", "Install tomli for Python < 3.11"
             )
 
         # Start with defaults or use provided config
@@ -817,9 +817,31 @@ class Config(BaseModel):
             format: Output format ('toml' or 'yaml')
         """
         config = cls()
+        sample_dict = cls._build_sample_config_dict(config)
+
+        output_path_obj = Path(output_path)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        if format.lower() == "toml":
+            content = cls._format_as_toml(config, sample_dict)
+        else:
+            content = cls._format_as_yaml(config, sample_dict)
+
+        output_path_obj.write_text(content)
+
+    @classmethod
+    def _build_sample_config_dict(cls, config: "Config") -> dict:
+        """Build sample configuration dictionary.
+
+        Args:
+            config: Configuration instance
+
+        Returns:
+            dict: Sample configuration dictionary
+        """
         sample_dict = {"dfn": {}, "wazuh": {}, "kafka": {}, "log": {}, "misc": {}}
 
-        # Extract fields and their descriptions from each section
+        # Extract fields and their defaults from each section
         for section_name, section_dict in sample_dict.items():
             section = getattr(config, section_name)
 
@@ -828,67 +850,127 @@ class Config(BaseModel):
                     continue
 
                 # Get the default value
-                default_value = field_info.default
-                section_dict[field_name] = default_value
+                section_dict[field_name] = field_info.default
 
-        output_path_obj = Path(output_path)
-        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        return sample_dict
 
-        if format.lower() == "toml":
-            # Write TOML file with comments
-            toml_lines = ["# Wazuh DFN Configuration\n"]
+    @classmethod
+    def _format_field_value(cls, value, format_type: str) -> str:
+        """Format a field value for the config file.
 
-            for section_name in sample_dict:
-                section = getattr(config, section_name)
-                toml_lines.append(f"\n# {section_name.upper()} Configuration\n[{section_name}]\n")
+        Args:
+            value: The value to format
+            format_type: The output format ('toml' or 'yaml')
 
-                for field_name, field_info in section.model_fields.items():
-                    if field_name.startswith("_"):  # Skip private fields
-                        continue
-
-                    description = field_info.description if field_info.description else "No description"
-                    toml_lines.append(f"# {description}\n")
-
-                    if field_info.json_schema_extra and "env_var" in field_info.json_schema_extra:
-                        toml_lines.append(f"# Environment variable: {field_info.json_schema_extra['env_var']}\n")
-
-                    # Format the default value properly for TOML
-                    default_value = field_info.default
-                    if isinstance(default_value, str):
-                        toml_lines.append(f'{field_name} = "{default_value}"\n')
-                    elif isinstance(default_value, dict):
-                        toml_lines.append(f"{field_name} = {default_value}\n")
-                    elif default_value is None:
-                        toml_lines.append(f"# {field_name} = null\n")
-                    else:
-                        toml_lines.append(f"{field_name} = {default_value}\n")
-
-            output_path_obj.write_text("".join(toml_lines))
+        Returns:
+            str: Formatted value
+        """
+        if isinstance(value, str):
+            return f'"{value}"'
+        elif isinstance(value, dict):
+            return str(value)
+        elif value is None:
+            return "null"
         else:
-            # Write YAML file with comments
-            yaml_lines = ["# Wazuh DFN Configuration\n"]
+            return str(value)
 
-            for section_name in sample_dict:
-                section = getattr(config, section_name)
-                yaml_lines.append(f"\n# {section_name.upper()} Configuration\n{section_name}:\n")
+    @classmethod
+    def _format_as_toml(cls, config: "Config", sample_dict: dict) -> str:
+        """Format the config as TOML.
 
-                for field_name, field_info in section.model_fields.items():
-                    if field_name.startswith("_"):  # Skip private fields
-                        continue
+        Args:
+            config: Configuration instance
+            sample_dict: Sample configuration dictionary
 
-                    description = field_info.description if field_info.description else "No description"
-                    yaml_lines.append(f"  # {description}\n")
+        Returns:
+            str: TOML formatted content
+        """
+        toml_lines = ["# Wazuh DFN Configuration\n"]
 
-                    if field_info.json_schema_extra and "env_var" in field_info.json_schema_extra:
-                        yaml_lines.append(f"  # Environment variable: {field_info.json_schema_extra['env_var']}\n")
+        for section_name in sample_dict:
+            section = getattr(config, section_name)
+            toml_lines.append(f"\n# {section_name.upper()} Configuration\n[{section_name}]\n")
 
-                    # Format the default value properly for YAML
-                    default_value = field_info.default
-                    if isinstance(default_value, str):
-                        yaml_lines.append(f'  {field_name}: "{default_value}"\n')
-                    elif default_value is None:
-                        yaml_lines.append(f"  # {field_name}: null\n")
-                    else:
-                        yaml_lines.append(f"  {field_name}: {default_value}\n")
+            cls._add_fields_to_toml(toml_lines, section)
 
-            output_path_obj.write_text("".join(yaml_lines))
+        return "".join(toml_lines)
+
+    @classmethod
+    def _add_fields_to_toml(cls, toml_lines: list, section) -> None:
+        """Add fields to TOML lines.
+
+        Args:
+            toml_lines: List of TOML lines
+            section: Configuration section
+        """
+        for field_name, field_info in section.model_fields.items():
+            if field_name.startswith("_"):  # Skip private fields
+                continue
+
+            cls._add_field_comments(toml_lines, field_info, "")
+
+            # Format the default value properly for TOML
+            default_value = field_info.default
+            if default_value is None:
+                toml_lines.append(f"# {field_name} = null\n")
+            else:
+                formatted_value = cls._format_field_value(default_value, "toml")
+                toml_lines.append(f"{field_name} = {formatted_value}\n")
+
+    @classmethod
+    def _format_as_yaml(cls, config: "Config", sample_dict: dict) -> str:
+        """Format the config as YAML.
+
+        Args:
+            config: Configuration instance
+            sample_dict: Sample configuration dictionary
+
+        Returns:
+            str: YAML formatted content
+        """
+        yaml_lines = ["# Wazuh DFN Configuration\n"]
+
+        for section_name in sample_dict:
+            section = getattr(config, section_name)
+            yaml_lines.append(f"\n# {section_name.upper()} Configuration\n{section_name}:\n")
+
+            cls._add_fields_to_yaml(yaml_lines, section)
+
+        return "".join(yaml_lines)
+
+    @classmethod
+    def _add_fields_to_yaml(cls, yaml_lines: list, section) -> None:
+        """Add fields to YAML lines.
+
+        Args:
+            yaml_lines: List of YAML lines
+            section: Configuration section
+        """
+        for field_name, field_info in section.model_fields.items():
+            if field_name.startswith("_"):  # Skip private fields
+                continue
+
+            cls._add_field_comments(yaml_lines, field_info, "  ")
+
+            # Format the default value properly for YAML
+            default_value = field_info.default
+            if default_value is None:
+                yaml_lines.append(f"  # {field_name}: null\n")
+            else:
+                formatted_value = cls._format_field_value(default_value, "yaml")
+                yaml_lines.append(f"  {field_name}: {formatted_value}\n")
+
+    @classmethod
+    def _add_field_comments(cls, lines: list, field_info, indent: str) -> None:
+        """Add field description and environment variable comments.
+
+        Args:
+            lines: List of lines to add comments to
+            field_info: Field information
+            indent: Indentation string
+        """
+        description = field_info.description if field_info.description else "No description"
+        lines.append(f"{indent}# {description}\n")
+
+        if field_info.json_schema_extra and "env_var" in field_info.json_schema_extra:
+            lines.append(f"{indent}# Environment variable: {field_info.json_schema_extra['env_var']}\n")

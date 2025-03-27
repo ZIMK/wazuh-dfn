@@ -2,23 +2,12 @@
 
 import ipaddress
 import logging
-from typing import Any, TypedDict
+from typing import Any
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
-
-
-class SyslogAlert(TypedDict):
-    """Type definition for a Syslog alert from Wazuh."""
-
-    timestamp: str
-    id: str
-    agent: dict[str, Any]
-    rule: dict[str, Any]
-    data: dict[str, Any]
-    full_log: str
 
 
 class SyslogHandler:
@@ -51,7 +40,7 @@ class SyslogHandler:
             except ValueError as e:
                 LOGGER.warning(f"Invalid own_network format: {e}")
 
-    def process_alert(self, alert: SyslogAlert) -> None:
+    def process_alert(self, alert: dict[str, Any]) -> None:
         """Process a syslog alert.
 
         Args:
@@ -63,14 +52,15 @@ class SyslogHandler:
             alert_id = alert.get("id", "Unknown")
             LOGGER.error(f"Error processing Syslog alert: {alert_id}: {error!s}", exc_info=True)
 
-    def _process_fail2ban_alert(self, alert: SyslogAlert) -> None:
+    def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
         """Process fail2ban-specific alert data.
 
         Args:
             alert: Alert data to process
         """
         LOGGER.debug("Processing fail2ban alert...")
-        LOGGER.debug("Executing _process_fail2ban_alert method")  # Logging statement added
+        LOGGER.debug("Executing _process_fail2ban_alert method")
+
         if (
             "data" in alert
             and "srcip" in alert["data"]
@@ -80,7 +70,6 @@ class SyslogHandler:
             and "groups" in alert["rule"]
             and "fail2ban" in alert["rule"]["groups"]
         ):
-
             # Extract source IP
             source_ip = alert["data"]["srcip"]
             if not source_ip:
@@ -134,7 +123,7 @@ class SyslogHandler:
         except Exception:
             return False
 
-    def _create_message_data(self, alert: SyslogAlert) -> KafkaMessage:
+    def _create_message_data(self, alert: dict[str, Any]) -> KafkaMessage:
         """Create message data for Kafka.
 
         Args:
@@ -149,24 +138,28 @@ class SyslogHandler:
             "event_forward": True,
             "event_parser": "wazuh",
             "event_source": "soc-agent",
-            "hostName": alert["agent"]["name"],  # Include the hostname from the agent name
+            "hostName": alert.get("agent", {}).get("name", ""),
             "structuredData": "",
             "body": "",  # Will be set below
         }
 
-        if "program_name" in alert["data"]:
-            msg_data["appName"] = alert["data"]["program_name"]
-            msg_data["appInst"] = alert["data"]["program_name"]
-        if "pid" in alert["data"]:
-            msg_data["procId"] = alert["data"]["pid"]
+        # Access data using the dictionary get() method
+        severity = 0
+        if "data" in alert:
+            if "program_name" in alert["data"]:
+                msg_data["appName"] = alert["data"]["program_name"]
+                msg_data["appInst"] = alert["data"]["program_name"]
+            if "pid" in alert["data"]:
+                msg_data["procId"] = alert["data"]["pid"]
 
-        severity = 6
-        if alert["data"]["severity"] == "NOTICE":
-            severity = 5
-        if alert["data"]["severity"] == "WARNING":
-            severity = 4
-        if alert["data"]["severity"] == "ERROR":
-            severity = 3
+            severity = 6
+            if "severity" in alert["data"]:
+                if alert["data"]["severity"] == "NOTICE":
+                    severity = 5
+                if alert["data"]["severity"] == "WARNING":
+                    severity = 4
+                if alert["data"]["severity"] == "ERROR":
+                    severity = 3
 
         priority = (4 * 8) + severity
         msg_data["facility"] = "4"

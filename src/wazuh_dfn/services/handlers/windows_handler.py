@@ -2,20 +2,11 @@
 
 import logging
 import xml.etree.ElementTree as ET
-from typing import Any, TypedDict
+from typing import Any
 from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
-
-
-class WindowsAlert(TypedDict):
-    """Type definition for a Windows alert from Wazuh."""
-
-    id: str
-    timestamp: str
-    agent: dict[str, Any]
-    data: dict[str, Any]
 
 
 class WindowsHandler:
@@ -39,7 +30,7 @@ class WindowsHandler:
         self.kafka_service = kafka_service
         self.wazuh_service = wazuh_service
 
-    def process_alert(self, alert: WindowsAlert) -> None:
+    def process_alert(self, alert: dict[str, Any]) -> None:
         """Process a Windows alert.
 
         Args:
@@ -51,7 +42,7 @@ class WindowsHandler:
             alert_id = alert.get("id", "Unknown")
             LOGGER.error(f"Error processing Windows alert: {alert_id}: {error!s}", exc_info=True)
 
-    def _process_windows_alert(self, alert: dict) -> None:
+    def _process_windows_alert(self, alert: dict[str, Any]) -> None:
         """Process Windows-specific alert data.
 
         Args:
@@ -104,7 +95,7 @@ class WindowsHandler:
         else:
             LOGGER.debug("No windows alert to process")
 
-    def _create_message_data(self, alert: WindowsAlert, event_id: str) -> KafkaMessage:
+    def _create_message_data(self, alert: dict[str, Any], event_id: str) -> KafkaMessage:
         """Create message data for Kafka.
 
         Args:
@@ -131,7 +122,7 @@ class WindowsHandler:
 
         return message_data
 
-    def _create_xml_event(self, alert: dict, event_id: str) -> ET.Element:
+    def _create_xml_event(self, alert: dict[str, Any], event_id: str) -> ET.Element:
         """
         Generate a Windows event XML element based on the alert information and event ID.
 
@@ -172,13 +163,16 @@ class WindowsHandler:
             agent_id = alert["agent"]["id"]
             agent_name = alert["agent"]["name"]
             LOGGER.error(
-                f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id}, agent_id: {agent_id}, agent_name: {agent_name}"
+                f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
+                f" agent_id: {agent_id}, agent_name: {agent_name}"
             )
+
             self.wazuh_service.send_error(
                 {
                     "description": (
-                        f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id}, agent_id: {agent_id}, agent_name: {agent_name}"
-                    )
+                        f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
+                        f" agent_id: {agent_id}, agent_name: {agent_name}"
+                    ),
                 }
             )
 

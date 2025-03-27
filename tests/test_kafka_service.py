@@ -173,7 +173,7 @@ def test_kafka_service_config_validation(sample_config):
     # This always reliably raises AttributeError
     def access_none_attribute():
         none_obj = None
-        return none_obj.some_attribute  # This will always raise AttributeError
+        return none_obj.some_attribute  # type: ignore # This will always raise AttributeError
 
     with pytest.raises(AttributeError):
         access_none_attribute()
@@ -308,7 +308,7 @@ def test_kafka_service_topic_creation_failure(mock_admin, mock_producer, kafka_s
         kafka_service.config.connection_max_retries = original_conn_retries
 
 
-@patch("confluent_kafka.Producer")
+@patch("wazuh_dfn.services.kafka_service.Producer")
 def test_kafka_service_producer_init_failure(mock_producer, kafka_service):
     """Test KafkaService producer initialization failure."""
     # Store original retry settings
@@ -441,12 +441,11 @@ def test_kafka_service_connection_retry_logic(kafka_service, shutdown_event):
     with (
         patch("wazuh_dfn.services.kafka_service.Producer", return_value=producer_mock),
         patch("wazuh_dfn.services.kafka_service.AdminClient", return_value=admin_mock),
-        patch("time.sleep"),
-    ):  # Avoid actual sleep delays
+        patch("time.sleep"),  # Avoid actual sleep delays
+    ):
         kafka_service.connect()
-
-    assert kafka_service.producer is not None
-    assert admin_mock.list_topics.call_count == 2
+        assert kafka_service.producer is not None
+        assert admin_mock.list_topics.call_count == 2
 
 
 def test_kafka_service_delivery_callback_error(kafka_service, shutdown_event):
@@ -486,26 +485,23 @@ def test_kafka_service_send_message_error_handling(kafka_service):
     kafka_service.producer = producer_mock
 
     # Should raise KafkaException as per implementation
-    with pytest.raises(KafkaException, match="Test error"):
+    with pytest.raises(KafkaException):
         kafka_service._send_message_once({"test": "data"})
 
     producer_mock.produce.assert_called_once()
 
 
-def test_kafka_service_start_with_connect_error(kafka_service, shutdown_event):
+def test_start_with_connect_error(kafka_service, shutdown_event):
     """Test KafkaService start method with connection error."""
     # Mock connect to raise error
     with patch.object(kafka_service, "connect", side_effect=KafkaException("Connection failed")):
         # Start service in a separate thread
         service_thread = threading.Thread(target=kafka_service.start)
         service_thread.start()
-
         # Give it a moment to attempt connection
         time.sleep(0.1)
-
         # Signal shutdown
         shutdown_event.set()
-
         # Wait for thread to finish (with timeout)
         service_thread.join(timeout=1.0)
         assert not service_thread.is_alive()

@@ -11,7 +11,7 @@ from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 LOGGER = logging.getLogger(__name__)
 
 
-def safe_cleanup(reader: FileMonitor, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
+def safe_cleanup(reader: FileMonitor | None, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
     """Safely cleanup test resources with retries.
 
     Args:

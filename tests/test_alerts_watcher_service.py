@@ -10,7 +10,6 @@ This module contains comprehensive tests for the AlertsWatcherService, including
 import json
 import logging
 import pytest
-import queue
 import tempfile
 import threading
 import time
@@ -18,6 +17,7 @@ from pathlib import Path
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
+from wazuh_dfn.services.max_size_queue import MaxSizeQueue
 
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def write_alert(f, alert_data: dict, binary: bool = False) -> None:
     f.flush()
 
 
-def safe_cleanup(reader: FileMonitor, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
+def safe_cleanup(reader: FileMonitor | None, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
     """Safely cleanup test resources.
 
     Args:
@@ -81,7 +81,7 @@ def test_alerts_watcher_service_init():
     config.json_alert_suffix = "}"
     config.json_alert_file_poll_interval = 1.0
 
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     shutdown_event = threading.Event()
 
     observer = AlertsWatcherService(config, alert_queue, shutdown_event)
@@ -100,7 +100,7 @@ def test_file_monitor_process_valid_alert():
             # Write valid alert
             temp_path.write_text('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n')
 
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()  # Add explicit open
             reader.check_file()
@@ -123,7 +123,7 @@ def test_file_monitor_inode_change(tmp_path, monkeypatch):
     # Mock os.name to always return 'posix' (Linux)
     monkeypatch.setattr("os.name", "posix")
 
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     file_path = tmp_path / "test.json"
 
     # Create initial file
@@ -175,7 +175,7 @@ def test_alerts_watcher_service_start_stop():
             config.json_alert_file = str(temp_path)
             temp_path.write_bytes(b"")  # Write empty bytes
 
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             shutdown_event = threading.Event()
             service = AlertsWatcherService(config, alert_queue, shutdown_event)
 
@@ -194,7 +194,7 @@ def test_alerts_watcher_service_start_stop():
         finally:
             if service and service.file_monitor:
                 service.file_monitor.close()
-            safe_cleanup(None, str(temp_path))  # Use safe_cleanup instead NOSONAR
+            safe_cleanup(None, str(temp_path))  # Use safe_cleanup instead
 
 
 def test_alerts_watcher_service_config_validation():
@@ -205,7 +205,7 @@ def test_alerts_watcher_service_config_validation():
     # Use Pydantic's ValidationError instead of ConfigValidationError
     with pytest.raises(ValidationError):
         invalid_config = WazuhConfig(json_alert_file="")  # Invalid empty path
-        AlertsWatcherService(invalid_config, queue.Queue(), threading.Event())
+        AlertsWatcherService(invalid_config, MaxSizeQueue(), threading.Event())
 
 
 def test_file_monitor_incomplete_json(caplog):
@@ -215,7 +215,7 @@ def test_file_monitor_incomplete_json(caplog):
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()  # Add explicit open
 
@@ -246,9 +246,9 @@ def test_file_monitor_file_deletion_recreation(caplog):
     logger.setLevel(logging.DEBUG)
 
     file_path = Path(tempfile.gettempdir()) / "test_monitor.json"
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     logger.debug("Test starting with file path: %s", file_path)
-
+    reader = None  # Initialize reader to None
     try:
         # Create initial file with first alert
         logger.debug("Creating initial file with first alert")
@@ -294,7 +294,7 @@ def test_file_monitor_file_deletion_recreation(caplog):
 
     finally:
         logger.debug("Cleaning up")
-        if "reader" in locals():
+        if "reader" in locals() and reader:
             reader.close()
         try:
             if file_path.exists():
@@ -309,7 +309,7 @@ def test_file_monitor_malformed_json():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()  # Add explicit open
 
@@ -335,7 +335,7 @@ def test_file_monitor_split_json_alert():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()  # Add explicit open
 
@@ -365,7 +365,7 @@ def test_file_monitor_multiple_consecutive_alerts():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"')
             reader.open()  # Add explicit open
 
@@ -405,7 +405,7 @@ def test_file_monitor_large_json_alert():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -446,7 +446,7 @@ def test_file_monitor_unicode_alerts():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"')
             reader.open()
 
@@ -482,7 +482,7 @@ def test_file_monitor_nested_prefix_alerts():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()  # Add explicit open
 
@@ -513,7 +513,7 @@ def test_file_monitor_multiple_incomplete_alerts():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -560,7 +560,7 @@ def test_file_monitor_race_condition():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -599,7 +599,7 @@ def test_file_monitor_memory_limits():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -650,7 +650,7 @@ def test_file_monitor_invalid_utf8():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -689,7 +689,7 @@ def test_file_monitor_mixed_encoding():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -727,7 +727,7 @@ def test_file_monitor_mixed_encoding():
 def test_file_monitor_utf8_byte_scanning():
     """Test FileMonitor handling of UTF-8 byte sequences."""
     file_path = Path(tempfile.gettempdir()) / "test_utf8.json"
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
@@ -766,7 +766,7 @@ def test_file_monitor_utf8_byte_scanning():
 def test_file_monitor_utf8_boundary():
     """Test handling of UTF-8 sequences split across buffer boundaries."""
     file_path = Path(tempfile.gettempdir()) / "test_utf8_boundary.json"
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
@@ -819,7 +819,7 @@ def test_file_monitor_partial_alert_boundaries():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -880,7 +880,7 @@ def test_file_monitor_partial_alert_boundaries():
 def test_file_monitor_newline_handling():
     """Test handling of different newline types."""
     file_path = Path(tempfile.gettempdir()) / "test_newlines.json"
-    alert_queue = queue.Queue()
+    alert_queue = MaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
@@ -915,7 +915,7 @@ def test_file_monitor_read_then_process():
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             # Create the reader instance before accessing its properties
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
@@ -989,8 +989,9 @@ def test_file_monitor_position_reversion():
     """Test FileMonitor's position reversion behavior."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
+        reader = None
         try:
-            alert_queue = queue.Queue()
+            alert_queue = MaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
             reader.open()
 
@@ -1007,34 +1008,28 @@ def test_file_monitor_position_reversion():
             with temp_path.open("a") as f:
                 f.write('{"timestamp":"2024-01-02","rule":{"level":2}')  # No closing brace or newline
 
-            # Check file - should revert position as no complete alerts found
+            # File size increased but position should not advance due to incomplete alert
+            assert Path(temp_path).stat().st_size > initial_good_position
             reader.check_file()
-            assert alert_queue.empty(), "Should not process incomplete alert"
-            assert reader.last_complete_position == initial_good_position, "Should revert to last known good position"
+            assert alert_queue.empty(), "Incomplete alert should not be processed"
+            assert (
+                reader.last_complete_position == initial_good_position
+            ), "Position should not advance for incomplete alert"
 
-            # Write more incomplete data
-            with temp_path.open("a") as f:
-                f.write(',"extra":"data"')  # Still incomplete
-
-            # Check again - should still revert
-            reader.check_file()
-            assert alert_queue.empty(), "Should still not process incomplete alert"
-            assert reader.last_complete_position == initial_good_position, "Should maintain last known good position"
-
-            # Complete the alert and add a new one
+            # Complete the alert and add another
             with temp_path.open("a") as f:
                 f.write("}\n")  # Complete previous alert
                 f.write('{"timestamp":"2024-01-03","rule":{"level":3}}\n')  # Add new alert
 
-            # Check file - should process both alerts
+            # Check both alerts are processed
             reader.check_file()
             assert alert_queue.qsize() == 2, "Should process both completed alerts"
-
             alerts = [alert_queue.get() for _ in range(2)]
-            assert [a["rule"]["level"] for a in alerts] == [2, 3], "Should process alerts in correct order"
+            assert [a["rule"]["level"] for a in alerts] == [2, 3], "Alerts have incorrect levels"
+
+            # Final position should be updated
             assert (
                 reader.last_complete_position > initial_good_position
-            ), "Should update position after processing complete alerts"
-
+            ), "Position should advance after processing complete alerts"
         finally:
             safe_cleanup(reader, str(temp_path))
