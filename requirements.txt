@@ -2,6 +2,7 @@
 # Please do not edit it manually.
 
 annotated-types==0.7.0
+attrs==25.3.0
 black==25.1.0
 cffi==1.17.1; platform_python_implementation != "PyPy"
 click==8.1.8
@@ -9,6 +10,7 @@ colorama==0.4.6; sys_platform == "win32" or platform_system == "Windows"
 confluent-kafka==2.8.2
 coverage[toml]==7.7.1
 cryptography==44.0.2
+hypothesis==6.130.5
 iniconfig==2.1.0
 mypy-extensions==1.0.0
 nodeenv==1.9.1
@@ -18,8 +20,8 @@ platformdirs==4.3.7
 pluggy==1.5.0
 psutil==7.0.0
 pycparser==2.22; platform_python_implementation != "PyPy"
-pydantic==2.10.6
-pydantic-core==2.27.2
+pydantic==2.11.0
+pydantic-core==2.33.0
 pyright==1.1.398
 pytest==8.3.5
 pytest-cov==6.0.0
@@ -28,7 +30,9 @@ pytest-sugar==1.0.0
 python-dotenv==1.1.0
 pyyaml==6.0.2
 ruff==0.11.2
+sortedcontainers==2.4.0
 termcolor==2.5.0
 types-psutil==7.0.0.20250218
 types-pyyaml==6.0.12.20250326
 typing-extensions==4.12.2
+typing-inspection==0.4.0

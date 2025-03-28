@@ -92,6 +92,9 @@ class KafkaService:
     def _create_producer(self) -> None:
         """Create a new Kafka producer instance with enhanced SSL security.
 
+        Validates certificates before creating the producer if SSL settings are configured.
+        Configures the producer with settings from the KafkaConfig.
+
         Raises:
             KafkaException: If producer creation fails
         """

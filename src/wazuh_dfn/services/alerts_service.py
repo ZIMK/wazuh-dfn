@@ -27,9 +27,9 @@ class AlertsService:
         """Initialize AlertsService.
 
         Args:
-            config: Miscellaneous configuration
-            kafka_service: KafkaService instance
-            wazuh_service: WazuhService instance
+            config: Miscellaneous configuration settings
+            kafka_service: Service for Kafka operations
+            wazuh_service: Service for Wazuh operations
 
         Raises:
             ConfigValidationError: If configuration validation fails
@@ -46,9 +46,11 @@ class AlertsService:
     def process_alert(self, alert: dict[str, Any]) -> None:
         """Process an alert.
 
-        Args:
-            alert: Alert data to process
+        Delegates alert processing to specialized handlers based on the alert type.
+        Currently supports Windows and Syslog alert formats.
 
+        Args:
+            alert: Alert data to process as a dictionary
         """
         try:
             self.windows_handler.process_alert(alert)

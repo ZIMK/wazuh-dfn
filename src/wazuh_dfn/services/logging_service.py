@@ -32,15 +32,12 @@ class LoggingService:
         """Initialize LoggingService.
 
         Args:
-            config: Logging configuration
-            alert_queue: Queue containing alerts
-            kafka_service: KafkaService instance
-            alerts_watcher_service: AlertsWatcherService instance
-            alerts_worker_service: AlertsWorkerService instance
+            config: Logging configuration settings
+            alert_queue: Queue for monitoring size metrics
+            kafka_service: Kafka service for monitoring performance
+            alerts_watcher_service: Service watching alert files
+            alerts_worker_service: Service processing alerts
             shutdown_event: Event to signal shutdown
-
-        Raises:
-            ConfigValidationError: If configuration validation fails
         """
         # Validation is handled by Pydantic automatically
         self.config = config

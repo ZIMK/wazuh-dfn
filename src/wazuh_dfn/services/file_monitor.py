@@ -30,6 +30,17 @@ class FileMonitor:
         max_failed_files: int = 100,  # Maximum number of failed alert files to keep
         store_failed_alerts: bool = False,
     ) -> None:
+        """Initialize FileMonitor.
+
+        Args:
+            file_path: Path to the file to monitor
+            alert_queue: Queue to store parsed alerts
+            alert_prefix: Expected prefix for alert lines
+            tail: Whether to tail the file (start at end)
+            failed_alerts_path: Path to store alerts that fail processing
+            max_failed_files: Maximum number of failed alert files to keep
+            store_failed_alerts: Whether to store failed alerts
+        """
         self.file_path = file_path
         self.alert_queue = alert_queue
         self.alert_prefix = alert_prefix.encode("utf-8")
@@ -54,7 +65,14 @@ class FileMonitor:
         LOGGER.info(f"Initialized FileMonitor for {file_path}")
 
     def open(self) -> bool:
-        """Open the file and initialize position."""
+        """Open the file and initialize position.
+
+        Opens the monitored file, sets up the file pointer position, and records
+        the initial inode to detect file rotation.
+
+        Returns:
+            bool: True if the file was successfully opened, False otherwise
+        """
         if self.fp:
             try:
                 self.fp.close()
@@ -77,6 +95,11 @@ class FileMonitor:
             return False
 
     def close(self) -> None:
+        """Close the file and clear buffer.
+
+        Safely closes the file handle if open and clears the internal buffer.
+        Logs any errors that occur during closing.
+        """
         if self.fp:
             try:
                 self.fp.close()
@@ -86,6 +109,18 @@ class FileMonitor:
         self.buffer = bytearray()
 
     def _check_inode(self) -> bool:
+        """Check if the file's inode has changed (indicating rotation).
+
+        Args:
+            None
+
+        Returns:
+            bool: True if the inode has changed, False otherwise
+
+        Note:
+            This method also updates the internal inode tracking and clears
+            the buffer if a rotation is detected.
+        """
         try:
             file_path_obj = Path(self.file_path)
             current_stat = file_path_obj.stat()
@@ -100,7 +135,16 @@ class FileMonitor:
             return False
 
     def _find_line_ending(self, start_pos: int) -> int:
-        """Find the next line ending position after start_pos."""
+        """Find the next line ending position after start_pos.
+
+        Searches for various line ending formats (CR, LF, CRLF) in the buffer.
+
+        Args:
+            start_pos: Starting position in the buffer to search from
+
+        Returns:
+            int: Position after the line ending, or -1 if no ending found
+        """
         pos = start_pos
         while pos < len(self.buffer):
             if self.buffer[pos : pos + 2] == b"\r\n":
@@ -111,7 +155,14 @@ class FileMonitor:
         return -1
 
     def _extract_alert(self) -> bytes | None:
-        """Extract a complete alert from the buffer if available."""
+        """Extract a complete alert from the buffer if available.
+
+        Searches the buffer for a complete alert starting with the configured prefix
+        and ending with the alert suffix. Handles buffer cleanup and overflow conditions.
+
+        Returns:
+            bytes | None: The extracted alert as bytes if found, None otherwise
+        """
         start = self.buffer.find(self.alert_prefix)
         if start == -1:
             if len(self.buffer) > MAX_MESSAGE_SIZE:
@@ -148,7 +199,15 @@ class FileMonitor:
         return alert_bytes
 
     def _save_failed_alert(self, alert_bytes: bytes, alert_str: str | None = None) -> None:
-        """Save failed alert to file."""
+        """Save failed alert to file.
+
+        Stores alerts that failed processing in a dedicated directory for later analysis.
+        Can also save a version with character replacement for comparison.
+
+        Args:
+            alert_bytes: The raw bytes of the failed alert
+            alert_str: Optional string version with replaced characters
+        """
         if not self.store_failed_alerts or not self.failed_alerts_path:
             return
 
@@ -172,7 +231,18 @@ class FileMonitor:
             LOGGER.error(f"Error saving failed alert: {save_error!s}")
 
     def _process_alert_with_replace(self, alert_bytes: bytes) -> bool:
-        """Try processing alert with character replacement."""
+        """Try processing alert with character replacement.
+
+        Attempts to decode and parse an alert after replacing invalid UTF-8 sequences.
+        Used as a fallback when strict decoding fails.
+
+        Args:
+            alert_bytes: The raw bytes of the alert to process
+
+        Returns:
+            bool: True if the alert was successfully processed with replacement,
+                 False if it still failed
+        """
         try:
             alert_str = alert_bytes.decode("utf-8", errors="replace").rstrip()
             alert_data = json.loads(alert_str)
@@ -187,7 +257,18 @@ class FileMonitor:
             return False
 
     def _queue_alert(self, alert_bytes: bytes) -> None:
-        """Process and queue an alert."""
+        """Process and queue an alert.
+
+        Attempts to decode and parse alert bytes, first with strict UTF-8 decoding,
+        then falling back to character replacement if needed. Successfully parsed
+        alerts are added to the processing queue.
+
+        Args:
+            alert_bytes: The raw bytes of the alert to process
+
+        Note:
+            Failed alerts are counted and optionally saved to disk
+        """
         try:
             # First try strict decoding
             alert_str = alert_bytes.decode("utf-8", errors="strict").rstrip()
@@ -210,7 +291,17 @@ class FileMonitor:
         self._save_failed_alert(alert_bytes)
 
     def _cleanup_failed_alerts(self) -> None:
-        """Remove oldest failed alert files if exceeding max_failed_files."""
+        """Remove oldest failed alert files if exceeding max_failed_files.
+
+        Manages the stored failed alerts directory by removing older files
+        when the maximum number of files is exceeded.
+
+        Args:
+            None
+
+        Note:
+            This method sorts files by creation time and removes the oldest ones first.
+        """
         if not self.failed_alerts_path:
             return
 
@@ -239,12 +330,25 @@ class FileMonitor:
             LOGGER.error(f"Error during failed alerts cleanup: {e!s}")
 
     def _process_buffer(self) -> None:
-        """Process buffer content to find and queue complete alerts."""
+        """Process buffer content to find and queue complete alerts.
+
+        Repeatedly extracts and processes alerts from the buffer until no more
+        complete alerts can be found.
+        """
         while alert_bytes := self._extract_alert():
             self._queue_alert(alert_bytes)
 
     def _wait_for_data(self, wait_start: float | None) -> float | None:
-        """Wait for more data if buffer contains incomplete alert."""
+        """Wait for more data if buffer contains incomplete alert.
+
+        Implements a timed waiting mechanism for incomplete alerts in the buffer.
+
+        Args:
+            wait_start: Starting timestamp of the wait period or None if not waiting
+
+        Returns:
+            float | None: Updated wait timestamp or None if wait completed/not needed
+        """
         if len(self.buffer) > 0:
             if wait_start is None:
                 return time.time()
@@ -256,7 +360,14 @@ class FileMonitor:
         return None
 
     def _handle_file_status(self) -> bool:
-        """Check file existence and handle rotation."""
+        """Check file existence and handle rotation.
+
+        Verifies that the monitored file exists and checks for file rotation.
+        Reopens the file if needed.
+
+        Returns:
+            bool: True if the file is available and ready, False otherwise
+        """
         if not self.fp and not self.open():
             return False
 
@@ -273,7 +384,18 @@ class FileMonitor:
         return True
 
     def _process_chunk(self, chunk: bytes) -> tuple[bool, int]:
-        """Process a chunk of data from the file."""
+        """Process a chunk of data from the file.
+
+        Adds the chunk to the buffer and attempts to extract and process alerts from it.
+
+        Args:
+            chunk: Bytes read from the monitored file
+
+        Returns:
+            tuple[bool, int]: A tuple containing:
+                - bool: Whether any alerts were found and processed
+                - int: The position in the buffer after processing
+        """
         if not chunk:
             return False, 0
 
@@ -302,7 +424,20 @@ class FileMonitor:
         return alerts_found, buffer_position
 
     def check_file(self) -> None:
-        """Check file for new alerts."""
+        """Check file for new alerts.
+
+        Main monitoring method that reads new data from the file, processes it into alerts,
+        and handles file rotations. Manages internal buffer state and alert extraction.
+
+        This method performs several key operations:
+        - Verifies file existence and handles file rotation detection
+        - Reads data in chunks from the monitored file
+        - Processes chunks to extract complete alerts
+        - Handles incomplete alerts at buffer boundaries
+        - Updates file position tracking for reliable processing
+
+        It should be called periodically to process new alerts in the monitored file.
+        """
         try:
             LOGGER.debug(f"{len(self.buffer)=}, checking file")
 
@@ -340,13 +475,18 @@ class FileMonitor:
             LOGGER.error(f"Error checking file {self.file_path}: {e!s}")
 
     def log_stats(self) -> tuple[float, float, int, int, int]:
-        """Calculate and return statistics for the current interval.
-        Resets counters after calculation.
+        """Calculate and return statistics for the current monitoring interval.
+
+        Computes performance metrics for alert processing including alerts per second,
+        error rates, and alert counts. Resets counters after calculation for the next interval.
 
         Returns:
-            tuple[float, float, int, int, int]: (alerts per second, error rate percentage,
-                                             interval processed alerts, interval errors,
-                                             interval replaced alerts)
+            tuple[float, float, int, int, int]: A tuple containing:
+                - float: Alerts processed per second
+                - float: Error rate percentage
+                - int: Total alerts processed in this interval
+                - int: Total errors in this interval
+                - int: Total alerts processed with character replacement in this interval
         """
         current_time = datetime.now()
         time_diff = (current_time - self.last_stats_time).total_seconds()

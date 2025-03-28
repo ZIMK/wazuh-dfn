@@ -34,13 +34,10 @@ class AlertsWorkerService:
         """Initialize AlertsWorkerService.
 
         Args:
-            config: Miscellaneous configuration
-            alert_queue: Queue containing alerts to process
-            alerts_service: AlertsService instance
+            config: Miscellaneous configuration settings
+            alert_queue: Queue of alerts to process
+            alerts_service: Service for alert processing
             shutdown_event: Event to signal shutdown
-
-        Raises:
-            ConfigValidationError: If configuration validation fails
         """
         # Validation is handled by Pydantic automatically
         self.config = config

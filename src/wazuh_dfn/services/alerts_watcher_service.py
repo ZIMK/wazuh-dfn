@@ -23,8 +23,8 @@ class AlertsWatcherService:
         """Initialize AlertsWatcherService.
 
         Args:
-            config: Wazuh configuration
-            alert_queue: Queue for alerts
+            config: WazuhConfig containing file monitoring settings
+            alert_queue: Queue for storing parsed alerts
             shutdown_event: Event to signal shutdown
         """
         # Validation is handled by Pydantic automatically

@@ -82,8 +82,7 @@ class WazuhService:
         by sending a test message. Includes connection status in startup message.
 
         Raises:
-            socket_error: If connection fails or test message cannot be sent
-            Exception: For other unexpected errors during startup
+            Exception: For unexpected errors during startup
         """
         try:
             LOGGER.info("Starting Wazuh service...")

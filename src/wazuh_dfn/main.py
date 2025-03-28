@@ -37,8 +37,11 @@ load_dotenv()
 def get_argparse_type(field_type):
     """Extract a usable type for argparse from a type annotation.
 
+    Analyzes a field's type annotation and returns an appropriate type
+    for use with argparse. Handles Union types and booleans specially.
+
     Args:
-        field_type: The type annotation from a dataclass field
+        field_type: The type annotation from a model field
 
     Returns:
         A callable type that can be used with argparse
@@ -58,6 +61,7 @@ def get_argparse_type(field_type):
 
     # If the type is directly callable, use it
     if isinstance(field_type, type):
+        # With type narrowing, the compiler knows field_type is a type in this block
         return field_type
 
     # Fallback to str for any other case
@@ -188,14 +192,17 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
 def load_config(args: argparse.Namespace) -> Config:
     """Load configuration from file.
 
+    Creates a Config object and loads settings from config file, environment variables,
+    and command-line arguments, in that order of precedence.
+
     Args:
-        args: command line arguments.
+        args: Command line arguments from argparse
 
     Returns:
-        Config: Configuration object.
+        Config: Fully populated configuration object
 
     Raises:
-        ConfigValidationError: If configuration validation fails.
+        ConfigValidationError: If configuration validation fails
     """
     print(f"Loading config from {args.config}")
 
@@ -221,8 +228,11 @@ def load_config(args: argparse.Namespace) -> Config:
 def setup_logging(config: Config) -> None:
     """Configure logging based on configuration.
 
+    Sets up the logging system according to the provided configuration, including
+    console logging and file logging with rotation when enabled.
+
     Args:
-        config: Application configuration
+        config: Application configuration object containing logging settings
     """
     handlers = []
 
@@ -266,11 +276,13 @@ def setup_logging(config: Config) -> None:
 def setup_directories(config: Config) -> None:
     """Set up required directories for the service.
 
+    Creates necessary directories for logs and failed alerts storage.
+
     Args:
-        config: Service configuration
+        config: Service configuration containing directory paths
 
     Raises:
-        ConfigValidationError: If required directory creation fails
+        ConfigValidationError: If critical directory creation fails
     """
     # Optional directories that should be created if configured
     optional_dirs = []

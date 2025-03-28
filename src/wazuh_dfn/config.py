@@ -151,18 +151,30 @@ class WazuhConfig(BaseModel):
     # Add model validator to validate required fields
     @model_validator(mode="after")
     def validate_wazuh_config(self) -> "WazuhConfig":
-        """Validate configuration after initialization."""
+        """Validate configuration after initialization.
+
+        Performs validation checks on the WazuhConfig object after it has been initialized.
+        Validates that required fields are present and properly formatted.
+
+        Returns:
+            WazuhConfig: The validated configuration object
+
+        Raises:
+            ValueError: If validation fails
+        """
         if not self.unix_socket_path:
             raise ValueError("unix_socket_path cannot be empty")
 
         # Validate unix_socket_path type
         if isinstance(self.unix_socket_path, str):
+            # Python 3.11+ knows self.unix_socket_path is a string in this block
             # For Unix socket path, check if file exists when it's not a default value
             if self.unix_socket_path != "/var/ossec/queue/sockets/queue":
                 socket_path = Path(self.unix_socket_path)
                 if not socket_path.exists() and not socket_path.is_socket():
                     LOGGER.warning(f"Unix socket path does not exist: {self.unix_socket_path}")
         elif isinstance(self.unix_socket_path, tuple):
+            # Python 3.11+ knows self.unix_socket_path is a tuple in this block
             # Validate host/port tuple format
             if len(self.unix_socket_path) != 2:
                 raise ValueError("Host/port tuple must have exactly 2 elements: (host, port)")
@@ -182,17 +194,33 @@ class WazuhConfig(BaseModel):
     @field_validator("unix_socket_path")
     @classmethod
     def validate_socket_path(cls, v):
-        """Validate the unix_socket_path format."""
+        """Validate the unix_socket_path format.
+
+        Converts string representations of tuples into actual tuple objects.
+        For example, "(localhost, 1514)" becomes ("localhost", 1514).
+
+        Args:
+            v: The value to validate, typically a string or tuple
+
+        Returns:
+            Union[str, tuple]: Either the original string or a tuple of (host, port)
+
+        Raises:
+            ValueError: If the format resembles a tuple but is malformed
+        """
         # If it's a string representation of a tuple like "(localhost, 1514)", convert to actual tuple
         if isinstance(v, str) and v.startswith("(") and v.endswith(")"):
-            try:
-                # Parse tuple string like "(host, port)"
-                parts = v.strip("()").split(",")
-                if len(parts) == 2:
-                    host = parts[0].strip().strip("'\"")
+            # Parse tuple string like "(host, port)"
+            parts = v.strip("()").split(",")
+            if len(parts) == 2:
+                host = parts[0].strip().strip("'\"")
+                try:
                     port = int(parts[1].strip())
                     return (host, port)
-            except (ValueError, IndexError):
+                except ValueError:
+                    # Explicitly raise ValueError for non-numeric ports
+                    raise ValueError(f"Invalid port in host/port format: {v}. Port must be a number.")
+            else:
                 raise ValueError(f"Invalid host/port format: {v}. Expected format: '(host, port)'")
         return v
 
@@ -250,10 +278,10 @@ class DFNConfig(BaseModel):
         Verifies that certificates are valid, correctly formatted, and properly chained.
 
         Returns:
-            bool: True if certificates are valid
+            bool: True if certificates are valid, allowing the process to continue
 
         Raises:
-            ConfigValidationError: If certificates are invalid
+            ConfigValidationError: If certificates are invalid, expired, or mismatched
         """
         if not self.dfn_ca or not self.dfn_cert or not self.dfn_key:
             return True  # Skip validation if not configured
@@ -307,8 +335,18 @@ class DFNConfig(BaseModel):
             raise ConfigValidationError(f"Certificate validation failed: {e}")
 
     def _verify_key_pair(self, private_key, public_key) -> bool:
-        """Verify that a private key and public key form a valid pair."""
-        # This is a simplified example - actual implementation would vary based on key type
+        """Verify that a private key and public key form a valid pair.
+
+        Performs a cryptographic test by signing and verifying a test message to ensure
+        the private and public key correspond to each other.
+
+        Args:
+            private_key: The private key to test
+            public_key: The public key to test against the private key
+
+        Returns:
+            bool: True if keys form a valid pair, False otherwise
+        """
         try:
             # Create a test message
             message = b"Test message for key verification"
@@ -332,7 +370,19 @@ class DFNConfig(BaseModel):
             return False
 
     def _verify_certificate_chain(self, ca_cert, client_cert) -> None:
-        """Verify CA signed the client certificate."""
+        """Verify CA signed the client certificate.
+
+        Checks if the client certificate was issued by the provided Certificate Authority
+        by comparing the issuer field of the client certificate with the subject field
+        of the CA certificate.
+
+        Args:
+            ca_cert: The Certificate Authority certificate
+            client_cert: The client certificate to verify
+
+        Raises:
+            ConfigValidationError: If the client certificate was not issued by the provided CA
+        """
         # This is simplified - a complete implementation would handle the full chain
         # and verify against a CRL or OCSP
         issuer = ca_cert.subject
@@ -431,11 +481,14 @@ class KafkaConfig(BaseModel):
     def get_kafka_config(self, dfn_config: DFNConfig) -> dict:
         """Get Kafka configuration dictionary.
 
+        Creates a complete Kafka configuration dictionary by combining the base
+        configuration with DFN-specific settings for SSL communication.
+
         Args:
-            dfn_config: DFN configuration containing broker and SSL settings
+            dfn_config: DFN configuration containing broker and SSL certificate settings
 
         Returns:
-            dict: Kafka configuration settings.
+            dict: Complete Kafka producer configuration dictionary
         """
         config = {
             "bootstrap.servers": dfn_config.dfn_broker,
@@ -501,7 +554,17 @@ class LogConfig(BaseModel):
     @field_validator("level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
-        """Validate log level is valid."""
+        """Validate log level is valid.
+
+        Args:
+            v: Log level string to validate
+
+        Returns:
+            str: The validated log level string
+
+        Raises:
+            ValueError: If the log level is not one of the valid levels
+        """
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if v not in valid_levels:
             raise ValueError(f"Invalid log level: {v}")
@@ -510,9 +573,18 @@ class LogConfig(BaseModel):
     @field_validator("file_path")
     @classmethod
     def validate_file_path(cls, v: str) -> str:
-        """Validate file path exists and is readable."""
-        # Skip validation for now - we'll implement a proper path validator later
-        # that respects the skip_path_validation setting
+        """Validate file path exists and is readable.
+
+        Args:
+            v: The file path string to validate
+
+        Returns:
+            str: The validated file path
+
+        Note:
+            Currently this is a placeholder for future implementation that will
+            respect the skip_path_validation setting
+        """
         return v
 
 
@@ -542,7 +614,17 @@ class MiscConfig(BaseModel):
     @field_validator("own_network")
     @classmethod
     def validate_cidr(cls, v: str | None) -> str | None:
-        """Validate CIDR notation."""
+        """Validate CIDR notation.
+
+        Args:
+            v: The CIDR notation string to validate, or None
+
+        Returns:
+            str or None: The validated CIDR string or None if input was None
+
+        Raises:
+            ValueError: If the CIDR notation is invalid or improperly formatted
+        """
         if v is None:
             return v
 
