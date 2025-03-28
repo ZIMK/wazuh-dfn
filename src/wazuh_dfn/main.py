@@ -52,6 +52,10 @@ def get_argparse_type(field_type):
             if arg is not type(None):  # Check if it's not NoneType
                 return arg
 
+    # If the type is bool, use a custom parser to handle string values correctly
+    if field_type is bool:
+        return lambda x: str(x).lower() in ("true", "1", "yes", "y")
+
     # If the type is directly callable, use it
     if isinstance(field_type, type):
         return field_type
@@ -440,8 +444,8 @@ def main() -> None:
             case argparse.Namespace() if getattr(args, "print_config_only", False):
                 # Load config from file
                 config = load_config(args)
-                # Convert Pydantic model to dict for JSON serialization
-                config_dict = config.model_dump()
+                # Convert Pydantic model to dict for JSON serialization with exclude options
+                config_dict = config.model_dump(exclude_none=True, exclude_unset=True)
                 json_config = json.dumps(config_dict, sort_keys=True, indent=4)
                 print(f"Loaded config: {json_config}")
                 return

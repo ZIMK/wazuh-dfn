@@ -3,7 +3,7 @@
 import argparse
 import logging
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 # Import tomllib from stdlib for Python 3.11+ or tomli as fallback
 try:
@@ -26,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Logging
 LOGGER = logging.getLogger(__name__)
+
+# Add support for Pydantic type coercion
 
 
 class LogLevel(str, Enum):
@@ -662,41 +664,6 @@ class Config(BaseModel):
         return Config(**config_data)
 
     @staticmethod
-    def _convert_value(value: str, field_type: type) -> Any:
-        """Convert string value to the appropriate type.
-
-        Args:
-            value: Value to convert
-            field_type: Target type
-
-        Returns:
-            Converted value
-        """
-        match field_type:
-            case type() if field_type is bool:
-                return str(value).lower() in ("true", "1", "yes")
-            case type() if field_type is int:
-                return int(value)
-            case type() if field_type is float:
-                return float(value)
-            case _ if hasattr(field_type, "__or__"):
-                # Handle pipe syntax (|) in modern Python
-                if isinstance(value, str) and tuple[str, int] in get_args(field_type):
-                    # Check if the string represents a tuple
-                    if value.startswith("(") and value.endswith(")"):
-                        try:
-                            parts = value.strip("()").split(",")
-                            if len(parts) == 2:
-                                host = parts[0].strip().strip("'\"")
-                                port = int(parts[1].strip())
-                                return (host, port)
-                        except (ValueError, IndexError):
-                            pass
-                return value
-            case _:
-                return value
-
-    @staticmethod
     def _load_from_env(config: "Config") -> None:
         """Load configuration from environment variables."""
         import os  # Import os only for environment variables access
@@ -714,18 +681,7 @@ class Config(BaseModel):
                 env_var = field_info.json_schema_extra.get("env_var") if field_info.json_schema_extra else None
                 if env_var and env_var in os.environ:
                     value = os.environ[env_var]
-                    field_type = field_info.annotation
-
-                    # For modern pipe syntax types (like str | None)
-                    if hasattr(field_type, "__or__"):
-                        args = get_args(field_type)
-                        # Find the first non-None type
-                        for arg in args:
-                            if arg is not type(None):  # Check if it's not NoneType
-                                field_type = arg
-                                break
-
-                    section_updates[field_name] = Config._convert_value(value, field_type)
+                    section_updates[field_name] = value
 
             if section_updates:
                 # Create a new section model with the updates
@@ -755,22 +711,7 @@ class Config(BaseModel):
                     value = getattr(args, arg_name, None)
 
                     if value is not None:
-                        field_type = field_info.annotation
-
-                        # For modern pipe syntax types (like str | None)
-                        if hasattr(field_type, "__or__"):
-                            args_types = get_args(field_type)
-                            # Find the first non-None type
-                            for arg_type in args_types:
-                                if arg_type is not type(None):  # Check if it's not NoneType
-                                    field_type = arg_type
-                                    break
-
-                        # Special handling for integers from CLI
-                        if field_type is int and isinstance(value, str) and value.isdigit():
-                            value = int(value)
-
-                        section_updates[field_name] = Config._convert_value(str(value), field_type)
+                        section_updates[field_name] = value
 
             if section_updates:
                 # Create a new section model with the updates
