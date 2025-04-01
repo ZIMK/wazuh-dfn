@@ -1,59 +1,87 @@
 import pytest
 from unittest.mock import patch
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 
-def test_init():
-    queue = MaxSizeQueue(maxsize=5)
+@pytest.mark.asyncio
+async def test_init():
+    queue = AsyncMaxSizeQueue(maxsize=5)
     assert queue.maxsize == 5
     assert queue._discarded_count == 0
     assert queue._first_overflow_logged is False
     assert queue._log_threshold == 1  # 10% of 5, minimum 1
 
 
-def test_normal_queue_operations():
-    queue = MaxSizeQueue(maxsize=3)
-    queue.put(1)
-    queue.put(2)
+@pytest.mark.asyncio
+async def test_normal_queue_operations():
+    queue = AsyncMaxSizeQueue(maxsize=3)
+    await queue.put(1)
+    await queue.put(2)
     assert queue.qsize() == 2
-    assert queue.get() == 1
+    assert await queue.get() == 1
     assert queue.qsize() == 1
 
 
-def test_overflow_behavior():
-    queue = MaxSizeQueue(maxsize=2)
-    queue.put(1)
-    queue.put(2)
-    queue.put(3)  # This should remove 1
+@pytest.mark.asyncio
+async def test_overflow_behavior():
+    queue = AsyncMaxSizeQueue(maxsize=2)
+    await queue.put(1)
+    await queue.put(2)
+    await queue.put(3)  # This should remove 1
     assert queue.qsize() == 2
-    assert queue.get() == 2
-    assert queue.get() == 3
+    assert await queue.get() == 2
+    assert await queue.get() == 3
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "maxsize,items",
     [
-        (2, range(5)),
         (1, range(3)),
+        (2, range(5)),
+        (10, range(15)),
     ],
 )
-def test_overflow_logging(maxsize, items):
+async def test_overflow_logging(maxsize, items):
     with patch("wazuh_dfn.services.max_size_queue.LOGGER") as mock_logger:
-        queue = MaxSizeQueue(maxsize=maxsize)
+        queue = AsyncMaxSizeQueue(maxsize=maxsize)
+
+        # Fill queue beyond capacity
         for item in items:
-            queue.put(item)
+            await queue.put(item)
 
-        # First overflow should always be logged
-        mock_logger.warning.assert_called()
-        assert queue._first_overflow_logged is True
+        # Verify logging occurred
+        if len(items) > maxsize:
+            mock_logger.warning.assert_called()
+            assert queue._discarded_count > 0
+        else:
+            mock_logger.warning.assert_not_called()
+            assert queue._discarded_count == 0
 
 
-def test_log_threshold():
+@pytest.mark.asyncio
+async def test_log_threshold():
     with patch("wazuh_dfn.services.max_size_queue.LOGGER") as mock_logger:
-        queue = MaxSizeQueue(maxsize=10)
-        # Fill queue and overflow 20 times
-        for i in range(30):
-            queue.put(i)
+        queue = AsyncMaxSizeQueue(maxsize=100)
 
-        # Should log at first overflow and every 10% (1 item) after
-        assert mock_logger.warning.call_count >= 3
+        # Log first discarded message
+        for i in range(101):
+            await queue.put(i)
+
+        # Should have logged exactly once
+        assert mock_logger.warning.call_count == 1
+        mock_logger.warning.reset_mock()
+
+        # Add more items but not enough to hit threshold
+        for i in range(5):
+            await queue.put(1000 + i)
+
+        # Should not have logged again
+        assert mock_logger.warning.call_count == 0
+
+        # Add enough items to hit threshold
+        for i in range(10):
+            await queue.put(2000 + i)
+
+        # Should have logged again
+        assert mock_logger.warning.call_count == 1

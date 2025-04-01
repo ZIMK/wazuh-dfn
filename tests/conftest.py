@@ -1,15 +1,16 @@
 """Test configuration and fixtures."""
 
+import asyncio
 import logging
 import pytest
+import pytest_asyncio
 import shutil
 import tempfile
-import threading
 from contextlib import suppress
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 
@@ -26,9 +27,7 @@ def disable_path_validation():
 @pytest.fixture(autouse=True)
 def setup_logging():
     """Configure logging for tests."""
-    logging.basicConfig(
-        level=logging.DEBUG, format="%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
 @pytest.fixture
@@ -120,42 +119,70 @@ def temp_dir():
 @pytest.fixture
 def shutdown_event():
     """Create a shutdown event for testing."""
-    return threading.Event()
+    return asyncio.Event()
 
 
 @pytest.fixture
-def cleanup_threads():
-    """Fixture to ensure threads are cleaned up after tests."""
-    yield
-    for thread in threading.enumerate():
-        if thread != threading.current_thread():
-            thread.join(timeout=1.0)
+def event_loop():
+    """Create and yield a new event loop for each test."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+
+    # Close all pending tasks before closing the loop
+    pending = asyncio.all_tasks(loop)
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+    # Make sure to properly clean up the loop
+    loop.run_until_complete(loop.shutdown_asyncgens())
+
+    # Close the loop and ensure it's really closed
+    loop.close()
+
+    # Set the event loop policy's event loop to None to prevent warnings
+    asyncio.set_event_loop(None)
 
 
 @pytest.fixture
-def mock_producer():
+def mock_producer(event_loop):
     """Create a mock Kafka producer."""
-    with patch("confluent_kafka.Producer") as mock:
-        mock.return_value = MagicMock()
+    with patch("aiokafka.AIOKafkaProducer") as mock:
+        producer_mock = AsyncMock()
+
+        # Create a future for start
+        start_future = asyncio.Future(loop=event_loop)
+        start_future.set_result(None)
+        producer_mock.start.return_value = start_future
+
+        # Create a future for stop
+        stop_future = asyncio.Future(loop=event_loop)
+        stop_future.set_result(None)
+        producer_mock.stop.return_value = stop_future
+
+        mock.return_value = producer_mock
         yield mock
 
 
 @pytest.fixture
 def mock_socket(monkeypatch):
     """Mock socket for testing."""
-    mock_socket = MagicMock()
+    mock_socket = AsyncMock()
+    # The socket class itself is mocked with MagicMock since it's not an async class
     mock_socket_class = MagicMock(return_value=mock_socket)
 
-    def mock_connect(addr):
+    # Define an async connect method that will be used by the instance
+    async def mock_connect(addr):
         # Always treat connections as AF_INET for testing
         if isinstance(addr, str):
             # Convert Unix socket path to a tuple for Windows testing
             addr = ("127.0.0.1", 1514)  # Default Wazuh port NOSONAR
 
+    # Assign the async functions
     mock_socket.connect = mock_connect
-    mock_socket.close = MagicMock()
-    mock_socket.send = MagicMock()
-    mock_socket.recv = MagicMock(return_value=b"")
+    mock_socket.send = AsyncMock()
+    mock_socket.recv = AsyncMock(return_value=b"")
+    # Non-async methods can still use MagicMock
     mock_socket.settimeout = MagicMock()
 
     # Mock socket creation
@@ -166,37 +193,34 @@ def mock_socket(monkeypatch):
     return mock_socket
 
 
-@pytest.fixture
-def wazuh_service(sample_config, mock_socket):
+@pytest_asyncio.fixture
+async def wazuh_service(sample_config):
     """Create a WazuhService instance with mocked socket."""
     service = WazuhService(config=sample_config.wazuh)
-    service._socket = mock_socket
-    # Mock error handling methods
-    service.send_error = MagicMock()
-    service._send_event = MagicMock()
-    service.connect = MagicMock()
+
+    # Mock error handling methods - using AsyncMock for async methods
+    service.send_error = AsyncMock()
+    service._send_event = AsyncMock()
+    service.connect = AsyncMock()
     return service
 
 
-@pytest.fixture
-def kafka_service(sample_config, mock_producer, wazuh_service, shutdown_event):
+@pytest_asyncio.fixture
+async def kafka_service(sample_config, mock_producer, wazuh_service, shutdown_event):
     """Create a KafkaService instance with mocked dependencies."""
     from wazuh_dfn.services.kafka_service import KafkaService
 
     service = KafkaService(
         config=sample_config.kafka,
         dfn_config=sample_config.dfn,
-        wazuh_handler=wazuh_service,
+        wazuh_service=wazuh_service,
         shutdown_event=shutdown_event,
     )
-
-    # Mock the producer to avoid actual Kafka connections
-    service.producer = mock_producer
     return service
 
 
-@pytest.fixture
-def alerts_service(sample_config, kafka_service, wazuh_service):
+@pytest_asyncio.fixture
+async def alerts_service(sample_config, kafka_service, wazuh_service):
     """Create an AlertsService instance with mocked dependencies."""
     from wazuh_dfn.services.alerts_service import AlertsService
 
@@ -206,19 +230,19 @@ def alerts_service(sample_config, kafka_service, wazuh_service):
 @pytest.fixture
 def alert_queue():
     """Create an alert queue for testing."""
-    return MaxSizeQueue()
+    return AsyncMaxSizeQueue()
 
 
-@pytest.fixture
-def alerts_worker_service(sample_config, alert_queue, alerts_service, shutdown_event):
+@pytest_asyncio.fixture
+async def alerts_worker_service(sample_config, alert_queue, alerts_service, shutdown_event):
     """Create an AlertsWorkerService instance with mocked dependencies."""
     from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
 
     return AlertsWorkerService(sample_config.misc, alert_queue, alerts_service, shutdown_event)
 
 
-@pytest.fixture
-def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
+@pytest_asyncio.fixture
+async def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
     """Create an AlertsWatcherService instance for testing."""
     from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 
@@ -231,4 +255,4 @@ def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
 
     # Cleanup
     with suppress(Exception):
-        service.stop()
+        await service.stop()

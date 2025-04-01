@@ -1,12 +1,11 @@
 """Observer service module for monitoring alert files."""
 
+import asyncio
 import logging
-import threading
-import time
 from .file_monitor import FileMonitor
 from datetime import datetime
 from wazuh_dfn.config import WazuhConfig
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,8 +16,8 @@ class AlertsWatcherService:
     def __init__(
         self,
         config: WazuhConfig,
-        alert_queue: MaxSizeQueue,
-        shutdown_event: threading.Event,
+        alert_queue: AsyncMaxSizeQueue,
+        shutdown_event: asyncio.Event,
     ) -> None:
         """Initialize AlertsWatcherService.
 
@@ -35,9 +34,10 @@ class AlertsWatcherService:
         self.latest_queue_put: datetime | None = None
         self.file_monitor: FileMonitor | None = None
 
-    def start(self) -> None:
-        """Start monitoring alert files."""
+    async def start(self) -> None:
+        """Start monitoring alert files asynchronously."""
         LOGGER.info(f"Starting file monitoring for {self.file_path}")
+
         try:
             self.file_monitor = FileMonitor(
                 file_path=self.file_path,
@@ -47,19 +47,29 @@ class AlertsWatcherService:
                 max_failed_files=self.config.max_failed_files,
                 store_failed_alerts=self.config.store_failed_alerts,
             )
+
+            await self.file_monitor.open()  # Ensure we explicitly open the file monitor
+
             while not self.shutdown_event.is_set():
-                self.file_monitor.check_file()
-                # Update latest queue put time from monitor
-                self.latest_queue_put = self.file_monitor.latest_queue_put
-                time.sleep(self.config.json_alert_file_poll_interval)
+                try:
+                    await self.file_monitor.check_file()
+                    # Update latest queue put time from monitor
+                    self.latest_queue_put = self.file_monitor.latest_queue_put
+                except Exception as e:
+                    LOGGER.error(f"Error during file check: {e!s}")
+                    # Continue the loop instead of breaking on transient errors
+
+                await asyncio.sleep(self.config.json_alert_file_poll_interval)
 
         except Exception as e:
-            LOGGER.error(f"Error monitoring file: {e!s}")
+            LOGGER.error(f"Critical error monitoring file: {e!s}")
         finally:
             if self.file_monitor:
-                self.file_monitor.close()
+                await self.file_monitor.close()
             LOGGER.info("Stopped file monitoring")
 
-    def stop(self) -> None:
-        """Stop the monitoring."""
+    async def stop(self) -> None:
+        """Stop the monitoring asynchronously."""
         LOGGER.info("Stopping file monitoring")
+        if self.file_monitor:
+            await self.file_monitor.close()

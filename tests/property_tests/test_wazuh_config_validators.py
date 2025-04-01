@@ -57,7 +57,7 @@ class TestWazuhConfigValidators:
         # Account for the fact that all special characters and whitespace are stripped
         # from the host value during validation
         expected_host = host.strip().strip("'\"")
-        assert result[0] == expected_host.strip() 
+        assert result[0] == expected_host.strip()
         assert result[1] == port
 
     @given(st.text(min_size=1))
@@ -85,7 +85,9 @@ class TestWazuhConfigValidators:
         st.builds(
             lambda host, port: f"({host}, {port})",
             host=valid_hosts,
-            port=st.text().filter(lambda x: not x.isdigit()),  # Port is not a number
+            port=st.text(
+                min_size=1, alphabet=st.characters(whitelist_categories=("Ll", "Lu"))
+            ),  # Letters only, no digits
         )
     )
     def test_validate_socket_path_with_non_numeric_port(self, socket_path):

@@ -462,7 +462,6 @@ class KafkaConfig(BaseModel):
         default_factory=lambda: {
             "request.timeout.ms": 60000,
             "connections.max.idle.ms": 540000,  # 9 minutes
-            "socket.keepalive.enable": True,
             "linger.ms": 1000,  # Controls how long to wait before sending a batch
             "batch.size": 16384,  # Maximum size of a batch in bytes
             "batch.num.messages": 100,  # Maximum number of messages in a batch
@@ -478,29 +477,81 @@ class KafkaConfig(BaseModel):
         },
     )
 
-    def get_kafka_config(self, dfn_config: DFNConfig) -> dict:
-        """Get Kafka configuration dictionary.
+    def get_common_client_params(self, dfn_config: DFNConfig) -> dict:
+        """Get common parameters for both producer and admin client.
 
-        Creates a complete Kafka configuration dictionary by combining the base
-        configuration with DFN-specific settings for SSL communication.
+        Returns a dictionary with parameters that are identical for both
+        producer and admin client configuration.
 
         Args:
-            dfn_config: DFN configuration containing broker and SSL certificate settings
+            dfn_config: DFN configuration containing broker and certificate paths
 
         Returns:
-            dict: Complete Kafka producer configuration dictionary
+            dict: Common client parameters for aiokafka clients
         """
-        config = {
-            "bootstrap.servers": dfn_config.dfn_broker,
-            "security.protocol": "SSL",
-            "ssl.ca.location": dfn_config.dfn_ca,
-            "ssl.certificate.location": dfn_config.dfn_cert,
-            "ssl.key.location": dfn_config.dfn_key,
-            "socket.timeout.ms": self.timeout * 1000,
-            "message.timeout.ms": self.timeout * 1000,
-            "retry.backoff.ms": self.retry_interval * 1000,
-        } | self.producer_config
-        return config
+        return {
+            "bootstrap_servers": dfn_config.dfn_broker,
+            "security_protocol": "SSL" if (dfn_config.dfn_ca and dfn_config.dfn_cert and dfn_config.dfn_key) else None,
+            # Common timeouts and retries
+            "request_timeout_ms": self.timeout * 1000,
+            "retry_backoff_ms": self.retry_interval * 1000,
+            "connections_max_idle_ms": 540000,  # 9 minutes
+        }
+
+    def get_producer_config(self, dfn_config: DFNConfig) -> dict:
+        """Get configuration specifically for the aiokafka producer.
+
+        Returns a complete dictionary with all parameters needed for AIOKafkaProducer.
+        Combines common parameters with producer-specific ones.
+
+        Args:
+            dfn_config: DFN configuration containing broker and certificate paths
+
+        Returns:
+            dict: Complete producer configuration with aiokafka-compatible parameter names
+        """
+        # Start with common parameters
+        producer_config = self.get_common_client_params(dfn_config)
+
+        # Add producer-specific parameters
+        producer_specific = {
+            "request_timeout_ms": self.timeout * 1000,
+            "acks": "all",
+            "enable_idempotence": True,
+            "linger_ms": 1000,
+            "max_batch_size": 16384,
+        }
+
+        # Merge the configurations
+        producer_config.update(producer_specific)
+
+        return producer_config
+
+    def get_admin_config(self, dfn_config: DFNConfig) -> dict:
+        """Get configuration specifically for the aiokafka admin client.
+
+        Returns a complete dictionary with all parameters needed for AIOKafkaAdminClient.
+        Combines common parameters with admin-specific ones.
+
+        Args:
+            dfn_config: DFN configuration containing broker and certificate paths
+
+        Returns:
+            dict: Complete admin client configuration with aiokafka-compatible parameter names
+        """
+        # Start with common parameters
+        admin_config = self.get_common_client_params(dfn_config)
+
+        # Add admin-specific parameters
+        admin_specific = {
+            "client_id": "wazuh-dfn",
+            "request_timeout_ms": self.admin_timeout * 1000,  # Override common timeout
+        }
+
+        # Merge the configurations
+        admin_config.update(admin_specific)
+
+        return admin_config
 
 
 class LogConfig(BaseModel):

@@ -1,10 +1,11 @@
+import asyncio
 import json
+import pytest
 import tempfile
+from contextlib import suppress
 from pathlib import Path
-from threading import Thread
-from time import sleep
 from wazuh_dfn.services.file_monitor import FileMonitor
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 
 # Utility functions
@@ -21,7 +22,7 @@ def get_test_files():
     return [f.name for f in test_dir.glob("*.json")]
 
 
-def write_alerts_to_temp_file(alerts):
+async def write_alerts_to_temp_file(alerts):
     """Write alerts to a temporary file"""
     with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp:
         temp_path = temp.name
@@ -81,32 +82,38 @@ def test_alert_geolocation():
         assert "lon" in geo["location"]
 
 
-def test_file_monitor_processing():
+@pytest.mark.asyncio
+async def test_file_monitor_processing():
     """Test FileMonitor processing of alerts"""
     # Load all test alerts
     test_files = get_test_files()
     alerts = [load_json_alert(f) for f in test_files]
 
     # Write alerts to temp file
-    temp_file = write_alerts_to_temp_file(alerts)
+    temp_file = await write_alerts_to_temp_file(alerts)
     monitor = None
 
     try:
         # Set up FileMonitor
-        alert_queue = MaxSizeQueue()
+        alert_queue = AsyncMaxSizeQueue()
         monitor = FileMonitor(file_path=temp_file, alert_queue=alert_queue, alert_prefix="{", tail=True)
 
-        # Start monitoring in a separate thread
-        thread = Thread(target=lambda: monitor.check_file())
-        thread.start()
+        # Create task to run the monitor
+        monitor_task = asyncio.create_task(monitor.check_file())
 
         # Wait for processing
-        sleep(1)
+        await asyncio.sleep(1)
+
+        # Cancel the monitor task
+        monitor_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await monitor_task
 
         # Verify results
         processed_alerts = []
         while not alert_queue.empty():
-            processed_alerts.append(alert_queue.get())
+            processed_alerts.append(await alert_queue.get())
+            alert_queue.task_done()
 
         # Compare original and processed alerts
         assert len(processed_alerts) == len(alerts), f"Expected {len(alerts)} alerts, got {len(processed_alerts)}"
@@ -119,50 +126,62 @@ def test_file_monitor_processing():
     finally:
         # Cleanup
         if monitor:
-            monitor.close()
+            await monitor.close()
         Path(temp_file).unlink()
 
 
-def test_file_monitor_rotation():
+@pytest.mark.asyncio
+async def test_file_monitor_rotation():
     """Test FileMonitor handling file rotation"""
     # Load test alerts
     alerts_batch1 = [load_json_alert("win_4625.json")]
     alerts_batch2 = [load_json_alert("lin_fail2ban-1.json")]
 
-    temp_file = write_alerts_to_temp_file(alerts_batch1)
+    temp_file = await write_alerts_to_temp_file(alerts_batch1)
     monitor = None
 
     try:
         # Set up monitoring
-        alert_queue = MaxSizeQueue()
+        alert_queue = AsyncMaxSizeQueue()
         monitor = FileMonitor(file_path=temp_file, alert_queue=alert_queue, alert_prefix="{", tail=True)
 
-        # First check
-        monitor.check_file()
-        sleep(0.1)  # Allow time for processing
+        # First check with task
+        check_task = asyncio.create_task(monitor.check_file())
+        await asyncio.sleep(0.1)  # Allow time for processing
+        check_task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await check_task
 
         # Verify first batch
         assert not alert_queue.empty(), "No alerts processed from first batch"
-        first_alert = alert_queue.get()
+        first_alert = await alert_queue.get()
         assert first_alert["rule"]["id"] == "60204", "Wrong alert processed"
+        alert_queue.task_done()
 
         # Simulate file rotation
-        monitor.close()
-        sleep(0.2)  # Wait for monitor to fully close
+        await monitor.close()
+        await asyncio.sleep(0.2)  # Wait for monitor to fully close
         Path(temp_file).unlink()
-        temp_file = write_alerts_to_temp_file(alerts_batch2)
-        sleep(0.2)  # Allow filesystem to update and file to be fully written
+        temp_file = await write_alerts_to_temp_file(alerts_batch2)
+        await asyncio.sleep(0.2)  # Allow filesystem to update and file to be fully written
 
         # Reopen monitor with new file
         monitor = FileMonitor(file_path=temp_file, alert_queue=alert_queue, alert_prefix="{", tail=True)
-        sleep(0.1)  # Allow monitor to initialize
-        monitor.check_file()
-        sleep(0.2)  # Allow more time for processing
+        await asyncio.sleep(0.1)  # Allow monitor to initialize
+
+        check_task2 = asyncio.create_task(monitor.check_file())
+        await asyncio.sleep(0.2)  # Allow more time for processing
+        check_task2.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await check_task2
 
         # Verify second batch
         assert not alert_queue.empty(), "No alerts processed after rotation"
-        second_alert = alert_queue.get()
+        second_alert = await alert_queue.get()
         assert second_alert["rule"]["id"] == "833002", "Wrong alert processed after rotation"
+        alert_queue.task_done()
 
         # Verify no extra alerts
         assert alert_queue.empty(), "Unexpected extra alerts in queue"
@@ -170,16 +189,7 @@ def test_file_monitor_rotation():
     finally:
         # Cleanup
         if monitor:
-            monitor.close()
+            await monitor.close()
         temp_path = Path(temp_file)
         if temp_path.exists():
             temp_path.unlink()
-
-
-if __name__ == "__main__":
-    test_load_alerts()
-    test_alert_types()
-    test_alert_geolocation()
-    test_file_monitor_processing()
-    test_file_monitor_rotation()
-    print("All tests passed!")

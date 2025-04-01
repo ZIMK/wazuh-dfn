@@ -4,7 +4,7 @@ This module uses Hypothesis to generate test cases for validation functions in M
 """
 
 import pytest
-from hypothesis import example, given
+from hypothesis import given
 from hypothesis import strategies as st
 from wazuh_dfn.config import MiscConfig
 
@@ -45,12 +45,7 @@ class TestMiscConfigValidators:
     @given(
         st.one_of(
             # Use specific known-good examples
-            st.sampled_from([
-                "192.168.1.0/24",
-                "10.0.0.0/8",
-                "172.16.0.0/12",
-                "2001:db8::/32"
-            ])
+            st.sampled_from(["192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/12", "2001:db8::/32"])
         )
     )
     def test_validate_cidr_with_known_valid(self, cidr):

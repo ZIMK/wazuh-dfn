@@ -18,12 +18,14 @@ requires-python = ">=3.12"
 dependencies = [
     # Core dependencies with version ranges for better compatibility
     "psutil>=7.0.0,<8.0.0",           # System monitoring utilities
-    "confluent-kafka>=2.8.0,<3.0.0",  # Kafka client 
-    "PyYAML>=6.0,<7.0.0",               # YAML configuration
+    "PyYAML>=6.0,<7.0.0",             # YAML configuration
     "python-dotenv>=1.0.0,<2.0.0",    # Environment variable loading
     "cryptography>=44.0.0,<45.0.0",   # Cryptographic operations for SSL/TLS
     "pydantic>=2.0.0",                # Pydantic for data validation
     "tomli;python_version<'3.11'",    # TOML parsing for Python < 3.11
+    # New dependencies for asyncio implementation
+    "aiofiles>=24.0.0,<25.0.0",         # Async file I/O operations
+    "aiokafka>=0.12.0,<1.0.0",         # Async Kafka client (replacing confluent-kafka)
 ]
 
 [project.urls]
@@ -47,6 +49,7 @@ test = [
     "pytest-sugar>=1.0.0,<2.0.0",
     "pytest-mock>=3.0.0,<4.0.0",
     "hypothesis>=6.0.0,<7.0.0",
+    "pytest-asyncio>=0.26.0,<1.0.0",  # Support for testing async code
 ]
 lint = [
     "black>=25.0.0,<26.0.0",
@@ -56,6 +59,7 @@ lint = [
 types = [
     "types-PyYAML",                    # For YAML configuration loading
     "types-psutil",                    # For system monitoring utilities
+    "types-aiofiles",                  # For async file I/O typing
 ]
 
 [tool.ruff]
@@ -226,12 +230,12 @@ addopts = """
     --no-cov-on-fail
     -m 'not performance'
 """
-required_plugins = ["pytest-cov", "pytest-sugar"]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 xfail_strict = true
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "default",
     "ignore::DeprecationWarning",

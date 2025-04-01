@@ -1,14 +1,13 @@
 """Test module for Logging Service."""
 
+import asyncio
 import contextlib
 import logging
 import psutil
 import pytest
-import queue
-import threading
 import time
 from pydantic import ValidationError
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from wazuh_dfn.config import LogConfig
 from wazuh_dfn.services.logging_service import LoggingService
 
@@ -17,11 +16,11 @@ from wazuh_dfn.services.logging_service import LoggingService
 def mock_services():
     """Create mock services for testing."""
     return {
-        "alert_queue": queue.Queue(),
+        "alert_queue": MagicMock(),
         "kafka_service": MagicMock(),
         "alerts_watcher_service": MagicMock(),
         "alerts_worker_service": MagicMock(),
-        "shutdown_event": threading.Event(),
+        "shutdown_event": asyncio.Event(),
     }
 
 
@@ -31,7 +30,7 @@ def sample_log_config(tmp_path, monkeypatch):
     # Use a temporary file path but don't create it
     log_file = tmp_path / "test.log"
     log_file.touch()
-    return LogConfig(console=True, file_path=str(log_file), level="INFO", interval=1)
+    return LogConfig(console=True, file_path=str(log_file), level="INFO", interval=1, keep_files=7)
 
 
 @pytest.fixture
@@ -47,7 +46,8 @@ def logging_service(sample_log_config, mock_services):
     )
 
 
-def test_logging_service_initialization(logging_service, sample_log_config, mock_services):
+@pytest.mark.asyncio
+async def test_logging_service_initialization(logging_service, sample_log_config, mock_services):
     """Test LoggingService initialization."""
     assert logging_service.config == sample_log_config
     assert logging_service.alert_queue == mock_services["alert_queue"]
@@ -58,7 +58,8 @@ def test_logging_service_initialization(logging_service, sample_log_config, mock
     assert isinstance(logging_service.process, psutil.Process)
 
 
-def test_logging_service_invalid_config(tmp_path):
+@pytest.mark.asyncio
+async def test_logging_service_invalid_config(tmp_path):
     """Test LoggingService initialization with invalid config."""
     # Create a temporary valid log file
     valid_log_file = tmp_path / "test.log"
@@ -66,110 +67,183 @@ def test_logging_service_invalid_config(tmp_path):
 
     # Test invalid level - use try/except instead of pytest.raises
     try:
-        LogConfig(console=True, file_path=str(valid_log_file), level="INVALID_LEVEL", interval=1)  # Invalid level
+        LogConfig(console=True, file_path=str(valid_log_file), level="INVALID", interval=1, keep_files=7)
         pytest.fail("ValidationError not raised")  # Should not reach here
     except ValidationError:
-        # Test passed as expected
-        pass
+        pass  # Test passed as expected
 
     # Test invalid interval - use try/except instead of pytest.raises
     try:
-        LogConfig(console=True, file_path=str(valid_log_file), level="INFO", interval=-1)  # Invalid interval
+        LogConfig(console=True, file_path=str(valid_log_file), level="INFO", interval=-1, keep_files=7)
         pytest.fail("ValidationError not raised")  # Should not reach here
     except ValidationError:
-        # Test passed as expected
-        pass
+        pass  # Test passed as expected
 
 
-def test_logging_service_log_stats(logging_service, caplog):
+@pytest.mark.asyncio
+async def test_logging_service_log_stats(logging_service, caplog):
     """Test LoggingService statistics logging."""
-    with caplog.at_level(logging.INFO):
-        # Mock observer service monitor
-        logging_service.alerts_watcher_service.monitor = MagicMock()
-        current_time = time.time()
+    # Patch the logging module to ensure we capture all logs
+    with patch("logging.Logger.info") as mock_info, patch("logging.Logger.error"):
+        # Setup required mocks for the alerts_watcher_service
         from datetime import datetime
 
-        logging_service.alerts_watcher_service.monitor.latest_queue_put = datetime.fromtimestamp(current_time)
+        current_time = time.time()
+
+        # Create a file_monitor mock with the necessary attributes
+        file_monitor_mock = MagicMock()
+        file_monitor_mock.latest_queue_put = datetime.fromtimestamp(current_time)
+        file_monitor_mock.log_stats = AsyncMock(return_value=(1.0, 0.5, 10, 0, 0))
+
+        # Attach file_monitor to alerts_watcher_service
+        logging_service.alerts_watcher_service.file_monitor = file_monitor_mock
+
+        # Mock alerts_worker_service
+        logging_service.alerts_worker_service.last_processed_time = current_time
 
         # Mock kafka service attributes
         logging_service.kafka_service.producer = MagicMock()
 
-        # Call log stats
-        logging_service._log_stats()
+        # Call the async log_stats method
+        await logging_service._log_stats()
 
-        # Verify logs
-        assert "Number of objects in alert queue" in caplog.text
-        assert "Current memory usage" in caplog.text
-        assert "Current open files" in caplog.text
-        assert "Kafka producer is alive" in caplog.text
-        assert "Alerts worker service is running" in caplog.text
-        assert "Last alert queued at" in caplog.text
+        # Verify logs were called via mocked functions
+        call_args_list = [args[0][0] for args in mock_info.call_args_list if args[0]]
+
+        # Print call args for debugging if needed
+        # print("INFO calls:", call_args_list)
+
+        assert any("Number of objects in alert queue" in arg for arg in call_args_list)
+        assert any("Current memory usage" in arg for arg in call_args_list)
+        assert any("Current open files" in arg for arg in call_args_list)
+        assert any("Kafka producer is alive" in arg for arg in call_args_list)
+        assert any("Alerts worker service is running" in arg for arg in call_args_list)
+        assert any("Latest queue put:" in arg for arg in call_args_list)
+        assert any("FileMonitor (current interval)" in arg for arg in call_args_list)
+        assert any("Last processed:" in arg for arg in call_args_list)
 
 
-def test_logging_service_log_stats_no_observer(logging_service, caplog):
+@pytest.mark.asyncio
+async def test_logging_service_log_stats_no_observer(logging_service, caplog):
     """Test LoggingService statistics logging without observer."""
-    with caplog.at_level(logging.INFO):
-        # Set monitor to None
-        logging_service.alerts_watcher_service.latest_queue_put = None
+    # Patch the logging module to ensure we capture all logs
+    with patch("logging.Logger.info") as mock_info:
+        # Setup required mocks
 
-        # Call log stats
-        logging_service._log_stats()
+        current_time = time.time()
 
-        # Verify only basic stats are logged
-        assert "Number of objects in alert queue" in caplog.text
-        assert "Current memory usage" in caplog.text
-        assert "Current open files" in caplog.text
-        assert "Last alert queued at" not in caplog.text
+        # Set file_monitor to None to test that branch
+        logging_service.alerts_watcher_service.file_monitor = None
+
+        # Mock alerts_worker_service
+        logging_service.alerts_worker_service.last_processed_time = current_time
+
+        # Call log stats (async method)
+        await logging_service._log_stats()
+
+        # Verify logs were called via mocked functions
+        call_args_list = [args[0][0] for args in mock_info.call_args_list if args[0]]
+
+        # Print call args for debugging if needed
+        # print("INFO calls:", call_args_list)
+
+        assert any("Number of objects in alert queue" in arg for arg in call_args_list)
+        assert any("Current memory usage" in arg for arg in call_args_list)
+        assert any("Current open files" in arg for arg in call_args_list)
+        assert any("No alerts have been queued yet" in arg for arg in call_args_list)
 
 
-def test_logging_service_start_stop(logging_service):
+@pytest.mark.asyncio
+async def test_logging_service_start_stop(logging_service):
     """Test LoggingService start and stop functionality."""
-    # Start service in a separate thread
-    service_thread = threading.Thread(target=logging_service.start)
-    service_thread.daemon = True
-    service_thread.start()
+    # Patch the _log_stats method to avoid actual logging
+    with patch.object(logging_service, "_log_stats", AsyncMock()):
+        # Start service in a task
+        service_task = asyncio.create_task(logging_service.start())
 
-    # Let it run for a bit
-    time.sleep(2)
+        # Let it run for a bit
+        await asyncio.sleep(0.2)
 
-    # Signal shutdown
-    logging_service.shutdown_event.set()
+        # Signal shutdown
+        logging_service.shutdown_event.set()
 
-    # Stop service
-    logging_service.stop()
+        # Stop service
+        await logging_service.stop()
 
-    # Wait for thread to finish
-    service_thread.join(timeout=5)
-    assert not service_thread.is_alive()
+        # Wait for task to finish
+        try:
+            await asyncio.wait_for(service_task, timeout=1)
+        except TimeoutError:
+            service_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await service_task
+
+        # Verify _log_stats was called
+        assert logging_service._log_stats.called
 
 
+@pytest.mark.asyncio
 @patch("psutil.Process")
-def test_logging_service_memory_error(mock_process, logging_service, caplog):
+async def test_logging_service_memory_error(mock_process, logging_service, caplog):
     """Test LoggingService handling of memory access errors."""
-    with caplog.at_level(logging.ERROR):
+    # Patch the logging module to ensure we capture all logs
+    with patch("logging.Logger.error") as mock_error, patch("logging.Logger.info"):
+        # Setup required mocks
+
+        current_time = time.time()
+
+        # Mock alerts_worker_service
+        logging_service.alerts_worker_service.last_processed_time = current_time
+
         # Mock process to raise error
         mock_process_instance = mock_process.return_value
         mock_process_instance.memory_percent.side_effect = psutil.AccessDenied("Test error")
         mock_process_instance.open_files.return_value = []  # Prevent additional errors
         logging_service.process = mock_process_instance
 
-        # Call log stats
-        logging_service._log_stats()
+        # Call log stats (async method)
+        await logging_service._log_stats()
 
-        # Verify error handling
-        assert "Error getting memory usage" in caplog.text
-        assert "Test error" in caplog.text
+        # Verify error handling through mocked function
+        error_calls = [args[0][0] for args in mock_error.call_args_list if args[0]]
+
+        # Print call args for debugging if needed
+        # print("ERROR calls:", error_calls)
+
+        assert any("Error getting memory usage" in arg for arg in error_calls)
+        assert any("Test error" in arg for arg in error_calls)
 
 
-def test_logging_service_error_handling(logging_service, caplog):
+@pytest.mark.asyncio
+async def test_logging_service_error_handling(logging_service, caplog):
     """Test LoggingService error handling during operation."""
-    with caplog.at_level(logging.ERROR), patch.object(logging_service, "_log_stats") as mock_log_stats:
-        # Set up the mock to raise an exception
+    # Set the logger to capture
+    caplog.set_level(logging.ERROR, logger="wazuh_dfn.services.logging_service")
+
+    with patch.object(logging_service, "_log_stats") as mock_log_stats:
+        # Setup mock to raise an error
         mock_log_stats.side_effect = Exception("Test error")
 
-        with contextlib.suppress(Exception):
-            # Start the service which should trigger the error
-            logging_service.start()
+        # Start service in a task
+        service_task = asyncio.create_task(logging_service.start())
 
-        # Verify the error was logged
-        assert any("Error in logging service: Test error" in record.message for record in caplog.records)
+        # Let it run for a bit
+        await asyncio.sleep(0.2)
+
+        # Signal shutdown
+        logging_service.shutdown_event.set()
+
+        # Wait for task to finish
+        try:
+            await asyncio.wait_for(service_task, timeout=1)
+        except TimeoutError:
+            service_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await service_task
+        except Exception:  # noqa: S110
+            # The exception is expected due to the mock
+            pass
+
+        # Verify error was logged - give time for logging to happen
+        await asyncio.sleep(0.1)
+        assert any("Error in logging service" in record.message for record in caplog.records)

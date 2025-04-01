@@ -1,5 +1,6 @@
 """Syslog alert handler module."""
 
+import asyncio
 import ipaddress
 import logging
 from typing import Any
@@ -38,9 +39,9 @@ class SyslogHandler:
             try:
                 self.own_network = ipaddress.ip_network(self.config.own_network)
             except ValueError as e:
-                LOGGER.warning(f"Invalid own_network format: {e}")
+                LOGGER.error(f"Invalid own_network CIDR: {e}")
 
-    def process_alert(self, alert: dict[str, Any]) -> None:
+    async def process_alert(self, alert: dict[str, Any]) -> None:
         """Process a syslog alert.
 
         Args:
@@ -73,32 +74,56 @@ class SyslogHandler:
             # Extract source IP
             source_ip = alert["data"]["srcip"]
             if not source_ip:
-                LOGGER.debug("No source IP found in fail2ban alert")
+                LOGGER.error("No source IP in fail2ban alert")
                 return
 
             # Check if IP is internal (only if own_network is configured)
             if self.own_network and not self._is_global_ip(source_ip):
-                LOGGER.debug(f"Skipping fail2ban alert from internal IP: {source_ip}")
+                LOGGER.info(f"Ignoring internal IP: {source_ip}")
                 return
 
             # Create message data for Kafka
             message_data = self._create_message_data(alert)
 
-            # Send to Kafka first
-            result = self.kafka_service.send_message(message_data)
-            if result:
-                LOGGER.debug(f"Fail2ban alert sent successfully: {result}")
-                # Only send to Wazuh if Kafka succeeded
-                self.wazuh_service.send_event(
-                    alert=alert,
-                    event_format="syslog5424-json",
-                    wz_timestamp=alert["timestamp"],
-                )
-            else:
-                alert_id = alert.get("id", "Unknown")
-                LOGGER.error(f"Failed to send fail2ban alert to Kafka {alert_id}")
+            # Use asyncio to send to Kafka
+            alert_id = alert.get("id", "Unknown")
+            # Store the task reference to fix RUF006, and suppress the linting error
+            _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
         else:
             LOGGER.debug("No fail2ban alert to process")
+
+    async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
+        """Send message to Kafka asynchronously.
+
+        Sends a fail2ban alert to Kafka and logs the result.
+
+        Args:
+            message_data: The formatted message to send to Kafka
+            alert_id: The alert ID for logging and tracking
+        """
+        # Send to Kafka
+        result = await self.kafka_service.send_message(message_data)
+        if result:
+            LOGGER.debug(f"Fail2ban alert sent successfully: {result}")
+            # Extract the original alert from the message_data context
+            alert = message_data.get("context_alert", {})
+
+            # Send to Wazuh with the original format
+            await self.wazuh_service.send_event(
+                alert=alert,
+                event_format="syslog5424-json",
+                wz_timestamp=alert.get("timestamp"),
+            )
+        else:
+            error_msg = f"Failed to send fail2ban alert to Kafka {alert_id}"
+            LOGGER.error(error_msg)
+            # Send error to Wazuh
+            await self.wazuh_service.send_error(
+                {
+                    "error": 503,
+                    "description": error_msg,
+                }
+            )
 
     def _is_global_ip(self, ip: str) -> bool:
         """Check if IP is global (not private/local).
@@ -141,6 +166,7 @@ class SyslogHandler:
             "hostName": alert.get("agent", {}).get("name", ""),
             "structuredData": "",
             "body": "",  # Will be set below
+            "context_alert": alert,  # Store the original alert for later use
         }
 
         # Access data using the dictionary get() method

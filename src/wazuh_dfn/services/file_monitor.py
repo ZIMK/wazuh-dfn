@@ -1,10 +1,12 @@
+import aiofiles
+import asyncio
 import json
 import logging
 import secrets
 import time
 from datetime import datetime
 from pathlib import Path
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,11 +25,11 @@ class FileMonitor:
     def __init__(
         self,
         file_path: str,
-        alert_queue: MaxSizeQueue,
+        alert_queue: AsyncMaxSizeQueue,
         alert_prefix: str,
         tail: bool = False,
-        failed_alerts_path: str | None = None,  # Add path for storing failed alerts
-        max_failed_files: int = 100,  # Maximum number of failed alert files to keep
+        failed_alerts_path: str | None = None,
+        max_failed_files: int = 100,
         store_failed_alerts: bool = False,
     ) -> None:
         """Initialize FileMonitor.
@@ -64,8 +66,8 @@ class FileMonitor:
 
         LOGGER.info(f"Initialized FileMonitor for {file_path}")
 
-    def open(self) -> bool:
-        """Open the file and initialize position.
+    async def open(self) -> bool:
+        """Open the file and initialize position asynchronously.
 
         Opens the monitored file, sets up the file pointer position, and records
         the initial inode to detect file rotation.
@@ -73,53 +75,72 @@ class FileMonitor:
         Returns:
             bool: True if the file was successfully opened, False otherwise
         """
+        # Always properly close any existing file handle first
         if self.fp:
             try:
-                self.fp.close()
+                await self.close()  # Use our enhanced close method
             except Exception as e:
-                LOGGER.error(f"Error closing file: {e!s}")
+                LOGGER.error(f"Error closing existing file handle: {e!s}")
 
         try:
             file_path_obj = Path(self.file_path)
-            self.fp = file_path_obj.open("rb")
-            if not self.tail:
-                self.fp.seek(0, 2)  # SEEK_END
-                self.last_complete_position = self.fp.tell()
-
             stat = file_path_obj.stat()
             self.current_inode = stat.st_ino
+
+            # Open file asynchronously
+            self.fp = await aiofiles.open(self.file_path, mode="rb")
+
+            if not self.tail:
+                await self.fp.seek(0, 2)  # SEEK_END
+                self.last_complete_position = await self.fp.tell()
+
             return True
         except Exception as e:
             LOGGER.error(f"Error opening file: {e!s}")
             self.fp = None
             return False
 
-    def close(self) -> None:
-        """Close the file and clear buffer.
+    async def close(self) -> None:
+        """Close the file and clear buffer asynchronously.
 
         Safely closes the file handle if open and clears the internal buffer.
         Logs any errors that occur during closing.
         """
         if self.fp:
             try:
-                self.fp.close()
+                # First try standard close
+                LOGGER.info(f"Closing file {self.file_path}")
+                await self.fp.close()
             except Exception as e:
                 LOGGER.error(f"Error closing file: {e!s}")
-        self.fp = None
+
+            # Additional Windows-specific cleanup
+            if hasattr(self.fp, "_file"):
+                try:
+                    # Access the underlying file descriptor and close it if possible
+                    if hasattr(self.fp._file, "close"):  # type: ignore[]
+                        self.fp._file.close()  # type: ignore[]
+                except Exception as e:
+                    LOGGER.error(f"Error closing underlying file handle: {e!s}")
+
+            # Force cleanup
+            import gc
+
+            gc.collect()
+
+            # Reset to prevent further usage of closed handle
+            self.fp = None
+
+        # Always clear buffer
         self.buffer = bytearray()
 
-    def _check_inode(self) -> bool:
-        """Check if the file's inode has changed (indicating rotation).
+    async def _check_inode(self) -> bool:
+        """Check if the file's inode has changed (indicating rotation) asynchronously.
 
-        Args:
-            None
+        Detects file rotation by comparing current inode with the stored inode.
 
         Returns:
-            bool: True if the inode has changed, False otherwise
-
-        Note:
-            This method also updates the internal inode tracking and clears
-            the buffer if a rotation is detected.
+            bool: True if rotation was detected, False otherwise
         """
         try:
             file_path_obj = Path(self.file_path)
@@ -198,8 +219,8 @@ class FileMonitor:
         del self.buffer[:line_end]
         return alert_bytes
 
-    def _save_failed_alert(self, alert_bytes: bytes, alert_str: str | None = None) -> None:
-        """Save failed alert to file.
+    async def _save_failed_alert(self, alert_bytes: bytes, alert_str: str | None = None) -> None:
+        """Save failed alert to file asynchronously.
 
         Stores alerts that failed processing in a dedicated directory for later analysis.
         Can also save a version with character replacement for comparison.
@@ -212,26 +233,28 @@ class FileMonitor:
             return
 
         try:
-            self._cleanup_failed_alerts()
+            await self._cleanup_failed_alerts()
             # Add random component to timestamp to ensure uniqueness
             random_suffix = str(secrets.randbelow(999999) + 100000)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             failed_path = Path(self.failed_alerts_path)
             failed_file = failed_path / f"{timestamp}_{random_suffix}_failed_alert.json"
 
-            failed_file.write_bytes(alert_bytes)
+            async with aiofiles.open(failed_file, "wb") as f:
+                await f.write(alert_bytes)
 
             if alert_str:
                 replaced_file = failed_path / f"{timestamp}_{random_suffix}_replaced_alert.json"
-                replaced_file.write_bytes(alert_str.encode("utf-8"))
+                async with aiofiles.open(replaced_file, "wb") as f:
+                    await f.write(alert_str.encode("utf-8"))
                 LOGGER.info(f"Saved failed alert and replaced version to {failed_file} and {replaced_file}")
             else:
                 LOGGER.info(f"Saved failed alert to {failed_file}")
         except Exception as save_error:
             LOGGER.error(f"Error saving failed alert: {save_error!s}")
 
-    def _process_alert_with_replace(self, alert_bytes: bytes) -> bool:
-        """Try processing alert with character replacement.
+    async def _process_alert_with_replace(self, alert_bytes: bytes) -> bool:
+        """Try processing alert with character replacement asynchronously.
 
         Attempts to decode and parse an alert after replacing invalid UTF-8 sequences.
         Used as a fallback when strict decoding fails.
@@ -240,24 +263,23 @@ class FileMonitor:
             alert_bytes: The raw bytes of the alert to process
 
         Returns:
-            bool: True if the alert was successfully processed with replacement,
-                 False if it still failed
+            bool: True if processing succeeded with replacement, False otherwise
         """
         try:
             alert_str = alert_bytes.decode("utf-8", errors="replace").rstrip()
             alert_data = json.loads(alert_str)
-            self.alert_queue.put(alert_data)
+            await self.alert_queue.put(alert_data)
             self.latest_queue_put = datetime.now()
             self.processed_alerts += 1
             self.replaced_alerts += 1  # Increment replaced alerts counter
             LOGGER.warning("Alert processed with character replacement")
-            self._save_failed_alert(alert_bytes, alert_str)
+            await self._save_failed_alert(alert_bytes, alert_str)
             return True
         except (UnicodeDecodeError, json.JSONDecodeError):
             return False
 
-    def _queue_alert(self, alert_bytes: bytes) -> None:
-        """Process and queue an alert.
+    async def _queue_alert(self, alert_bytes: bytes) -> None:
+        """Process and queue an alert asynchronously.
 
         Attempts to decode and parse alert bytes, first with strict UTF-8 decoding,
         then falling back to character replacement if needed. Successfully parsed
@@ -265,22 +287,19 @@ class FileMonitor:
 
         Args:
             alert_bytes: The raw bytes of the alert to process
-
-        Note:
-            Failed alerts are counted and optionally saved to disk
         """
         try:
             # First try strict decoding
             alert_str = alert_bytes.decode("utf-8", errors="strict").rstrip()
             alert_data = json.loads(alert_str)
-            self.alert_queue.put(alert_data)
+            await self.alert_queue.put(alert_data)
             self.latest_queue_put = datetime.now()
             self.processed_alerts += 1
             LOGGER.debug("Queued alert successfully")
             return
         except UnicodeDecodeError:
             # Try with replace if strict decode fails
-            if self._process_alert_with_replace(alert_bytes):
+            if await self._process_alert_with_replace(alert_bytes):
                 return
         except json.JSONDecodeError:
             pass  # Fall through to error handling
@@ -288,19 +307,13 @@ class FileMonitor:
         # Handle all failures
         self.errors += 1
         LOGGER.error(f"Error processing alert, raw content: {alert_bytes.hex()}")
-        self._save_failed_alert(alert_bytes)
+        await self._save_failed_alert(alert_bytes)
 
-    def _cleanup_failed_alerts(self) -> None:
-        """Remove oldest failed alert files if exceeding max_failed_files.
+    async def _cleanup_failed_alerts(self) -> None:
+        """Remove oldest failed alert files if exceeding max_failed_files asynchronously.
 
         Manages the stored failed alerts directory by removing older files
         when the maximum number of files is exceeded.
-
-        Args:
-            None
-
-        Note:
-            This method sorts files by creation time and removes the oldest ones first.
         """
         if not self.failed_alerts_path:
             return
@@ -329,22 +342,22 @@ class FileMonitor:
         except Exception as e:
             LOGGER.error(f"Error during failed alerts cleanup: {e!s}")
 
-    def _process_buffer(self) -> None:
-        """Process buffer content to find and queue complete alerts.
+    async def _process_buffer(self) -> None:
+        """Process buffer content to find and queue complete alerts asynchronously.
 
         Repeatedly extracts and processes alerts from the buffer until no more
         complete alerts can be found.
         """
         while alert_bytes := self._extract_alert():
-            self._queue_alert(alert_bytes)
+            await self._queue_alert(alert_bytes)
 
-    def _wait_for_data(self, wait_start: float | None) -> float | None:
-        """Wait for more data if buffer contains incomplete alert.
+    async def _wait_for_data(self, wait_start: float | None) -> float | None:
+        """Wait for more data if buffer contains incomplete alert asynchronously.
 
         Implements a timed waiting mechanism for incomplete alerts in the buffer.
 
         Args:
-            wait_start: Starting timestamp of the wait period or None if not waiting
+            wait_start: Optional timestamp when waiting started
 
         Returns:
             float | None: Updated wait timestamp or None if wait completed/not needed
@@ -355,12 +368,12 @@ class FileMonitor:
             elif time.time() - wait_start > MAX_WAIT_TIME:
                 LOGGER.debug("Max wait time reached, will process buffer in next round")
                 return None
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             return wait_start
         return None
 
-    def _handle_file_status(self) -> bool:
-        """Check file existence and handle rotation.
+    async def _handle_file_status(self) -> bool:
+        """Check file existence and handle rotation asynchronously.
 
         Verifies that the monitored file exists and checks for file rotation.
         Reopens the file if needed.
@@ -368,38 +381,40 @@ class FileMonitor:
         Returns:
             bool: True if the file is available and ready, False otherwise
         """
-        if not self.fp and not self.open():
+        if not self.fp and not await self.open():
             return False
 
         file_path_obj = Path(self.file_path)
         if not file_path_obj.exists():
             LOGGER.warning(f"File {self.file_path} no longer exists")
+            # Make sure file handle is closed if file doesn't exist
+            await self.close()
             return False
 
-        if self._check_inode():
+        if await self._check_inode():
             LOGGER.info("File rotation detected, clearing buffer")
+            # Explicitly close before reopening to prevent handle leaks on Windows
+            await self.close()
             self.buffer.clear()
-            return self.open()
+            return await self.open()
 
         return True
 
-    def _process_chunk(self, chunk: bytes) -> tuple[bool, int]:
-        """Process a chunk of data from the file.
+    async def _process_chunk(self, chunk: bytes) -> tuple[bool, int]:
+        """Process a chunk of data from the file asynchronously.
 
         Adds the chunk to the buffer and attempts to extract and process alerts from it.
 
         Args:
-            chunk: Bytes read from the monitored file
+            chunk: Raw bytes read from the file
 
         Returns:
-            tuple[bool, int]: A tuple containing:
-                - bool: Whether any alerts were found and processed
-                - int: The position in the buffer after processing
+            tuple[bool, int]: Tuple containing (alerts_found, buffer_position)
         """
         if not chunk:
             return False, 0
 
-        LOGGER.debug(f"{len(chunk)=} bytes at position {self.fp.tell()}")
+        LOGGER.debug(f"{len(chunk)=} bytes at position {await self.fp.tell()}")
         self.buffer.extend(chunk)
 
         buffer_position = 0
@@ -412,7 +427,7 @@ class FileMonitor:
                 break
 
             try:
-                self._queue_alert(alert_bytes)
+                await self._queue_alert(alert_bytes)
                 alerts_found = True
                 buffer_position += buffer_size_before - len(self.buffer)
             except Exception as e:
@@ -423,8 +438,8 @@ class FileMonitor:
 
         return alerts_found, buffer_position
 
-    def check_file(self) -> None:
-        """Check file for new alerts.
+    async def check_file(self) -> None:
+        """Check file for new alerts asynchronously.
 
         Main monitoring method that reads new data from the file, processes it into alerts,
         and handles file rotations. Manages internal buffer state and alert extraction.
@@ -435,30 +450,28 @@ class FileMonitor:
         - Processes chunks to extract complete alerts
         - Handles incomplete alerts at buffer boundaries
         - Updates file position tracking for reliable processing
-
-        It should be called periodically to process new alerts in the monitored file.
         """
         try:
             LOGGER.debug(f"{len(self.buffer)=}, checking file")
 
-            if not self._handle_file_status():
+            if not await self._handle_file_status():
                 return
 
-            start_position = self.fp.tell()
+            start_position = await self.fp.tell()
             alerts_found = False
             wait_start = None
             buffer_position = 0
 
             while True:
-                chunk = self.fp.read(CHUNK_SIZE)
+                chunk = await self.fp.read(CHUNK_SIZE)
                 if not chunk:
-                    wait_start = self._wait_for_data(wait_start)
+                    wait_start = await self._wait_for_data(wait_start)
                     if wait_start is None:
                         break
                     continue
 
                 wait_start = None
-                chunk_alerts_found, chunk_position = self._process_chunk(chunk)  # Remove start_position argument
+                chunk_alerts_found, chunk_position = await self._process_chunk(chunk)
                 alerts_found = alerts_found or chunk_alerts_found
                 buffer_position += chunk_position
                 self.last_complete_position = start_position + buffer_position
@@ -468,25 +481,20 @@ class FileMonitor:
                     f"No complete alerts found, reverting to position {self.last_complete_position=},"
                     f" {len(self.buffer)=}"
                 )
-                self.fp.seek(self.last_complete_position)
+                await self.fp.seek(self.last_complete_position)
                 self.buffer.clear()
 
         except Exception as e:
             LOGGER.error(f"Error checking file {self.file_path}: {e!s}")
 
-    def log_stats(self) -> tuple[float, float, int, int, int]:
-        """Calculate and return statistics for the current monitoring interval.
+    async def log_stats(self) -> tuple[float, float, int, int, int]:
+        """Calculate and return statistics for the current monitoring interval asynchronously.
 
         Computes performance metrics for alert processing including alerts per second,
         error rates, and alert counts. Resets counters after calculation for the next interval.
 
         Returns:
-            tuple[float, float, int, int, int]: A tuple containing:
-                - float: Alerts processed per second
-                - float: Error rate percentage
-                - int: Total alerts processed in this interval
-                - int: Total errors in this interval
-                - int: Total alerts processed with character replacement in this interval
+            tuple: (alerts_per_second, error_rate, total_alerts, error_count, replaced_count)
         """
         current_time = datetime.now()
         time_diff = (current_time - self.last_stats_time).total_seconds()

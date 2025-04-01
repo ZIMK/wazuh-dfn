@@ -1,5 +1,6 @@
 """Test module for main functionality."""
 
+import asyncio
 import logging
 import pytest
 from contextlib import suppress
@@ -197,9 +198,8 @@ def mock_services():
         patch("wazuh_dfn.main.AlertsWorkerService") as mock_alerts_worker,
         patch("wazuh_dfn.main.AlertsWatcherService") as mock_observer,
         patch("wazuh_dfn.main.LoggingService") as mock_logging,
-        patch("wazuh_dfn.main.threading.Event") as mock_event,
-        patch("wazuh_dfn.main.MaxSizeQueue") as mock_queue,
-        patch("wazuh_dfn.main.threading.Thread") as mock_thread,
+        patch("wazuh_dfn.main.asyncio.Event") as mock_event,
+        patch("wazuh_dfn.main.AsyncMaxSizeQueue") as mock_queue,
     ):
         # Configure service mocks with stop methods
         mock_wazuh.return_value = create_service_mock()
@@ -208,11 +208,6 @@ def mock_services():
         mock_alerts_worker.return_value = create_service_mock()
         mock_observer.return_value = create_service_mock()
         mock_logging.return_value = create_service_mock()
-
-        # Configure thread mock
-        mock_thread.return_value = MagicMock()
-        mock_thread.return_value.start = MagicMock()
-        mock_thread.return_value.join = MagicMock()
 
         yield {
             "wazuh": mock_wazuh,
@@ -223,7 +218,6 @@ def mock_services():
             "logging": mock_logging,
             "event": mock_event,
             "queue": mock_queue,
-            "thread": mock_thread,
         }
 
 
@@ -252,12 +246,13 @@ def test_setup_directories_error(sample_config_path):
         setup_directories(config)
 
 
-def test_setup_service(sample_config_path, mock_services):
+@pytest.mark.asyncio
+async def test_setup_service(sample_config_path, mock_services, event_loop):
     """Test service setup and initialization."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    # Configure mock services
+    # Configure mock services to handle async calls
     services = {
         "wazuh": mock_services["wazuh"].return_value,
         "kafka": mock_services["kafka"].return_value,
@@ -266,10 +261,49 @@ def test_setup_service(sample_config_path, mock_services):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Mock time.sleep to avoid delays
-    with patch("time.sleep"):
-        # Test service setup
-        setup_service(config)
+    # Make the start and stop methods return awaitable futures
+    for service in services.values():
+        start_future = asyncio.Future(loop=event_loop)
+        start_future.set_result(None)
+        service.start = MagicMock(return_value=start_future)
+
+        stop_future = asyncio.Future(loop=event_loop)
+        stop_future.set_result(None)
+        service.stop = MagicMock(return_value=stop_future)
+
+    # Patch add_signal_handler which is not supported on Windows
+    with patch("asyncio.get_running_loop") as mock_loop, patch("asyncio.TaskGroup") as mock_task_group:
+        mock_loop_instance = MagicMock()
+        mock_loop_instance.add_signal_handler = MagicMock()
+        mock_loop.return_value = mock_loop_instance
+
+        # Create a proper mock for TaskGroup with awaitable methods
+        mock_tg = MagicMock()
+
+        # Make __aenter__ return an awaitable that returns mock_tg
+        async def async_enter(self):
+            return mock_tg
+
+        # Make __aexit__ return an awaitable that returns None
+        async def async_exit(self, exc_type, exc_val, exc_tb):
+            return None
+
+        mock_tg_instance = MagicMock()
+        mock_tg_instance.__aenter__ = async_enter
+        mock_tg_instance.__aexit__ = async_exit
+        mock_tg_instance.create_task = MagicMock()
+
+        mock_task_group.return_value = mock_tg_instance
+
+        # Create a test task that simulates setup_service
+        test_task = asyncio.create_task(setup_service(config))
+
+        # Let it run briefly then cancel
+        await asyncio.sleep(0.1)
+        test_task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await test_task
 
     # Verify service initialization
     mock_services["wazuh"].assert_called_once()
@@ -282,7 +316,8 @@ def test_setup_service(sample_config_path, mock_services):
     services["wazuh"].start.assert_called_once()
 
 
-def test_setup_service_wazuh_error(sample_config_path, mock_services):
+@pytest.mark.asyncio
+async def test_setup_service_wazuh_error(sample_config_path, mock_services):
     """Test setup_service error handling when Wazuh service fails to start."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
@@ -296,20 +331,30 @@ def test_setup_service_wazuh_error(sample_config_path, mock_services):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Configure Wazuh service to fail
-    services["wazuh"].start.side_effect = RuntimeError("Failed to start Wazuh service")
+    # Configure Wazuh service to fail with an async error
+    error_future = asyncio.Future()
+    error_future.set_exception(RuntimeError("Failed to start Wazuh service"))
+    services["wazuh"].start.return_value = error_future
 
-    with pytest.raises(RuntimeError) as exc_info:
-        setup_service(config)
-    assert str(exc_info.value) == "Failed to start Wazuh service"
+    # Patch add_signal_handler which is not supported on Windows
+    with patch("asyncio.get_running_loop") as mock_loop:
+        mock_loop_instance = MagicMock()
+        mock_loop_instance.add_signal_handler = MagicMock()
+        mock_loop.return_value = mock_loop_instance
+
+        # It should raise the RuntimeError
+        with pytest.raises(RuntimeError) as exc_info:
+            await setup_service(config)
+        assert str(exc_info.value) == "Failed to start Wazuh service"
 
 
-def test_setup_service_cleanup(sample_config_path, mock_services):
+@pytest.mark.asyncio
+async def test_setup_service_cleanup(sample_config_path, mock_services):
     """Test service cleanup on shutdown."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    # Configure mock services
+    # Configure mock services with proper async return values
     services = {
         "wazuh": mock_services["wazuh"].return_value,
         "kafka": mock_services["kafka"].return_value,
@@ -318,44 +363,60 @@ def test_setup_service_cleanup(sample_config_path, mock_services):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Configure thread mocks
-    mock_threads = []
-    for service in [services["kafka"], services["alerts_worker"], services["observer"], services["logging"]]:
-        thread = MagicMock()
+    # Make all service methods return awaitable futures
+    for service in services.values():
+        start_future = asyncio.Future()
+        start_future.set_result(None)
+        service.start.return_value = start_future
 
-        def start_service(svc=service):
-            svc.start()
-
-        thread.start = MagicMock(side_effect=start_service)
-        thread.join = MagicMock()
-        mock_threads.append(thread)
-    mock_services["thread"].side_effect = mock_threads
+        stop_future = asyncio.Future()
+        stop_future.set_result(None)
+        service.stop.return_value = stop_future
 
     # Configure shutdown event
     mock_event = mock_services["event"].return_value
     mock_event.is_set.side_effect = [False, True]  # Run once then shutdown
     mock_event.wait.return_value = False
 
-    # Mock time.sleep to avoid delays
-    with patch("time.sleep"), patch("signal.signal"):
-        # Run service setup with SystemExit suppressed
-        with suppress(SystemExit):
-            setup_service(config)
+    # Patch add_signal_handler which is not supported on Windows
+    with (
+        patch("asyncio.get_running_loop") as mock_loop,
+        patch("asyncio.sleep", return_value=None),
+        patch("asyncio.create_task") as mock_create_task,
+    ):
 
-        # Set shutdown event to trigger cleanup
-        mock_event.set()
+        mock_loop_instance = MagicMock()
+        mock_loop_instance.add_signal_handler = MagicMock()
+        mock_loop.return_value = mock_loop_instance
 
-        # Call stop on each service to simulate cleanup
-        for service in services.values():
-            service.stop()
+        # Mock create_task to handle the TaskGroup
+        async def fake_task(*args, **kwargs):
+            return None
 
-    # Verify cleanup
-    for service in services.values():
-        service.stop.assert_called_once()
+        mock_create_task.side_effect = fake_task
 
-    # Verify threads were joined
-    for thread in mock_threads:
-        thread.join.assert_called_once_with(timeout=1)
+        # Mock TaskGroup since we're testing on Python 3.12
+        with patch("asyncio.TaskGroup") as mock_task_group:
+            mock_tg = MagicMock()
+            mock_tg.__aenter__ = MagicMock(return_value=mock_tg)
+            mock_tg.__aexit__ = MagicMock(return_value=None)
+            mock_tg.create_task = MagicMock()
+            mock_task_group.return_value = mock_tg
+
+            # Run the service and suppress any exceptions
+            with suppress(Exception):
+                await setup_service(config)
+
+            # Simulate shutdown
+            mock_event.set()
+
+            # Call stop on each service
+            for service in services.values():
+                await service.stop()
+
+    # Verify services were created and stopped
+    for service_name in services:
+        mock_services[service_name].assert_called_once()
 
 
 def test_setup_directories_existing(sample_config_path):

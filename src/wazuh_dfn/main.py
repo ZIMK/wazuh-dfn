@@ -1,14 +1,13 @@
 """Main entry point for Wazuh DFN service."""
 
 import argparse
+import asyncio
 import json
 import logging
 import logging.config
 import logging.handlers
 import signal
 import sys
-import threading
-import time
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
 from .services import (
@@ -19,16 +18,16 @@ from .services import (
     LoggingService,
     WazuhService,
 )
-from .services.max_size_queue import MaxSizeQueue
+from .services.max_size_queue import AsyncMaxSizeQueue
 from dotenv import load_dotenv
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin
+from typing import Union, get_args, get_origin
 
 # Logging
 LOGGER = logging.getLogger(__name__)
 
-LOG_FORMAT = "%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # Load environment variables from .env file if present
 load_dotenv()
@@ -300,34 +299,46 @@ def setup_directories(config: Config) -> None:
             LOGGER.warning(f"Failed to create optional directory {directory}: {e}")
 
 
-def setup_service(config: Config) -> None:
-    """Set up and run the Wazuh DFN service.
+async def shutdown(shutdown_event: asyncio.Event) -> None:
+    """Handle shutdown gracefully.
 
-    Initializes and runs the core service components using the new service classes
-    that follow the principle of least privilege.
+    Logs shutdown request and signals to all services that shutdown is requested.
 
     Args:
-        config: Service configuration.
+        shutdown_event: Event to signal shutdown to all service components
+    """
+    LOGGER.info("Shutdown requested")
+    shutdown_event.set()
+
+
+async def setup_service(config: Config) -> None:
+    """Set up and run the Wazuh DFN service using asyncio.
+
+    Initializes and orchestrates all service components using asyncio tasks.
+    This is the main entry point for the asynchronous service architecture.
+    Tasks are managed using Python 3.11+ task groups for clean task management.
+
+    Args:
+        config: Service configuration with all settings
 
     Raises:
-        ConfigValidationError: If configuration validation fails.
+        ConfigValidationError: If configuration validation fails
     """
-    shutdown_event = threading.Event()
-    alert_queue = MaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
-    service_threads = []  # Initialize service_threads list at the start
+    shutdown_event = asyncio.Event()
+    alert_queue = AsyncMaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
 
     LOGGER.info("Starting services...")
     try:
         # Initialize core services
         LOGGER.debug("Initializing WazuhService...")
         wazuh_service = WazuhService(config=config.wazuh)
-        wazuh_service.start()
+        await wazuh_service.start()
 
         LOGGER.debug("Initializing KafkaService...")
         kafka_service = KafkaService(
             config=config.kafka,
-            dfn_config=config.dfn,  # Pass DFN config
-            wazuh_handler=wazuh_service,
+            dfn_config=config.dfn,
+            wazuh_service=wazuh_service,
             shutdown_event=shutdown_event,
         )
 
@@ -338,6 +349,7 @@ def setup_service(config: Config) -> None:
             kafka_service=kafka_service,
             wazuh_service=wazuh_service,
         )
+
         LOGGER.debug("Initializing AlertsWorkerService...")
         alerts_worker_service = AlertsWorkerService(
             config=config.misc,
@@ -345,6 +357,7 @@ def setup_service(config: Config) -> None:
             alerts_service=alerts_service,
             shutdown_event=shutdown_event,
         )
+
         LOGGER.debug("Initializing AlertsWatcherService...")
         alerts_watcher_service = AlertsWatcherService(
             config=config.wazuh,
@@ -363,76 +376,33 @@ def setup_service(config: Config) -> None:
             shutdown_event=shutdown_event,
         )
 
-        # Start Kafka service
-        LOGGER.debug("Starting KafkaService...")
-        kafka_thread = threading.Thread(
-            target=kafka_service.start,
-            daemon=True,
-            name="KafkaService",
-        )
-        service_threads.append(kafka_thread)
-        kafka_thread.start()
+        # Set up signal handlers for clean shutdown
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(shutdown_event)))
 
-        # Start alerts worker service
-        LOGGER.debug("Starting AlertsWorkerService...")
-        alerts_worker_thread = threading.Thread(
-            target=alerts_worker_service.start,
-            daemon=True,
-            name="AlertsWorkerService",
-        )
-        service_threads.append(alerts_worker_thread)
-        alerts_worker_thread.start()
+        # Use Python 3.11+ task groups for cleaner task management
+        async with asyncio.TaskGroup() as tg:
+            # Start all services as concurrent tasks
+            tg.create_task(kafka_service.start(), name="KafkaService")
+            tg.create_task(alerts_worker_service.start(), name="AlertsWorkerService")
+            tg.create_task(alerts_watcher_service.start(), name="AlertsWatcherService")
 
-        # Start observer service
-        LOGGER.debug("Starting AlertsWatcherService...")
-        observer_thread = threading.Thread(
-            target=alerts_watcher_service.start,
-            daemon=True,
-            name="AlertsWatcherService",
-        )
-        service_threads.append(observer_thread)
-        observer_thread.start()
+            # Give the other services a moment to initialize
+            await asyncio.sleep(10)
 
-        # Start logging service
-        time.sleep(10)
-        LOGGER.debug("Starting LoggingService...")
-        logging_thread = threading.Thread(
-            target=logging_service.start,
-            daemon=True,
-            name="LoggingService",
-        )
-        service_threads.append(logging_thread)
-        logging_thread.start()
+            tg.create_task(logging_service.start(), name="LoggingService")
 
-        def signal_handler(signum: int, frame: Any) -> None:
-            """Handle shutdown signals.
+            # Wait until shutdown is signaled
+            await shutdown_event.wait()
 
-            Args:
-                signum: Signal number
-                frame: Current stack frame
-            """
-            LOGGER.info(f"Received signal {signum}")
-            shutdown_event.set()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        # Keep main thread alive
-        LOGGER.debug("All services initialized. Waiting for shutdown event...")
-        while not shutdown_event.is_set():
-            shutdown_event.wait(1)
-
+    except asyncio.CancelledError:
+        LOGGER.info("Tasks cancelled")
     except Exception as e:
-        LOGGER.error(f"Error in service setup: {e}")
+        LOGGER.error(f"Error in service setup: {e}", exc_info=True)
         shutdown_event.set()
         raise
-
     finally:
-        # Wait for threads to finish
-        LOGGER.debug("Waiting for threads to finish...")
-        for thread in service_threads:
-            thread.join(timeout=1)
         LOGGER.info("Service shutdown complete")
 
 
@@ -478,7 +448,9 @@ def main() -> None:
                 setup_logging(config)
 
                 LOGGER.info(f"Starting Wazuh DFN version {version('wazuh-dfn')}")
-                setup_service(config)
+
+                # Run the async setup_service using asyncio.run
+                asyncio.run(setup_service(config))
     except ConfigValidationError as e:
         LOGGER.error(f"Configuration validation failed: {e}")
         sys.exit(1)

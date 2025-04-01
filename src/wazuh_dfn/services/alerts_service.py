@@ -43,7 +43,7 @@ class AlertsService:
         self.syslog_handler = SyslogHandler(config, kafka_service, wazuh_service)
         self.windows_handler = WindowsHandler(kafka_service, wazuh_service)
 
-    def process_alert(self, alert: dict[str, Any]) -> None:
+    async def process_alert(self, alert: dict[str, Any]) -> None:
         """Process an alert.
 
         Delegates alert processing to specialized handlers based on the alert type.
@@ -53,11 +53,14 @@ class AlertsService:
             alert: Alert data to process as a dictionary
         """
         try:
-            self.windows_handler.process_alert(alert)
+            await self.windows_handler.process_alert(alert)
         except Exception as err:
             LOGGER.error(f"Got error in WindowAlertsHandler.send: {err!s}", exc_info=True)
 
         try:
-            self.syslog_handler.process_alert(alert)
+            await self.syslog_handler.process_alert(alert)
         except Exception as err:
             LOGGER.error(f"Got error in SyslogAlertsHandler.send: {err!s}", exc_info=True)
+
+    # No async version needed as this just delegates to other handlers
+    # which will handle async processing internally when needed

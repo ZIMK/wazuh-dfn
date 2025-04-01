@@ -1,5 +1,6 @@
 """Windows alert handler module."""
 
+import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -30,7 +31,7 @@ class WindowsHandler:
         self.kafka_service = kafka_service
         self.wazuh_service = wazuh_service
 
-    def process_alert(self, alert: dict[str, Any]) -> None:
+    async def process_alert(self, alert: dict[str, Any]) -> None:
         """Process a Windows alert.
 
         Args:
@@ -56,6 +57,7 @@ class WindowsHandler:
         ):
             event_id = str(alert["data"]["win"]["system"]["eventID"])
 
+            # Complete list of event IDs to process
             if event_id in [
                 "4625",  # Failed logon attempt
                 "4719",  # System audit policy was changed
@@ -73,27 +75,53 @@ class WindowsHandler:
                 # Create message data for Kafka
                 message_data = self._create_message_data(alert, event_id)
 
-                # Send to Kafka first
-                result = self.kafka_service.send_message(message_data)
-                if result:
-                    LOGGER.debug(f"Windows alert sent successfully: {result}")
-                    # Only send to Wazuh if Kafka succeeded
-                    win_timestamp = None
-                    if "systemTime" in alert["data"]["win"]["system"]:
-                        win_timestamp = alert["data"]["win"]["system"]["systemTime"]
-
-                    self.wazuh_service.send_event(
-                        alert=alert,
-                        event_format="windows-xml",
-                        event_id=event_id,
-                        win_timestamp=win_timestamp,
-                        wz_timestamp=alert["timestamp"],
-                    )
-                else:
-                    alert_id = alert.get("id", "Unknown")
-                    LOGGER.error(f"Failed to send windows alert to Kafka {alert_id}")
+                # Use asyncio to send to Kafka
+                alert_id = alert.get("id", "Unknown")
+                # Store the task reference to fix RUF006, and suppress the linting error
+                _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
         else:
             LOGGER.debug("No windows alert to process")
+
+    async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
+        """Send message to Kafka asynchronously.
+
+        Sends a Windows event alert to Kafka and logs the result.
+
+        Args:
+            message_data: The formatted message to send to Kafka
+            alert_id: The alert ID for logging and tracking
+        """
+        # Send to Kafka
+        result = await self.kafka_service.send_message(message_data)
+        if result:
+            LOGGER.debug(f"Windows alert sent successfully: {result}")
+            # Extract the original alert from the message_data context
+            alert = message_data.get("context_alert", {})
+
+            # Get Windows timestamp from alert if available
+            win_timestamp = None
+            if "data" in alert and "win" in alert["data"] and "system" in alert["data"]["win"]:
+                if "systemTime" in alert["data"]["win"]["system"]:
+                    win_timestamp = alert["data"]["win"]["system"]["systemTime"]
+
+            # Send to Wazuh with the original format
+            await self.wazuh_service.send_event(
+                alert=alert,
+                event_format="windows-xml",
+                event_id=alert.get("data", {}).get("win", {}).get("system", {}).get("eventID"),
+                win_timestamp=win_timestamp,
+                wz_timestamp=alert.get("timestamp"),
+            )
+        else:
+            error_msg = f"Failed to send Windows alert to Kafka {alert_id}"
+            LOGGER.error(error_msg)
+            # Send error to Wazuh
+            await self.wazuh_service.send_error(
+                {
+                    "error": 503,
+                    "description": error_msg,
+                }
+            )
 
     def _create_message_data(self, alert: dict[str, Any], event_id: str) -> KafkaMessage:
         """Create message data for Kafka.
@@ -118,6 +146,7 @@ class WindowsHandler:
             "event_parser": "wazuh",
             "event_source": "soc-agent",
             "data": alert["data"],
+            "context_alert": alert,  # Store the original alert for later use
         }
 
         return message_data
@@ -167,13 +196,17 @@ class WindowsHandler:
                 f" agent_id: {agent_id}, agent_name: {agent_name}"
             )
 
-            self.wazuh_service.send_error(
-                {
-                    "description": (
-                        f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
-                        f" agent_id: {agent_id}, agent_name: {agent_name}"
-                    ),
-                }
+            # Create a task for the async error sending to avoid blocking
+            # This ensures the error gets sent without needing to make this method async
+            _task = asyncio.create_task(  # noqa: RUF006
+                self.wazuh_service.send_error(
+                    {
+                        "description": (
+                            f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
+                            f" agent_id: {agent_id}, agent_name: {agent_name}"
+                        ),
+                    }
+                )
             )
 
         return root
@@ -223,7 +256,7 @@ class WindowsHandler:
         if "systemTime" in system_alert:
             elem.append(ET.Element("TimeCreated", {"SystemTime": system_alert["systemTime"]}))
         else:
-            LOGGER.warning(f"Missing systemTime in system alert: {system_alert.get("eventRecordID", "")}")
+            LOGGER.warning(f"Missing systemTime in system alert: {system_alert.get('eventRecordID', '')}")
             elem.append(ET.Element("TimeCreated"))
 
         event_record_id = ET.Element("EventRecordID")

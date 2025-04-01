@@ -25,13 +25,13 @@ Requirements:
 
 Usage:
     Run specific test:
-        pytest test_performance.py::test_mixed_alerts_performance -v
+        pytest test_performance.py::test_mixed_alerts_performance -v -p no:sugar
 
     Run with performance markers:
-        pytest -v -m performance
+        pytest -v -m performance -p no:sugar
 
     Run with detailed logging:
-        pytest test_performance.py -v --log-cli-level=DEBUG
+        pytest test_performance.py -v --log-cli-level=DEBUG -p no:sugar
 
 Monitoring:
     The test creates two log files:
@@ -52,39 +52,32 @@ Notes:
     - Windows systems may require elevated privileges for some operations
 """
 
-import ctypes
+import aiofiles
+import asyncio
 import gc
 import json
 import logging
-import os
 import platform
 import pytest
-import queue
 import secrets
-import signal
-import sys  # Add this import
-import threading
+import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from datetime import datetime
-from multiprocessing import Value
 from pathlib import Path
-from queue import Empty, Queue
-from typing import TextIO
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from wazuh_dfn.config import MiscConfig, WazuhConfig
+from wazuh_dfn.services import WazuhService
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.handlers.syslog_handler import SyslogHandler
 from wazuh_dfn.services.handlers.windows_handler import WindowsHandler
 from wazuh_dfn.services.kafka_service import KafkaResponse, KafkaService
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
-from wazuh_dfn.services.wazuh_service import WazuhService
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
-# Configure root logger to handle all levels
-logging.getLogger().setLevel(logging.DEBUG)  # Changed from INFO to DEBUG
+# Configure logging
+logging.getLogger().setLevel(logging.DEBUG)
 
-# Configure regular file handler (INFO level)
 log_file = "performance_test.log"
 log_file_path = Path(log_file)
 if log_file_path.exists():
@@ -94,62 +87,57 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
-# Configure debug file handler (DEBUG level)
 debug_log_file = "performance_test_debug.log"
 debug_log_file_path = Path(debug_log_file)
 if debug_log_file_path.exists():
     debug_log_file_path.unlink()
 
 debug_file_handler = logging.FileHandler(debug_log_file)
-debug_file_handler.setLevel(logging.DEBUG)  # Ensure this is set to DEBUG
+debug_file_handler.setLevel(logging.DEBUG)
 debug_file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d]")
 )
 
-# Configure console handler (INFO level only)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 
-# Add handlers to root logger
 root_logger = logging.getLogger()
-root_logger.handlers = []  # Clear any existing handlers
+root_logger.handlers = []
 root_logger.addHandler(file_handler)
 root_logger.addHandler(debug_file_handler)
 root_logger.addHandler(console_handler)
 
-# Force output to stdout to bypass pytest capture
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setLevel(logging.INFO)
 stdout_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 root_logger.addHandler(stdout_handler)
 
-# Configure the test logger with propagation enabled
 LOGGER = logging.getLogger(__name__)
-LOGGER.setLevel(logging.DEBUG)  # Ensure module logger is set to DEBUG
-LOGGER.propagate = True  # Enable propagation to root logger
+LOGGER.setLevel(logging.DEBUG)
+LOGGER.propagate = True
 
 LOGGER.info("Performance test logging initialized")
 LOGGER.debug("Debug logging initialized")
 
-MONITORED_EVENT_IDS = ["4625", "4719", "4964", "1102", "4794", "4724", "4697", "4702", "4698", "4672", "4720", "1100"]
-
 # Test Parameters
-TEST_DURATION = 60  # Run for 60 seconds
+TEST_DURATION = 60
 TEST_ALERTS_PER_SECOND = 1000
 TEST_NUM_WORKERS = 10
-TEST_QUEUE_MULTIPLIER = 4  # Queue size = alerts_per_second * multiplier
-TEST_SHUTDOWN_TIMEOUT = 15  # seconds
-TEST_CLEANUP_TIMEOUT = 30  # seconds
+TEST_QUEUE_MULTIPLIER = 4
+TEST_SHUTDOWN_TIMEOUT = 15
+TEST_CLEANUP_TIMEOUT = 30
 TEST_FILE_DELETE_RETRIES = 5
 TEST_FILE_DELETE_RETRY_DELAY = 1
+
+MONITORED_EVENT_IDS = ["4625", "4719", "4964", "1102", "4794", "4724", "4697", "4702", "4698", "4672", "4720", "1100"]
 
 
 def create_windows_alert(event_id: str) -> dict:
     """Create a sample Windows alert."""
     return {
         "timestamp": datetime.now().isoformat(),
-        "id": f"test-{secrets.randbelow(9000) + 1000}",  # Generate number between 1000-9999
+        "id": f"test-{secrets.randbelow(9000) + 1000}",
         "agent": {"id": "001", "name": "test-agent"},
         "data": {
             "win": {
@@ -159,8 +147,8 @@ def create_windows_alert(event_id: str) -> dict:
                     "providerGuid": "{54849625-5478-4994-A5BA-3E3B0328C30D}",
                     "systemTime": datetime.now().isoformat(),
                     "computer": "test-computer",
-                    "processID": str(secrets.randbelow(65535)),  # Random PID
-                    "threadID": str(secrets.randbelow(65535)),  # Random TID
+                    "processID": str(secrets.randbelow(65535)),
+                    "threadID": str(secrets.randbelow(65535)),
                 },
                 "eventdata": {
                     "subjectUserName": "SYSTEM",
@@ -197,33 +185,28 @@ def create_fail2ban_alert() -> dict:
     }
 
 
-def generate_mixed_alerts(count: int) -> list[dict]:
+def generate_mixed_alerts(count: int) -> list[dict[str, Any]]:
     """Generate a mix of Windows and Fail2ban alerts."""
     alerts = []
 
-    # Calculate distribution (1/3 each for windows-monitored, windows-unmonitored, fail2ban)
     win_monitored_count = count // 3
     win_unmonitored_count = count // 3
     fail2ban_count = count - win_monitored_count - win_unmonitored_count
 
-    # Generate monitored Windows alerts
     for _ in range(win_monitored_count):
         event_id = secrets.choice(MONITORED_EVENT_IDS)
         alerts.append(create_windows_alert(event_id))
 
-    # Generate unmonitored Windows alerts
     for _ in range(win_unmonitored_count):
         while True:
-            event_id = str(secrets.randbelow(9000) + 1000)  # Generate between 1000-9999
+            event_id = str(secrets.randbelow(9000) + 1000)
             if event_id not in MONITORED_EVENT_IDS:
                 break
         alerts.append(create_windows_alert(event_id))
 
-    # Generate Fail2ban alerts
     for _ in range(fail2ban_count):
         alerts.append(create_fail2ban_alert())
 
-    # Securely shuffle the alerts
     shuffled = list(alerts)
     for i in range(len(shuffled) - 1, 0, -1):
         j = secrets.randbelow(i + 1)
@@ -232,16 +215,27 @@ def generate_mixed_alerts(count: int) -> list[dict]:
     return shuffled
 
 
-class MockKafkaService(KafkaService):
+class MockKafkaService(KafkaService):  # Change to inherit from KafkaService
     """Mock Kafka service that counts messages by type."""
 
     def __init__(self):
+        # Skip parent init to avoid actual Kafka connection
         self.windows_count = 0
         self.fail2ban_count = 0
-        self.lock = threading.Lock()
+        self.lock = asyncio.Lock()
 
-    def send_message(self, message) -> KafkaResponse | None:
-        with self.lock:
+    # Override other required methods from KafkaService with dummy implementations
+    async def start(self) -> None:
+        """Start the service."""
+        pass
+
+    async def stop(self) -> None:
+        """Stop the service."""
+        pass
+
+    async def send_message(self, message) -> KafkaResponse | None:
+        """Send a message to Kafka."""
+        async with self.lock:
             if "win" in message.get("data", {}):
                 self.windows_count += 1
             elif message.get("event_format") == "syslog5424-json":
@@ -249,78 +243,81 @@ class MockKafkaService(KafkaService):
         return {"success": True, "topic": "mock-topic"}
 
 
-class AlertWriter(threading.Thread):
+class AlertWriter:
     """Writes alerts to file at specified rate."""
 
     def __init__(self, file_path: str, alerts_per_second: int):
-        super().__init__()
         self.file_path = Path(file_path)
         self.alerts_per_second = alerts_per_second
         self.running = False
-        self._stop_event = threading.Event()
-        self.buffer_size = max(alerts_per_second * 2, 10000)  # Buffer 2 seconds worth of alerts
+        self._stop_event = asyncio.Event()
+        self.buffer_size = max(alerts_per_second * 2, 10000)
         self.total_bytes = 0
         self.alert_count = 0
         self.newline_bytes = 0
         self._file = None
-        self._force_quit_timer = None
-        self.newline_size = 2 if platform.system() == "Windows" else 1  # CRLF vs LF
-        self._lock = threading.Lock()
+        self.newline_size = 2 if platform.system() == "Windows" else 1
+        self._lock = asyncio.Lock()
         LOGGER.info(f"Initializing AlertWriter with target rate: {alerts_per_second}/s")
         LOGGER.debug(f"Using newline size: {self.newline_size} bytes")
-        self.progress = 0  # Add progress counter
+        self.progress = 0
         self._file_handle = None
+        self._task = None
 
-    def run(self):
+    async def start(self):
         """Start writing alerts to file with better termination handling."""
         LOGGER.info("AlertWriter starting...")
         self.running = True
+        self._task = asyncio.create_task(self._run())
+        return self._task
 
+    async def _run(self):
         try:
-            # Use Path.open() instead of open()
-            self._file_handle = self.file_path.open("w", encoding="utf-8", buffering=self.buffer_size)
+            self._file_handle = await aiofiles.open(self.file_path, "w", encoding="utf-8", buffering=self.buffer_size)
             LOGGER.info("File opened successfully")
-            while not self._stop_event.is_set() and self.progress < 60:  # Run for 60 iterations
-                if threading.current_thread().daemon:  # Check if being terminated
-                    break
+            while not self._stop_event.is_set() and self.progress < 60:
                 batch_start = time.time()
-                self._write_batch(self._file_handle)
+                await self._write_batch(self._file_handle)
                 self.progress += 1
                 LOGGER.info(f"Written batch {self.progress}/60")
 
                 elapsed = time.time() - batch_start
                 if elapsed < 1.0:
-                    time.sleep(1.0 - elapsed)
+                    await asyncio.sleep(1.0 - elapsed)
 
             LOGGER.info("AlertWriter completed all batches")
+        except asyncio.CancelledError:
+            LOGGER.info("AlertWriter task cancelled")
+            raise
         except Exception as e:
             LOGGER.error(f"AlertWriter error: {e}")
-            if not self._stop_event.is_set():  # Only raise if not stopping
+            if not self._stop_event.is_set():
                 raise
         finally:
-            self._close_file()
+            await self._close_file()
             self.running = False
             LOGGER.info("AlertWriter stopped")
 
-    def _write_batch(self, f: TextIO):
+    async def _write_batch(self, f):
         """Write one second worth of alerts."""
         batch_start = time.time()
         alerts = generate_mixed_alerts(self.alerts_per_second)
         generation_time = time.time() - batch_start
 
         write_start = time.time()
+        batch_content = ""
         for alert in alerts:
             alert_str = json.dumps(alert) + "\n"
             json_bytes = len(alert_str.encode("utf-8"))
-            # Account for actual newline bytes on the system
-            self.total_bytes += json_bytes - 1 + self.newline_size  # -1 for \n, +newline_size for actual ending
+            self.total_bytes += json_bytes - 1 + self.newline_size
             self.newline_bytes += self.newline_size
             self.alert_count += 1
-            with self._lock:
-                if f and not f.closed:
-                    f.write(alert_str)
-                else:
-                    raise ValueError("File handle is closed or invalid")
+            batch_content += alert_str
+
+        if f and not f.closed:
+            await f.write(batch_content)
+        else:
+            raise ValueError("File handle is closed or invalid")
 
         write_time = time.time() - write_start
 
@@ -330,83 +327,68 @@ class AlertWriter(threading.Thread):
             f"Batch size: {len(alerts)} alerts"
         )
 
-    def stop(self):
+    async def stop(self):
         """Stop writing alerts and close file."""
         self._stop_event.set()
-        self._close_file()
+        if self._task:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+        await self._close_file()
         self.running = False
 
-    def _close_file(self):
+    async def _close_file(self):
         """Safely close the file handle."""
         if self._file_handle:
             try:
-                self._file_handle.flush()
-                self._file_handle.close()
+                await self._file_handle.flush()
+                await self._file_handle.close()
                 self._file_handle = None
                 LOGGER.debug("File handle closed successfully")
             except Exception as e:
                 LOGGER.error(f"Error closing file handle: {e}")
 
-    def _force_quit(self):
-        """Force quit the process if it's stuck."""
-        LOGGER.error("Force quitting due to timeout")
-        if platform.system() == "Windows":
-            os._exit(1)  # Force exit on Windows
-        else:
-            # Use signal.SIGTERM instead of SIGKILL
-            os.kill(os.getpid(), signal.SIGTERM)
 
-
-def process_alert(args):
+async def process_alert(
+    alert: dict[str, Any],
+    windows_handler: WindowsHandler,
+    syslog_handler: SyslogHandler,
+    windows_counter: dict[str, int],
+    fail2ban_counter: dict[str, int],
+):
     """Process a single alert with the appropriate handler."""
-    alert, windows_handler, syslog_handler, windows_count, fail2ban_count = args
     if "win" in alert.get("data", {}):
-        windows_handler.process_alert(alert)
+        await windows_handler.process_alert(alert)
         if alert["data"]["win"]["system"]["eventID"] in MONITORED_EVENT_IDS:
-            with windows_count.get_lock():
-                windows_count.value += 1
+            windows_counter["value"] += 1
     elif "program_name" in alert.get("data", {}) and alert["data"]["program_name"] == "fail2ban.actions":
-        syslog_handler.process_alert(alert)
-        with fail2ban_count.get_lock():
-            fail2ban_count.value += 1
+        await syslog_handler.process_alert(alert)
+        fail2ban_counter["value"] += 1
     return True
 
 
-def write_alert(f, alert_data: dict, binary: bool = False) -> None:
-    """Write alert data to a file with consistent newlines.
-
-    Args:
-        f: File object to write to
-        alert_data: Dictionary containing alert data
-        binary: Whether to write in binary mode
-    """
-    alert_str = json.dumps(alert_data) + "\n"
-    if binary:
-        f.write(alert_str.encode("utf-8"))
-    else:
-        f.write(alert_str)
-    f.flush()
-    os.fsync(f.fileno())
-
-
-class ProgressReporter(threading.Thread):
+class ProgressReporter:
     """Reports progress periodically."""
 
-    def __init__(self, alert_queue: Queue, writer: AlertWriter):
-        super().__init__()
+    def __init__(self, alert_queue: AsyncMaxSizeQueue, writer: AlertWriter):
         self.alert_queue = alert_queue
         self.writer = writer
         self.running = False
-        self._stop_event = threading.Event()
-        self.daemon = True  # Make it a daemon thread
+        self._stop_event = asyncio.Event()
+        self._task = None
 
-    def run(self):
+    async def start(self):
+        """Start the reporter."""
         self.running = True
+        self._task = asyncio.create_task(self._run())
+        return self._task
+
+    async def _run(self):
         last_count = 0
         last_time = time.time()
 
         while not self._stop_event.is_set():
-            time.sleep(2)  # Report every 2 seconds
+            await asyncio.sleep(2)
             current_time = time.time()
             current_count = self.writer.alert_count if self.writer else 0
 
@@ -422,9 +404,13 @@ class ProgressReporter(threading.Thread):
             last_count = current_count
             last_time = current_time
 
-    def stop(self):
+    async def stop(self):
         """Stop the reporter."""
         self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
         self.running = False
 
 
@@ -434,387 +420,236 @@ class GracefulExit(SystemExit):  # NOSONAR
     pass
 
 
-@contextmanager
-def handle_termination():
-    """Context manager to handle termination signals."""
-    stop_event = threading.Event()
-
-    def signal_handler(signum, frame):
-        LOGGER.warning(f"Received signal {signum}, initiating graceful shutdown...")
-        stop_event.set()
-        raise GracefulExit()
-
-    # Set up signal handlers
-    original_handlers = {}
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        original_handlers[sig] = signal.signal(sig, signal_handler)
-
-    try:
-        yield stop_event
-    finally:
-        # Restore original signal handlers
-        for sig, handler in original_handlers.items():
-            signal.signal(sig, handler)
-
-
-@pytest.fixture(autouse=True)
-def configure_logging(caplog):
-    """Configure logging for all tests."""
-    # Set the level for the root logger to DEBUG
-    logging.getLogger().setLevel(logging.DEBUG)
-
-    # Set specific logger levels
-    caplog.set_level(logging.DEBUG, logger="test_performance")
-
-    # Clear any existing handlers to avoid duplicate logging
-    root_logger = logging.getLogger()
-    root_logger.handlers = []
-
-    # Configure handlers as before but ensure debug handler is properly set
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(debug_file_handler)
-    root_logger.addHandler(console_handler)
-
-    yield
-
-    # Cleanup after test
-    for handler in root_logger.handlers[:]:
-        handler.close()
-        root_logger.removeHandler(handler)
-
-
-# Add a direct log to console function for critical messages
-def log_to_console(message):
-    """Log message directly to console, bypassing pytest capture."""
-    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
-    # Also log through the regular logger
-    LOGGER.info(message)
-
-
 @pytest.mark.performance(threshold="1000/s", description="Mixed alert processing throughput test")
-def test_mixed_alerts_performance(caplog):  # NOSONAR  # noqa: PLR0912
+@pytest.mark.asyncio
+async def test_mixed_alerts_performance(caplog):  # noqa: PLR0912 NOSONAR
     """Test processing 1000 mixed alerts/second from file."""
-    # Set level for this specific test
     caplog.set_level(logging.INFO)
 
-    # Force output to console for this test
-    log_to_console("Starting performance test - logs should be visible during execution")
-
     try:
-        with handle_termination() as stop_event:
-            LOGGER.info("=" * 80)
-            log_to_console("Starting new performance test run")
-            LOGGER.info("=" * 80)
+        stop_event = asyncio.Event()
+        LOGGER.info("=" * 80)
+        LOGGER.info("Starting new performance test run")
+        LOGGER.info("=" * 80)
 
-            LOGGER.info("Starting performance test")
-            # Using the static test parameters instead of inline values
-            duration = TEST_DURATION
-            alerts_per_second = TEST_ALERTS_PER_SECOND
-            num_workers = TEST_NUM_WORKERS
+        LOGGER.info("Starting performance test")
+        duration = TEST_DURATION
+        alerts_per_second = TEST_ALERTS_PER_SECOND
+        num_workers = TEST_NUM_WORKERS
 
-            # Initialize variables that might be referenced in finally block
-            writer = None
-            watcher = None
-            watcher_thread = None
-            watcher_shutdown = None
-            progress_reporter = None
-            # Initialize alert_queue variable
-            alert_queue = None
+        writer = None
+        watcher = None
+        watcher_task = None
+        watcher_shutdown = None
+        progress_reporter = None
+        alert_queue = None
 
-            # Create temporary alert file using Path
-            alert_file = Path.cwd() / "test_alerts.json"
-            if alert_file.exists():
-                try:
-                    # Force close any open handles before deletion
-                    gc.collect()  # Collect any lingering file handles
-                    alert_file.unlink()
-                except PermissionError as e:
-                    LOGGER.warning(f"Could not delete existing file: {e}")
-                    return  # Skip test if file cannot be deleted
-
+        alert_file = Path.cwd() / "test_alerts.json"
+        if alert_file.exists():
             try:
-                # Initialize services
-                LOGGER.info(f"Initializing test with {num_workers} workers")
-                alert_queue = MaxSizeQueue(maxsize=alerts_per_second * TEST_QUEUE_MULTIPLIER)  # Fix queue type
-                kafka_service = MockKafkaService()
-                wazuh_service = MagicMock(spec=WazuhService)
-                windows_handler = WindowsHandler(kafka_service, wazuh_service)
-                syslog_handler = SyslogHandler(MiscConfig(), kafka_service, wazuh_service)
+                gc.collect()
+                alert_file.unlink()
+            except PermissionError as e:
+                LOGGER.warning(f"Could not delete existing file: {e}")
+                return
 
-                # Shared counters using multiprocessing.Value
-                windows_count = Value(ctypes.c_int, 0)
-                fail2ban_count = Value(ctypes.c_int, 0)
+        writer_task = None
+        reporter_task = None
+        try:
+            LOGGER.info(f"Initializing test with {num_workers} workers")
+            alert_queue = AsyncMaxSizeQueue(maxsize=alerts_per_second * TEST_QUEUE_MULTIPLIER)
+            kafka_service = MockKafkaService()
+            wazuh_service = MagicMock(spec=WazuhService)
+            wazuh_service.send_event = AsyncMock(return_value=True)
+            wazuh_service.send_error = AsyncMock(return_value=True)
 
-                # Configure and start alert writer
-                writer = AlertWriter(str(alert_file), alerts_per_second)
-                writer.start()
+            windows_handler = WindowsHandler(kafka_service, wazuh_service)
+            syslog_handler = SyslogHandler(MiscConfig(), kafka_service, wazuh_service)
 
-                # Monitor writer progress
-                while writer.is_alive() and writer.progress == 0 and not stop_event.is_set():
-                    LOGGER.info("Waiting for writer to start processing...")
-                    time.sleep(1)
+            windows_count = {"value": 0}
+            fail2ban_count = {"value": 0}
 
-                if stop_event.is_set():
-                    raise GracefulExit("Test cancelled during startup")
+            writer = AlertWriter(str(alert_file), alerts_per_second)
+            writer_task = await writer.start()
 
-                if not writer.is_alive():
-                    raise RuntimeError("Writer thread died before processing started")
+            while writer.progress == 0 and not stop_event.is_set():
+                LOGGER.info("Waiting for writer to start processing...")
+                await asyncio.sleep(1)
 
-                LOGGER.info("Writer started successfully, configuring watcher...")
+            if stop_event.is_set():
+                raise GracefulExit("Test cancelled during startup")
 
-                # Initialize and start progress reporter after writer starts
-                progress_reporter = ProgressReporter(alert_queue, writer)
-                progress_reporter.start()
+            LOGGER.info("Writer started successfully, configuring watcher...")
 
-                # Configure watcher service
-                config = WazuhConfig()
-                config.json_alert_file = str(alert_file)
+            progress_reporter = ProgressReporter(alert_queue, writer)
+            reporter_task = await progress_reporter.start()
 
-                # Start watcher service with explicit shutdown event
-                watcher_shutdown = threading.Event()
-                watcher = AlertsWatcherService(config, alert_queue, watcher_shutdown)
-                watcher_thread = threading.Thread(target=watcher.start)
-                watcher_thread.start()
+            config = WazuhConfig()
+            config.json_alert_file = str(alert_file)
 
-                LOGGER.info("Starting alert processing")
-                start_time = time.time()
-                last_log = start_time
-                processed = 0
-                last_processed = 0
+            watcher_shutdown = asyncio.Event()
+            watcher = AlertsWatcherService(config, alert_queue, watcher_shutdown)
+            watcher_task = asyncio.create_task(watcher.start())
 
-                # Set a timeout for the entire test
-                test_timeout = time.time() + duration + 30  # duration + 30 seconds grace period
+            LOGGER.info("Starting alert processing")
+            start_time = time.time()
+            last_log = start_time
+            last_processed = 0
 
-                with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                    futures = []
+            processed_counters = {"total": 0}
+
+            async def process_alerts():
+                while not stop_event.is_set() and time.time() - start_time < duration:
                     try:
-                        while (
-                            time.time() - start_time < duration
-                            and time.time() < test_timeout
-                            and not stop_event.is_set()
-                        ):
-                            try:
-                                alert = alert_queue.get(timeout=1.0)
-                                futures.append(
-                                    executor.submit(
-                                        process_alert,
-                                        (alert, windows_handler, syslog_handler, windows_count, fail2ban_count),
-                                    )
-                                )
-                                processed += 1
+                        alert = await asyncio.wait_for(alert_queue.get(), timeout=0.1)
+                        await process_alert(alert, windows_handler, syslog_handler, windows_count, fail2ban_count)
+                        processed_counters["total"] += 1
+                        alert_queue.task_done()
+                    except TimeoutError:
+                        continue
+                    except Exception as e:
+                        LOGGER.error(f"Error processing alert: {e}")
 
-                                # Log progress every 5 seconds
-                                current_time = time.time()
-                                if current_time - last_log >= 5:
-                                    elapsed = current_time - last_log
-                                    current_rate = (processed - last_processed) / elapsed
-                                    queue_size = alert_queue.qsize()
-                                    LOGGER.info(
-                                        f"Progress - Processed: {processed}, "
-                                        f"Current rate: {current_rate:.1f}/s, "
-                                        f"Queue size: {queue_size}"
-                                    )
-                                    last_log = current_time
-                                    last_processed = processed
+            async with asyncio.TaskGroup() as tg:
+                _workers = [tg.create_task(process_alerts(), name=f"AlertWorker-{i}") for i in range(num_workers)]
 
-                                alert_queue.task_done()
-                            except queue.Empty:
-                                LOGGER.debug("Queue empty, waiting for alerts")
-                                if stop_event.is_set():
-                                    LOGGER.info("Shutdown requested, stopping processing")
-                                    break
-                                continue
-                    finally:
-                        LOGGER.info("Starting shutdown sequence...")
+                while time.time() - start_time < duration and not stop_event.is_set():
+                    await asyncio.sleep(1.0)
 
-                        # Set timeout for entire shutdown sequence
-                        shutdown_deadline = time.time() + TEST_SHUTDOWN_TIMEOUT  # 15 seconds maximum for shutdown
+                    current_time = time.time()
+                    if current_time - last_log >= 5:
+                        elapsed = current_time - last_log
+                        processed = processed_counters["total"]
+                        current_rate = (processed - last_processed) / elapsed
+                        queue_size = alert_queue.qsize()
+                        LOGGER.info(
+                            f"Progress - Processed: {processed}, "
+                            f"Current rate: {current_rate:.1f}/s, "
+                            f"Queue size: {queue_size}"
+                        )
+                        last_log = current_time
+                        last_processed = processed
 
-                        def is_timeout():
-                            return time.time() > shutdown_deadline
+                processed = processed_counters["total"]
 
-                        # 1. Stop writer with timeout
-                        writer.stop()
-                        writer.join(timeout=2)
+            total_time = time.time() - start_time
 
-                        # 2. Force stop watcher
-                        if watcher_shutdown:
-                            watcher_shutdown.set()
-                        if watcher and hasattr(watcher, "file_monitor"):
-                            with suppress(Exception):
-                                watcher.file_monitor.close()
+            actual_rate = processed / total_time
+            processed_windows = kafka_service.windows_count
+            processed_fail2ban = kafka_service.fail2ban_count
 
-                        # 3. Aggressive queue clearing
-                        while alert_queue and not alert_queue.empty() and not is_timeout():
-                            try:
-                                alert_queue.get_nowait()
-                                alert_queue.task_done()
-                            except Empty:
-                                break
+            lost_windows = windows_count["value"] - processed_windows
+            lost_fail2ban = fail2ban_count["value"] - processed_fail2ban
+            total_lost = lost_windows + lost_fail2ban
 
-                        # 4. Quick watcher thread cleanup
-                        if watcher_thread:
-                            watcher_thread.join(timeout=2)
+            LOGGER.info(f"Test duration: {total_time:.2f} seconds")
+            LOGGER.info(f"Processed {processed} alerts")
+            LOGGER.info(f"Average rate: {actual_rate:.2f} alerts/second")
+            LOGGER.info(
+                f"Windows alerts processed: {processed_windows}/{windows_count['value']} (lost: {lost_windows})"
+            )
+            LOGGER.info(
+                f"Fail2ban alerts processed: {processed_fail2ban}/{fail2ban_count['value']} (lost: {lost_fail2ban})"
+            )
+            LOGGER.info(f"Total lost alerts: {total_lost}")
 
-                        # 5. Cancel all pending futures immediately
-                        for future in futures:
-                            future.cancel()
+            actual_file_size = alert_file.stat().st_size
+            LOGGER.info(f"Total bytes written (counted): {writer.total_bytes}")
+            LOGGER.info(f"Total alerts written: {writer.alert_count}")
+            LOGGER.info(f"Total newline bytes: {writer.newline_bytes}")
+            LOGGER.info(f"Actual file size: {actual_file_size}")
 
-                        # 6. Final executor shutdown
-                        LOGGER.info("Shutting down thread pool...")
-                        executor.shutdown(wait=False)  # Don't wait if tasks are still running
+            content = alert_file.read_bytes()
+            last_bytes = content[-10:] if len(content) >= 10 else content
+            LOGGER.info(f"Last few bytes (hex): {last_bytes.hex()}")
 
-                        LOGGER.info("Shutdown sequence completed")
+            actual_newlines = content.count(b"\n")
+            LOGGER.info(f"Actual newlines in file: {actual_newlines}")
+            LOGGER.info(f"Expected newlines: {writer.alert_count}")
 
-                total_time = time.time() - start_time
-
-                # Verify results
-                actual_rate = processed / total_time
-                processed_windows = kafka_service.windows_count
-                processed_fail2ban = kafka_service.fail2ban_count
-
-                # Calculate lost alerts
-                lost_windows = windows_count.value - processed_windows
-                lost_fail2ban = fail2ban_count.value - processed_fail2ban
-                total_lost = lost_windows + lost_fail2ban
-
-                LOGGER.info(f"Test duration: {total_time:.2f} seconds")
-                LOGGER.info(f"Processed {processed} alerts")
-                LOGGER.info(f"Average rate: {actual_rate:.2f} alerts/second")
-                LOGGER.info(
-                    f"Windows alerts processed: {processed_windows}/{windows_count.value} (lost: {lost_windows})"
-                )
-                LOGGER.info(
-                    f"Fail2ban alerts processed: {processed_fail2ban}/{fail2ban_count.value} (lost: {lost_fail2ban})"
-                )
-                LOGGER.info(f"Total lost alerts: {total_lost}")
-
-                # After the test completes, verify file size matches bytes written
-                actual_file_size = alert_file.stat().st_size
-                LOGGER.info(f"Total bytes written (counted): {writer.total_bytes}")
-                LOGGER.info(f"Total alerts written: {writer.alert_count}")
-                LOGGER.info(f"Total newline bytes: {writer.newline_bytes}")
-                LOGGER.info(f"Actual file size: {actual_file_size}")
-
-                # Read the file content for verification
-                content = alert_file.read_bytes()
-                last_bytes = content[-10:] if len(content) >= 10 else content
-                LOGGER.info(f"Last few bytes (hex): {last_bytes.hex()}")
-
-                # Count actual newlines
-                actual_newlines = content.count(b"\n")
-                LOGGER.info(f"Actual newlines in file: {actual_newlines}")
-                LOGGER.info(f"Expected newlines: {writer.alert_count}")
-
-                # Detailed mismatch information
-                if actual_file_size != writer.total_bytes:
-                    diff = actual_file_size - writer.total_bytes
-                    LOGGER.error(
-                        f"Size mismatch details:\n"
-                        f"Difference: {diff} bytes\n"
-                        f"Per alert difference: {diff / writer.alert_count:.2f} bytes\n"
-                        f"Newline difference: {actual_newlines - writer.alert_count}"
-                    )
-
-                assert actual_file_size == writer.total_bytes, (
-                    f"File size mismatch. Written: {writer.total_bytes}, "
-                    f"Actual: {actual_file_size}, "
-                    f"Difference: {abs(writer.total_bytes - actual_file_size)} bytes"
+            if actual_file_size != writer.total_bytes:
+                diff = actual_file_size - writer.total_bytes
+                LOGGER.error(
+                    f"Size mismatch details:\n"
+                    f"Difference: {diff} bytes\n"
+                    f"Per alert difference: {diff / writer.alert_count:.2f} bytes\n"
+                    f"Newline difference: {actual_newlines - writer.alert_count}"
                 )
 
-                # Assertions
-                assert (
-                    actual_rate >= alerts_per_second * 0.95
-                ), f"Processing rate {actual_rate:.2f} below target {alerts_per_second}"
-                assert (
-                    processed_windows >= windows_count.value * 0.99
-                ), f"Lost too many Windows alerts: {lost_windows} ({(lost_windows/windows_count.value)*100:.1f}%)"
-                assert (
-                    processed_fail2ban >= fail2ban_count.value * 0.99
-                ), f"Lost too many Fail2ban alerts: {lost_fail2ban} ({(lost_fail2ban/fail2ban_count.value)*100:.1f}%)"
-            finally:
-                # Enhanced cleanup with timeouts
-                LOGGER.info("Performing final cleanup")
-                cleanup_deadline = time.time() + TEST_CLEANUP_TIMEOUT  # 30 seconds maximum for cleanup
+            assert actual_file_size == writer.total_bytes, (
+                f"File size mismatch. Written: {writer.total_bytes}, "
+                f"Actual: {actual_file_size}, "
+                f"Difference: {abs(writer.total_bytes - actual_file_size)} bytes"
+            )
 
-                # 1. Stop all services first
-                if "writer" in locals():
-                    LOGGER.debug("Stopping writer...")
-                    writer.stop()
-                    writer.join(timeout=5)
+            required_threshold = alerts_per_second * 0.95
+            percentage_achieved = (actual_rate / alerts_per_second) * 100
 
-                if "watcher" in locals():
-                    LOGGER.debug("Stopping watcher...")
-                    watcher_shutdown.set()
-                    if hasattr(watcher, "file_monitor"):
-                        watcher.file_monitor.close()
+            LOGGER.info("Performance metrics:")
+            LOGGER.info(f"  - Target: {alerts_per_second} alerts/second")
+            LOGGER.info(f"  - Required threshold (95%): {required_threshold:.2f} alerts/second")
+            LOGGER.info("  - Actual: %.2f alerts/second (%.1f%% of target)", actual_rate, percentage_achieved)
 
-                if "watcher_thread" in locals() and watcher_thread.is_alive():
-                    watcher_thread.join(timeout=5)
-                    if watcher_thread.is_alive():
-                        LOGGER.warning("Force terminating watcher thread")
-                        # On Windows, we can't force terminate threads safely
-                        if platform.system() != "Windows":
-                            if watcher_thread and watcher_thread.ident:
-                                result = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                                    ctypes.c_long(watcher_thread.ident), ctypes.py_object(SystemExit)
-                                )
-                                if result == 0:
-                                    LOGGER.error("Invalid thread ID, could not force termination")
+            assert actual_rate >= required_threshold, (
+                f"Processing rate {actual_rate:.2f} below target threshold {required_threshold:.2f} "
+                f"({percentage_achieved:.1f}% of {alerts_per_second}/s target). "
+                f"Check system load or increase worker count."
+            )
 
-                # 2. Clear queue
-                if "alert_queue" in locals():
-                    LOGGER.debug("Clearing alert queue...")
-                    while not alert_queue.empty():
-                        try:
-                            alert_queue.get_nowait()
-                            alert_queue.task_done()
-                        except Empty:
-                            break
+            assert (
+                processed_windows >= windows_count["value"] * 0.99
+            ), f"Lost too many Windows alerts: {lost_windows} ({(lost_windows/windows_count['value'])*100:.1f}%)"
+            assert (
+                processed_fail2ban >= fail2ban_count["value"] * 0.99
+            ), f"Lost too many Fail2ban alerts: {lost_fail2ban} ({(lost_fail2ban/fail2ban_count['value'])*100:.1f}%)"
 
-                # 3. Stop progress reporter
-                if progress_reporter:
-                    LOGGER.debug("Stopping progress reporter...")
-                    progress_reporter.stop()
-                    progress_reporter.join(timeout=2)
+        finally:
+            LOGGER.info("Performing final cleanup")
 
-                # 4. File cleanup with proper handle closing
-                if "alert_file" in locals() and alert_file.exists():
-                    LOGGER.debug("Cleaning up test file...")
-                    max_retries = TEST_FILE_DELETE_RETRIES
-                    retry_delay = TEST_FILE_DELETE_RETRY_DELAY
+            tasks_to_cancel = []
 
-                    for attempt in range(max_retries):
-                        try:
-                            # Force close any remaining file handles
-                            if "writer" in locals() and writer._file_handle:
-                                writer._close_file()
-                            if hasattr(watcher, "file_monitor"):
-                                watcher.file_monitor.close()
+            if "writer_task" in locals() and writer_task and not writer_task.done():
+                tasks_to_cancel.append(writer_task)
 
-                            gc.collect()  # Force garbage collection
-                            time.sleep(0.1)  # Short delay for handle closure
+            if "watcher_task" in locals() and watcher_task and not watcher_task.done():
+                tasks_to_cancel.append(watcher_task)
 
-                            # Use Path.unlink() instead of os.remove()
-                            alert_file.unlink()
+            if "reporter_task" in locals() and reporter_task and not reporter_task.done():
+                tasks_to_cancel.append(reporter_task)
 
-                            LOGGER.info("Test file deleted successfully")
-                            break
-                        except PermissionError as e:
-                            if attempt < max_retries - 1:
-                                LOGGER.warning(f"Retry {attempt + 1}/{max_retries} deleting file: {e}")
-                                time.sleep(retry_delay)
-                            else:
-                                LOGGER.error(f"Failed to delete file after {max_retries} attempts: {e}")
-                        except Exception as e:
-                            LOGGER.error(f"Unexpected error during file cleanup: {e}")
-                            break
+            for task in tasks_to_cancel:
+                task.cancel()
 
-                LOGGER.info("Cleanup completed")
+            if tasks_to_cancel:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=5.0)
+                except TimeoutError:
+                    LOGGER.warning("Some tasks could not be cancelled within timeout")
+
+            if "alert_file" in locals() and alert_file.exists():
+                LOGGER.debug("Cleaning up test file...")
+                max_retries = TEST_FILE_DELETE_RETRIES
+                retry_delay = TEST_FILE_DELETE_RETRY_DELAY
+
+                for attempt in range(max_retries):
+                    try:
+                        gc.collect()
+                        await asyncio.sleep(0.1)
+
+                        alert_file.unlink()
+                        LOGGER.info("Test file deleted successfully")
+                        break
+                    except PermissionError as e:
+                        if attempt < max_retries - 1:
+                            LOGGER.warning(f"Retry {attempt + 1}/{max_retries} deleting file: {e}")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            LOGGER.error(f"Failed to delete file after {max_retries} attempts: {e}")
+                    except Exception as e:
+                        LOGGER.error(f"Unexpected error during file cleanup: {e}")
+                        break
+
+            LOGGER.info("Cleanup completed")
     except GracefulExit:
         LOGGER.info("Test cancelled by user")
-        # Optionally check logs for specific messages
         assert "initiating graceful shutdown" in caplog.text
-    finally:
-        LOGGER.info("Starting cleanup...")
-        # ...existing cleanup code...

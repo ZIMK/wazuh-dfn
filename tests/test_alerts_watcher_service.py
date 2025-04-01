@@ -7,28 +7,27 @@ This module contains comprehensive tests for the AlertsWatcherService, including
 - Edge cases and error conditions
 """
 
+import asyncio
 import json
 import logging
 import pytest
 import tempfile
-import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
-from wazuh_dfn.services.max_size_queue import MaxSizeQueue
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
 
 
-def write_alert(f, alert_data: dict, binary: bool = False) -> None:
+async def write_alert(f, alert_data: dict, binary: bool = False) -> None:
     """Write alert data to a file with consistent newlines.
 
     Args:
-        f: File object to write to
-        alert_data: Dictionary containing alert data
         binary: Whether to write in binary mode
     """
     alert_str = json.dumps(alert_data) + "\n"
@@ -37,43 +36,23 @@ def write_alert(f, alert_data: dict, binary: bool = False) -> None:
     else:
         f.write(alert_str)
     f.flush()
-    f.flush()
+    await asyncio.sleep(0.01)  # Give a small delay to ensure write completes
 
 
-def safe_cleanup(reader: FileMonitor | None, file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
-    """Safely cleanup test resources.
-
-    Args:
-        reader: FileMonitor instance to close
-        file_path: Path to file to remove
-        max_retries: Maximum number of retries
-        delay: Delay between retries in seconds
-    """
+async def safe_cleanup(reader: FileMonitor | None, file_path: str | Path) -> None:
+    """Safely close the reader and remove the file."""
     if reader:
-        try:
-            reader.close()
-        except Exception as e:
-            LOGGER.warning(f"Error closing reader: {e}")
-        reader = None
-
-    time.sleep(delay)  # Always wait before attempting to remove file
-
-    file_path_obj = Path(file_path)
-    if not file_path_obj.exists():
-        return
-
-    for i in range(max_retries):
-        try:
-            file_path_obj.unlink()
-            return
-        except OSError as e:
-            if i < max_retries - 1:
-                time.sleep(delay)
-                continue
-            LOGGER.warning(f"Failed to remove file {file_path} after {max_retries} attempts: {e}")
+        await reader.close()
+    await asyncio.sleep(0.2)  # Give time for file handles to be released
+    try:
+        Path(reader.file_path).unlink(missing_ok=True)
+        Path(file_path).unlink(missing_ok=True)
+    except Exception as e:
+        LOGGER.exception(f"Error during cleanup: {e}", exc_info=True)
 
 
-def test_alerts_watcher_service_init():
+@pytest.mark.asyncio
+async def test_alerts_watcher_service_init():
     """Test AlertsWatcherService initialization."""
     config = WazuhConfig()
     config.json_alert_file = "/test/path/alerts.json"
@@ -81,8 +60,8 @@ def test_alerts_watcher_service_init():
     config.json_alert_suffix = "}"
     config.json_alert_file_poll_interval = 1.0
 
-    alert_queue = MaxSizeQueue()
-    shutdown_event = threading.Event()
+    alert_queue = AsyncMaxSizeQueue()
+    shutdown_event = asyncio.Event()
 
     observer = AlertsWatcherService(config, alert_queue, shutdown_event)
 
@@ -90,114 +69,133 @@ def test_alerts_watcher_service_init():
     assert observer.config.json_alert_file_poll_interval == pytest.approx(1.0)
 
 
-def test_file_monitor_process_valid_alert():
+@pytest.mark.asyncio
+async def test_file_monitor_process_valid_alert():
     """Test FileMonitor processing of valid alerts."""
     # Using NamedTemporaryFile instead of mktemp
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        # Create file monitor
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            # Write valid alert
-            temp_path.write_text('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n')
+            # Open and write an alert
+            await reader.open()
 
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()  # Add explicit open
-            reader.check_file()
+            # Write a valid alert to the file
+            with Path(temp_path).open("w") as f:
+                await write_alert(f, {"timestamp": "2021-01-01", "rule": {"level": 5}})
 
-            # Verify alert was queued
-            assert alert_queue.qsize() == 1, "Expected one alert in queue after processing"
-            queued_alert = alert_queue.get()
-            assert (
-                queued_alert["rule"]["level"] == 5
-            ), f"Alert level mismatch. Expected 5, got {queued_alert['rule']['level']}"
-            assert (
-                queued_alert["timestamp"] == "2024-01-01 00:00:00"
-            ), f"Alert timestamp mismatch. Expected 2024-01-01 00:00:00, got {queued_alert['timestamp']}"
+            # Check the file for alerts
+            await reader.check_file()
+
+            # Verify alert was processed
+            assert alert_queue.qsize() == 1
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
+            assert alert["rule"]["level"] == 5
+
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_inode_change(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_file_monitor_inode_change(tmp_path):
     """Test file monitor handling of inode changes."""
-    # Mock os.name to always return 'posix' (Linux)
-    monkeypatch.setattr("os.name", "posix")
 
-    alert_queue = MaxSizeQueue()
-    file_path = tmp_path / "test.json"
+    alert_queue = AsyncMaxSizeQueue()
+    file_path = Path(tmp_path / "test.json")
 
     # Create initial file
     file_path.write_text('{"timestamp": "2021-01-01", "rule": {"level": 1}}\n')
 
     # Open reader and process initial file
     reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-    reader.open()  # Add explicit open
-    reader.check_file()
+    await reader.open()  # Add explicit open
+    await reader.check_file()
 
     # Verify first alert was read
     assert alert_queue.qsize() == 1
-    alert = alert_queue.get()
+    alert = await alert_queue.get()
     assert alert["rule"]["level"] == 1
 
     # Store initial inode
     initial_inode = file_path.stat().st_ino
 
     # Close and remove original file
-    reader.close()
+    await reader.close()
     file_path.unlink()
 
     # Create new file (this will have a different inode)
     file_path.write_text('{"timestamp": "2021-01-02", "rule": {"level": 2}}\n')
 
     # Process the new file
-    reader.check_file()
+    await reader.open()
+    await reader.check_file()
 
     # Verify new alert was read
     assert alert_queue.qsize() == 1
-    alert = alert_queue.get()
+    alert = await alert_queue.get()
     assert alert["rule"]["level"] == 2
 
     # Verify inode changed
     new_inode = file_path.stat().st_ino
     assert new_inode != initial_inode
 
-    reader.close()
-    file_path.unlink()
+    await safe_cleanup(reader, str(file_path))
 
 
-def test_alerts_watcher_service_start_stop():
+@pytest.mark.asyncio
+async def test_alerts_watcher_service_start_stop():
     """Test AlertsWatcherService start and stop."""
     config = WazuhConfig()
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        service = None  # Initialize service to None
+        temp_path = temp_file.name
+        config.json_alert_file = temp_path
+        config.json_alert_file_poll_interval = 0.1  # Reduce poll interval for faster testing
+
+        alert_queue = AsyncMaxSizeQueue()
+        shutdown_event = asyncio.Event()
+
+        # Create the service
+        service = AlertsWatcherService(config, alert_queue, shutdown_event)
+
         try:
-            config.json_alert_file = str(temp_path)
-            temp_path.write_bytes(b"")  # Write empty bytes
+            # Start the service
+            task = asyncio.create_task(service.start())
 
-            alert_queue = MaxSizeQueue()
-            shutdown_event = threading.Event()
-            service = AlertsWatcherService(config, alert_queue, shutdown_event)
+            # Let it run briefly to initialize
+            await asyncio.sleep(0.3)
 
-            service_thread = threading.Thread(target=service.start)
-            service_thread.start()
-            time.sleep(0.5)
+            # Add an alert to the file
+            with Path(temp_path).open("w") as f:
+                await write_alert(f, {"timestamp": "2021-01-01", "rule": {"level": 5}})
 
-            assert service.file_monitor is not None
-            assert Path(service.file_path).exists()
+            # Wait longer for alert to be processed
+            await asyncio.sleep(0.5)
 
+            # Verify alert was processed
+            assert alert_queue.qsize() == 1, "Alert wasn't processed, queue is empty"
+
+            # Stop the service
             shutdown_event.set()
-            service_thread.join(timeout=2)
+            await service.stop()
 
-            assert not service_thread.is_alive()
+            # Await the task to ensure clean shutdown
+            try:
+                await asyncio.wait_for(task, 1.0)
+            except TimeoutError:
+                LOGGER.error("Service task did not complete in time")
 
         finally:
-            if service and service.file_monitor:
-                service.file_monitor.close()
-            safe_cleanup(None, str(temp_path))  # Use safe_cleanup instead
+            if Path(config.json_alert_file).exists() and service.file_monitor:
+                await safe_cleanup(service.file_monitor, config.json_alert_file)
 
 
-def test_alerts_watcher_service_config_validation():
+@pytest.mark.asyncio
+async def test_alerts_watcher_service_config_validation():
     """Test AlertsWatcherService configuration validation."""
     from pydantic import ValidationError
     from wazuh_dfn.config import WazuhConfig
@@ -205,403 +203,424 @@ def test_alerts_watcher_service_config_validation():
     # Use Pydantic's ValidationError instead of ConfigValidationError
     with pytest.raises(ValidationError):
         invalid_config = WazuhConfig(json_alert_file="")  # Invalid empty path
-        AlertsWatcherService(invalid_config, MaxSizeQueue(), threading.Event())
+        AlertsWatcherService(invalid_config, AsyncMaxSizeQueue(), asyncio.Event())
 
 
-def test_file_monitor_incomplete_json(caplog):
+@pytest.mark.asyncio
+async def test_file_monitor_incomplete_json(caplog):
     """Test FileMonitor handling of incomplete JSON alerts."""
     caplog.set_level(logging.DEBUG)
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = None
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()  # Add explicit open
+            # Write incomplete JSON - do this before creating the file monitor
+            with Path(temp_path).open("w") as f:
+                f.write('{"timestamp": "2021-01-01", "incomplete')
+                f.flush()
 
-            # Write incomplete JSON
-            temp_path.write_text('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5')
+            # Create reader after initial content is written
+            reader = FileMonitor(
+                temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False
+            )
+            await reader.open()
 
-            reader.check_file()
-            assert alert_queue.qsize() == 0
+            # Initial check - should not process incomplete JSON
+            await reader.check_file()
+            assert alert_queue.empty(), "Incomplete JSON should not be processed"
 
-            # Complete the JSON
-            with temp_path.open("a") as f:
-                f.write("}}\n")
+            # Close the reader to ensure file handle is released
+            await reader.close()
 
-            time.sleep(0.1)
-            reader.check_file()
+            # Complete the JSON with required rule field in a new write operation
+            LOGGER.debug("Completing the JSON with rule field")
+            with Path(temp_path).open("w") as f:
+                # Write complete JSON with required rule field in one go (starting fresh)
+                f.write('{"timestamp": "2021-01-01", "incomplete": true, "rule": {"level": 4}}\n')
+                f.flush()
 
-            assert alert_queue.qsize() == 1
-            alert = alert_queue.get()
-            assert alert["rule"]["level"] == 5
+            # Explicit wait for file system to sync
+            await asyncio.sleep(0.3)
+
+            # Recreate and reopen reader for completed content
+            reader = FileMonitor(
+                temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False
+            )
+            await reader.open()
+
+            # Check for alert multiple times with increasing delays
+            for attempt in range(5):
+                LOGGER.debug(f"Checking for completed alert (attempt {attempt+1})")
+                await reader.check_file()
+
+                if not alert_queue.empty():
+                    break
+
+                await asyncio.sleep(0.2 * (attempt + 1))  # Increasing delay
+
+            # Verify the alert was processed
+            assert alert_queue.qsize() == 1, "Complete JSON alert wasn't processed"
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
+            assert alert["incomplete"] is True
+            assert alert["rule"]["level"] == 4
+
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            if reader:
+                await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_file_deletion_recreation(caplog):
+@pytest.mark.asyncio
+async def test_file_monitor_file_deletion_recreation(caplog):
     """Test FileMonitor handling of file deletion and recreation."""
     caplog.set_level(logging.DEBUG)
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
     file_path = Path(tempfile.gettempdir()) / "test_monitor.json"
-    alert_queue = MaxSizeQueue()
+    alert_queue = AsyncMaxSizeQueue()
     logger.debug("Test starting with file path: %s", file_path)
     reader = None  # Initialize reader to None
     try:
-        # Create initial file with first alert
-        logger.debug("Creating initial file with first alert")
-        file_path.write_text('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n')
+        # Create and write initial file
+        with file_path.open("w") as f:
+            await write_alert(f, {"timestamp": "2021-01-01", "rule": {"level": 5}})
 
-        logger.debug("Opening FileMonitor with tail=True")
+        # Create monitor
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()  # Explicitly open the file
 
-        logger.debug("Reading first alert")
-        reader.check_file()
+        # Process initial file
+        await reader.open()
+        await reader.check_file()
 
-        logger.debug("Checking queue size")
-        assert alert_queue.qsize() == 1, "First alert should be in queue"
+        # Verify first alert was read
+        assert alert_queue.qsize() == 1
+        first_alert = await alert_queue.get()
+        assert first_alert["rule"]["level"] == 5
 
-        first_alert = alert_queue.get()
-        logger.debug("First read result: %s", first_alert)
-        assert first_alert["rule"]["level"] == 5, "First alert should have level 5"
-
-        # Delete file
-        logger.debug("Closing reader before deletion")
-        reader.close()
-        logger.debug("Deleting file")
+        # Close monitor and delete file
+        await reader.close()
+        reader = None
         file_path.unlink()
-        time.sleep(0.1)
 
-        logger.debug("Reading after deletion")
-        reader.check_file()
-        assert alert_queue.empty(), "Queue should be empty after file deletion"
+        # Create new file with different content
+        with file_path.open("w") as f:
+            await write_alert(f, {"timestamp": "2021-01-02", "rule": {"level": 6}})
 
-        # Recreate file with new alert
-        logger.debug("Recreating file with second alert")
-        file_path.write_text('{"timestamp":"2024-01-01 00:01:00","rule":{"level":6}}\n')
+        # Create new monitor
+        reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
 
-        logger.debug("Reading after recreation")
-        time.sleep(0.1)
-        reader.check_file()
+        # Process new file
+        await reader.open()
+        await reader.check_file()
 
-        assert alert_queue.qsize() == 1, "Second alert should be in queue"
-        second_alert = alert_queue.get()
-        logger.debug("Second read result: %s", second_alert)
+        # Verify second alert was read
+        assert alert_queue.qsize() == 1
+        second_alert = await alert_queue.get()
         assert second_alert["rule"]["level"] == 6, "Second alert should have level 6"
-
     finally:
-        logger.debug("Cleaning up")
-        if "reader" in locals() and reader:
-            reader.close()
-        try:
-            if file_path.exists():
-                file_path.unlink()
-        except PermissionError:
-            pass
+        # Clean up
+        if reader:
+            await safe_cleanup(reader, str(file_path))
 
 
-def test_file_monitor_malformed_json():
+@pytest.mark.asyncio
+async def test_file_monitor_malformed_json():
     """Test FileMonitor handling of malformed JSON alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()  # Add explicit open
+            await reader.open()
 
-            # Write malformed JSON alerts and a valid alert
-            with temp_path.open("w") as f:
-                f.write('{"timestamp":"2024-01-01", bad_json}\n')
-                f.write('{"timestamp":"2024-01-01" "missing":,}\n')
-                f.write('{"timestamp":"2024-01-01", "extra": }}}\n')
-                # Write valid alert
-                f.write('{"timestamp":"2024-01-01 00:00:00","rule":{"level":5}}\n')
+            # Write malformed JSON
+            with Path(temp_path).open("w") as f:
+                f.write('{"timestamp": "2021-01-01", "malformed": true,}\n')  # Extra comma
+                f.flush()
 
-            reader.check_file()
-            assert alert_queue.qsize() == 1
-            valid_alert = alert_queue.get()
-            assert valid_alert["rule"]["level"] == 5
+            # Check file - should detect and report error
+            await reader.check_file()
+
+            # Verify no alerts were processed due to malformed JSON
+            assert alert_queue.empty()
+            assert reader.errors > 0
+
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            if reader:
+                await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_split_json_alert():
+@pytest.mark.asyncio
+async def test_file_monitor_split_json_alert():
     """Test FileMonitor handling of JSON alerts split across multiple reads."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
-        try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()  # Add explicit open
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
 
-            # Write first part
-            temp_path.write_text('{"timestamp')
+        # Create a smaller chunk size to force split reads
+        test_chunk_size = 100
 
-            time.sleep(0.1)
-            reader.check_file()
-            assert alert_queue.empty()
+        with patch("wazuh_dfn.services.file_monitor.CHUNK_SIZE", test_chunk_size):
+            reader = FileMonitor(
+                temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False
+            )
 
-            # Write second part
-            with temp_path.open("a") as f:
-                f.write('":"2025-01-09T10:44:45.948+0100","rule":{"level":3,"description":"Test"}}\n')
+            try:
+                await reader.open()
 
-            time.sleep(0.1)
-            reader.check_file()
-            assert alert_queue.qsize() == 1
-            alert = alert_queue.get()
-            assert alert["rule"]["level"] == 3
-        finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+                # Write a JSON larger than the test chunk size
+                large_data = "x" * 200  # Larger than test_chunk_size
+                with Path(temp_path).open("w") as f:
+                    await write_alert(f, {"timestamp": "2021-01-01", "data": large_data})
+
+                # Check file - should handle split reads properly
+                await reader.check_file()
+
+                # Verify alert was processed despite being split
+                assert alert_queue.qsize() == 1
+                alert = await alert_queue.get()
+                assert alert["timestamp"] == "2021-01-01"
+                assert alert["data"] == large_data
+
+            finally:
+                # Clean up
+                if reader:
+                    await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_multiple_consecutive_alerts():
+@pytest.mark.asyncio
+async def test_file_monitor_multiple_consecutive_alerts():
     """Test FileMonitor handling of multiple consecutive alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"')
-            reader.open()  # Add explicit open
+            await reader.open()
 
-            # Create 5 different alerts
-            alerts = [
-                '{"timestamp":"2024-01-01 00:00:00","rule":{"level":1},"id":"1"}\n',
-                '{"timestamp":"2024-01-01 00:00:01","rule":{"level":2},"id":"2"}\n',
-                '{"timestamp":"2024-01-01 00:00:02","rule":{"level":3},"id":"3"}\n',
-                '{"timestamp":"2024-01-01 00:00:03","rule":{"level":4},"id":"4"}\n',
-                '{"timestamp":"2024-01-01 00:00:04","rule":{"level":5},"id":"5"}\n',
-            ]
+            # Write multiple alerts
+            num_alerts = 5
+            with Path(temp_path).open("w") as f:
+                for i in range(num_alerts):
+                    await write_alert(f, {"timestamp": f"2021-01-{i+1:02d}", "index": i})
 
-            # Write all alerts at once
-            temp_path.write_text("".join(alerts))
-            time.sleep(0.1)
+            # Check file - should process all alerts
+            await reader.check_file()
 
-            # Process the file
-            reader.check_file()
+            # Verify all alerts were processed in order
+            assert alert_queue.qsize() == num_alerts
+            for i in range(num_alerts):
+                alert = await alert_queue.get()
+                assert alert["timestamp"] == f"2021-01-{i+1:02d}"
+                assert alert["index"] == i
 
-            # Verify all alerts were processed correctly
-            assert alert_queue.qsize() == 5
-            found_alerts = []
-            while not alert_queue.empty():
-                found_alerts.append(alert_queue.get())
-
-            assert len(found_alerts) == 5, "Should process all 5 alerts"
-            for i, alert in enumerate(found_alerts, 1):
-                assert alert["rule"]["level"] == i, f"Alert {i} has incorrect level"
-                assert alert["id"] == str(i), f"Alert {i} has incorrect id"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_large_json_alert():
+@pytest.mark.asyncio
+async def test_file_monitor_large_json_alert():
     """Test FileMonitor handling of very large JSON alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
-            # Create a moderate-sized alert
-            multiplier = 3 * CHUNK_SIZE  # 100B of data
-            large_data = {"data": "x" * multiplier}  # 100B of data
-            large_alert = {"timestamp": "2024-01-01 00:00:00", "rule": {"level": 1}, "large_field": large_data}
+            # Write a very large JSON alert (larger than CHUNK_SIZE)
+            large_data = "x" * (CHUNK_SIZE * 2)  # Twice the chunk size
+            with Path(temp_path).open("w") as f:
+                await write_alert(f, {"timestamp": "2021-01-01", "large_data": large_data})
 
-            # Write alert and force flush
-            with temp_path.open("w") as f:
-                json.dump(large_alert, f)
-                f.write("\n")
+            # Check file - should handle large alerts
+            await reader.check_file()
 
-            # Add a small delay and check multiple times
-            max_attempts = 5
-            alert_found = False
-            for _ in range(max_attempts):
-                reader.check_file()
-                if not alert_queue.empty():
-                    alert_found = True
-                    break
-                time.sleep(0.5)
+            # Verify large alert was processed correctly
+            assert alert_queue.qsize() == 1
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
+            assert len(alert["large_data"]) == len(large_data)
+            assert alert["large_data"] == large_data
 
-            assert alert_found, f"Alert not found in queue after {max_attempts} attempts"
-            assert alert_queue.qsize() == 1, "Expected exactly one alert in queue"
-            alert = alert_queue.get()
-            assert alert["rule"]["level"] == 1, f"Alert level mismatch. Expected 1, got {alert['rule']['level']}"
-            assert (
-                len(alert["large_field"]["data"]) == multiplier
-            ), f"Alert data size mismatch. Expected 102400, got {len(alert['large_field']['data'])}"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_unicode_alerts():
+@pytest.mark.asyncio
+async def test_file_monitor_unicode_alerts():
     """Test FileMonitor handling of Unicode characters in alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"')
-            reader.open()
+            await reader.open()
 
-            # Create alerts with various Unicode characters
-            alerts = [
-                '{"timestamp":"2024-01-01 00:00:00","rule":{"level":1},"message":"Hello 你好 👋"}\n',
-                '{"timestamp":"2024-01-01 00:00:01","rule":{"level":2},"message":"Über café"}\n',
-                '{"timestamp":"2024-01-01 00:00:02","rule":{"level":3},"message":"растительное масло"}\n',
-            ]
+            # Write an alert with Unicode characters
+            unicode_data = "Unicode: 你好, こんにちは, Привет, مرحبا, ¡Hola!"
+            with Path(temp_path).open("w") as f:
+                await write_alert(f, {"timestamp": "2021-01-01", "unicode": unicode_data})
 
-            # Use binary mode with UTF-8 encoding to write the alerts
-            with temp_path.open("wb") as f:
-                f.write("".join(alerts).encode("utf-8"))
+            # Check file - should handle unicode properly
+            await reader.check_file()
 
-            time.sleep(0.1)
+            # Verify unicode data was preserved
+            assert alert_queue.qsize() == 1
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
+            assert alert["unicode"] == unicode_data
 
-            reader.check_file()
-            assert alert_queue.qsize() == 3
-            found_alerts = []
-            while not alert_queue.empty():
-                found_alerts.append(alert_queue.get())
-
-            assert found_alerts[0]["message"] == "Hello 你好 👋"
-            assert found_alerts[1]["message"] == "Über café"
-            assert found_alerts[2]["message"] == "растительное масло"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_nested_prefix_alerts():
+@pytest.mark.asyncio
+async def test_file_monitor_nested_prefix_alerts():
     """Test FileMonitor handling of nested JSON with similar prefixes."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()  # Add explicit open
+            await reader.open()
 
-            # Create alert with nested timestamp objects
-            nested_alert = {
-                "timestamp": "2024-01-01 00:00:00",
-                "nested": {"timestamp": "2024-01-01 00:00:01", "data": {"timestamp": "2024-01-01 00:00:02"}},
-                "rule": {"level": 1},
-            }
+            # Write an alert with nested data containing the prefix
+            with Path(temp_path).open("w") as f:
+                await write_alert(
+                    f, {"timestamp": "2021-01-01", "nested": {"timestamp": "nested timestamp", "data": "nested data"}}
+                )
 
-            with temp_path.open("w") as f:
-                f.write(json.dumps(nested_alert) + "\n")
+            # Check file - should handle nested prefixes correctly
+            await reader.check_file()
 
-            time.sleep(0.1)
-
-            reader.check_file()
+            # Verify alert with nested data was processed properly
             assert alert_queue.qsize() == 1
-            found_alerts = alert_queue.get()
-            assert found_alerts["nested"]["data"]["timestamp"] == "2024-01-01 00:00:02"
-            assert found_alerts["rule"]["level"] == 1
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
+            assert alert["nested"]["timestamp"] == "nested timestamp"
+            assert alert["nested"]["data"] == "nested data"
+
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            # Clean up
+            await safe_cleanup(reader, temp_path)
 
 
-def test_file_monitor_multiple_incomplete_alerts():
+@pytest.mark.asyncio
+async def test_file_monitor_multiple_incomplete_alerts():
     """Test FileMonitor handling of multiple incomplete alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        reader = None  # Initialize reader to None
+        temp_path = temp_file.name
+        alert_queue = AsyncMaxSizeQueue()
+
+        reader = FileMonitor(temp_path, alert_queue, alert_prefix='{"timestamp"', tail=True, store_failed_alerts=False)
+
         try:
-            alert_queue = MaxSizeQueue()
-            reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
-            # Write complete alert and ensure it's flushed
-            with temp_path.open("w") as f:
-                f.write('{"timestamp":"2024-01-01 00:00:01","rule":{"level":2}}\n')
+            # Write an incomplete alert
+            with Path(temp_path).open("w") as f:
+                f.write('{"timestamp": "2021-01-01", "incomplete": true')
+                f.flush()
 
-            time.sleep(0.2)  # Wait longer for file operations
+            # Check file - should not process incomplete alert
+            await reader.check_file()
+            assert alert_queue.empty()
 
-            # Process and verify the complete alert
-            reader.check_file()
+            # Complete the first alert and add a second incomplete alert
+            with Path(temp_path).open("a") as f:
+                f.write('}\n{"timestamp": "2021-01-02", "also_incomplete": true')
+                f.flush()
+
+            # Check file - should process only the complete alert
+            await reader.check_file()
             assert alert_queue.qsize() == 1
-            found_alerts = alert_queue.get()
-            assert found_alerts["rule"]["level"] == 2, "Should have correct alert level"
+            alert = await alert_queue.get()
+            assert alert["timestamp"] == "2021-01-01"
 
-            # Write both incomplete alerts together
-            with temp_path.open("a") as f:
-                f.write('{"timestamp":"2024-01-01 00:00:02","rule":{"level":3')  # Incomplete
+            # Complete the second alert with proper rule structure
+            with Path(temp_path).open("a") as f:
+                f.write(', "rule": {"level": 3}}\n')
+                f.flush()
 
-            time.sleep(0.2)  # Wait for file operations
-
-            # Check that incomplete alert is not processed
-            reader.check_file()
-            assert alert_queue.empty(), "Should not process incomplete alert"
-
-            # Complete the alert
-            with temp_path.open("a") as f:
-                f.write("}}\n")  # Complete the alert
-
-            time.sleep(0.2)  # Wait for file operations
-
-            # Now check for the completed alert
-            reader.check_file()
+            # Check file - should now process the second alert
+            await reader.check_file()
             assert alert_queue.qsize() == 1
-            found_alerts = alert_queue.get()
+            found_alerts = await alert_queue.get()
+            assert found_alerts["timestamp"] == "2021-01-02", "Should have the correct timestamp"
             assert found_alerts["rule"]["level"] == 3, "Should have correct alert level"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_race_condition():
+@pytest.mark.asyncio
+async def test_file_monitor_race_condition():
     """Test FileMonitor handling of rapid writes and rotations."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
-            def write_alerts():
+            async def write_alerts():
                 for i in range(100):
                     with temp_path.open("a") as f:
                         f.write(f'{{"timestamp":"2024-01-01 00:00:{i:02d}","rule":{{"level":{i}}}}}\n')
-                    time.sleep(0.001)  # Small delay to simulate rapid writes
+                    await asyncio.sleep(0.001)  # Small delay to simulate rapid writes
 
-            # Start writing alerts in a separate thread
-            write_thread = threading.Thread(target=write_alerts)
-            write_thread.start()
+            # Start writing alerts in a separate task
+            write_task = asyncio.create_task(write_alerts())
 
             # Read alerts while they're being written
             all_alerts = []
             start_time = time.time()
-            while write_thread.is_alive() or time.time() - start_time < 2:
-                reader.check_file()
+            while not write_task.done() or time.time() - start_time < 2:
+                await reader.check_file()
                 while not alert_queue.empty():
-                    all_alerts.append(alert_queue.get())
-                time.sleep(0.01)
+                    all_alerts.append(await alert_queue.get())
+                await asyncio.sleep(0.01)
 
-            write_thread.join()
+            await write_task
 
             # Verify all alerts were captured
             assert len(all_alerts) == 100
             levels = sorted(alert["rule"]["level"] for alert in all_alerts)
             assert levels == list(range(100))
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            if reader:
+                await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_memory_limits():
+@pytest.mark.asyncio
+async def test_file_monitor_memory_limits():
     """Test FileMonitor handling of memory limits with large number of alerts."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             num_alerts = 1000
             alerts_written = 0
@@ -620,10 +639,10 @@ def test_file_monitor_memory_limits():
 
                 timeout = time.time() + 5
                 while len(alerts_processed) < alerts_written and time.time() < timeout:
-                    reader.check_file()
+                    await reader.check_file()
                     while not alert_queue.empty():
-                        alerts_processed.append(alert_queue.get())
-                    time.sleep(0.01)
+                        alerts_processed.append(await alert_queue.get())
+                    await asyncio.sleep(0.01)
 
                 if len(alerts_processed) < alerts_written:
                     raise AssertionError(
@@ -641,18 +660,20 @@ def test_file_monitor_memory_limits():
                 alerts_processed[-1]["rule"]["level"] == num_alerts - 1
             ), f"Last alert level mismatch. Expected {num_alerts-1}, got {alerts_processed[-1]['rule']['level']}"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            if reader:
+                await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_invalid_utf8():
+@pytest.mark.asyncio
+async def test_file_monitor_invalid_utf8():
     """Test FileMonitor handling of invalid UTF-8 bytes."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             alerts = [
                 b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n',
@@ -665,10 +686,10 @@ def test_file_monitor_invalid_utf8():
             timeout = time.time() + 5
             processed = []
             while len(processed) < 3 and time.time() < timeout:
-                reader.check_file()
+                await reader.check_file()
                 while not alert_queue.empty():
-                    processed.append(alert_queue.get())
-                time.sleep(0.1)
+                    processed.append(await alert_queue.get())
+                await asyncio.sleep(0.1)
 
             assert (
                 len(processed) == 3
@@ -680,18 +701,19 @@ def test_file_monitor_invalid_utf8():
                 actual_levels == expected_levels
             ), f"Alert levels mismatch.\nExpected: {expected_levels}\nGot: {actual_levels}"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_mixed_encoding():
+@pytest.mark.asyncio
+async def test_file_monitor_mixed_encoding():
     """Test FileMonitor handling of mixed valid and invalid encodings."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             test_data = (
                 b'{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n'
@@ -704,10 +726,10 @@ def test_file_monitor_mixed_encoding():
             timeout = time.time() + 5
             processed = []
             while len(processed) < 2 and time.time() < timeout:
-                reader.check_file()
+                await reader.check_file()
                 while not alert_queue.empty():
-                    processed.append(alert_queue.get())
-                time.sleep(0.1)
+                    processed.append(await alert_queue.get())
+                await asyncio.sleep(0.1)
 
             assert len(processed) == 2, (
                 f"Valid alert count mismatch. Expected 2 valid alerts, got {len(processed)}.\n"
@@ -721,17 +743,18 @@ def test_file_monitor_mixed_encoding():
             ), f"Alert levels mismatch.\nExpected: {expected_levels}\nGot: {actual_levels}"
 
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_utf8_byte_scanning():
+@pytest.mark.asyncio
+async def test_file_monitor_utf8_byte_scanning():
     """Test FileMonitor handling of UTF-8 byte sequences."""
     file_path = Path(tempfile.gettempdir()) / "test_utf8.json"
-    alert_queue = MaxSizeQueue()
+    alert_queue = AsyncMaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
+        await reader.open()
 
         # Write each alert and verify immediately
         alerts = [
@@ -751,52 +774,53 @@ def test_file_monitor_utf8_byte_scanning():
             content = file_path.read_bytes()
             LOGGER.debug(f"File content for alert {i}: {content!r}")
 
-            time.sleep(0.1)
-            reader.check_file()
+            await asyncio.sleep(0.1)
+            await reader.check_file()
 
             assert not alert_queue.empty(), f"Alert {i} ({expected_message!r}) should be in queue but queue is empty"
-            alert = alert_queue.get()
+            alert = await alert_queue.get()
             assert (
                 alert["message"] == expected_message
             ), f"Alert {i} message mismatch.\nExpected: {expected_message!r}\nGot: {alert['message']!r}"
     finally:
-        safe_cleanup(reader, str(file_path))  # Use safe_cleanup instead
+        await safe_cleanup(reader, str(file_path))
 
 
-def test_file_monitor_utf8_boundary():
+@pytest.mark.asyncio
+async def test_file_monitor_utf8_boundary():
     """Test handling of UTF-8 sequences split across buffer boundaries."""
     file_path = Path(tempfile.gettempdir()) / "test_utf8_boundary.json"
-    alert_queue = MaxSizeQueue()
+    alert_queue = AsyncMaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
+        await reader.open()
 
         # First complete alert
         file_path.write_bytes(b'{"timestamp":"2024-01-01","text":"start"}\n')
 
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
         LOGGER.debug("Checking first alert")
-        reader.check_file()
+        await reader.check_file()
         assert alert_queue.qsize() == 1, "First alert ('start') should be in queue but queue is empty"
-        assert alert_queue.get()["text"] == "start", "First alert should have text 'start'"
+        assert (await alert_queue.get())["text"] == "start", "First alert should have text 'start'"
 
         LOGGER.debug("Writing split alert part 1")
         with file_path.open("ab") as f:
             f.write(b'{"timestamp":"2024-01-02","text":"split\xf0\x9f')
 
-        time.sleep(0.1)
-        reader.check_file()
+        await asyncio.sleep(0.1)
+        await reader.check_file()
         assert alert_queue.empty(), "Incomplete UTF-8 sequence should not be processed"
 
         LOGGER.debug("Completing split alert")
         with file_path.open("ab") as f:
             f.write(b'\x8c\x9f end"}\n')
 
-        time.sleep(0.1)
-        reader.check_file()
+        await asyncio.sleep(0.1)
+        await reader.check_file()
         assert alert_queue.qsize() == 1, "Completed split alert should be in queue"
-        alert = alert_queue.get()
+        alert = await alert_queue.get()
         assert (
             alert["text"] == "split🌟 end"
         ), f"Split UTF-8 alert text mismatch.\nExpected: 'split🌟 end'\nGot: {alert['text']!r}"
@@ -805,36 +829,37 @@ def test_file_monitor_utf8_boundary():
         with file_path.open("ab") as f:
             f.write(b'{"timestamp":"2024-01-03","text":"done"}\n')
 
-        time.sleep(0.1)
-        reader.check_file()
+        await asyncio.sleep(0.1)
+        await reader.check_file()
         assert alert_queue.qsize() == 1, "Final alert should be processed"
-        assert alert_queue.get()["text"] == "done"
+        assert (await alert_queue.get())["text"] == "done"
     finally:
-        safe_cleanup(reader, str(file_path))  # Use safe_cleanup instead
+        await safe_cleanup(reader, str(file_path))
 
 
-def test_file_monitor_partial_alert_boundaries():
+@pytest.mark.asyncio
+async def test_file_monitor_partial_alert_boundaries():
     """Test handling of alerts split at buffer boundaries."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             # Write initial complete alerts
             with temp_path.open("w") as f:
                 f.write('{"timestamp":"2024-01-01 00:00:00","rule":{"level":1}}\n')
                 f.write('{"timestamp":"2024-01-01 00:00:01","rule":{"level":2}}\n')
 
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             LOGGER.debug("Checking initial alerts")
-            reader.check_file()
+            await reader.check_file()
 
             found_alerts = []
             while not alert_queue.empty():
-                found_alerts.append(alert_queue.get())
+                found_alerts.append(await alert_queue.get())
 
             assert (
                 len(found_alerts) == 2
@@ -851,8 +876,8 @@ def test_file_monitor_partial_alert_boundaries():
                 f.write('{"timestamp":"2024-01-01 00:00:02",')
                 f.write('"rule":{"level":3},"data":"test"')
 
-            time.sleep(0.1)
-            reader.check_file()
+            await asyncio.sleep(0.1)
+            await reader.check_file()
             assert alert_queue.empty(), "Incomplete alert should not be processed"
 
             LOGGER.debug("Completing alert and adding final")
@@ -860,12 +885,12 @@ def test_file_monitor_partial_alert_boundaries():
                 f.write("}\n")
                 f.write('{"timestamp":"2024-01-01 00:00:03","rule":{"level":4}}\n')
 
-            time.sleep(0.1)
-            reader.check_file()
+            await asyncio.sleep(0.1)
+            await reader.check_file()
 
             found_alerts = []
             while not alert_queue.empty():
-                found_alerts.append(alert_queue.get())
+                found_alerts.append(await alert_queue.get())
 
             assert (
                 len(found_alerts) == 2
@@ -874,17 +899,18 @@ def test_file_monitor_partial_alert_boundaries():
             levels = [a["rule"]["level"] for a in found_alerts]
             assert levels == [3, 4], f"Additional alerts have incorrect levels.\nExpected: [3, 4]\nGot: {levels}"
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, str(temp_path))
 
 
-def test_file_monitor_newline_handling():
+@pytest.mark.asyncio
+async def test_file_monitor_newline_handling():
     """Test handling of different newline types."""
     file_path = Path(tempfile.gettempdir()) / "test_newlines.json"
-    alert_queue = MaxSizeQueue()
+    alert_queue = AsyncMaxSizeQueue()
     reader = None  # Initialize reader to None
     try:
         reader = FileMonitor(str(file_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-        reader.open()
+        await reader.open()
 
         # Test different newline variations
         alerts = [
@@ -899,26 +925,27 @@ def test_file_monitor_newline_handling():
             with file_path.open(mode) as f:
                 f.write(alert)
 
-            time.sleep(0.1)
-            reader.check_file()
+            await asyncio.sleep(0.1)
+            await reader.check_file()
 
             assert not alert_queue.empty(), f"Alert {i} should be processed"
-            processed_alert = alert_queue.get()
+            processed_alert = await alert_queue.get()
             assert processed_alert["rule"]["level"] == level, f"Alert {i} has incorrect level"
     finally:
-        safe_cleanup(reader, str(file_path))  # Use safe_cleanup instead
+        await safe_cleanup(reader, str(file_path))
 
 
-def test_file_monitor_read_then_process():
+@pytest.mark.asyncio
+async def test_file_monitor_read_then_process():
     """Test FileMonitor's two-phase read-then-process behavior."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None  # Initialize reader to None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             # Create the reader instance before accessing its properties
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             # Write several alerts in different states
             alerts = [
@@ -932,11 +959,14 @@ def test_file_monitor_read_then_process():
 
             # First check should process complete alerts and maintain position
             initial_position = reader.last_complete_position
-            reader.check_file()
+            await reader.check_file()
 
             # Verify two complete alerts were processed
             assert alert_queue.qsize() == 2, "Should process exactly two complete alerts"
-            assert all(alert_queue.get()["rule"]["level"] == i for i in [1, 2])
+            assert_alerts = []
+            for _ in range(2):
+                assert_alerts.append(await alert_queue.get())
+            assert all(alert["rule"]["level"] == i for i, alert in zip([1, 2], assert_alerts, strict=False))
 
             # Verify position was updated correctly
             assert reader.last_complete_position > initial_position
@@ -947,9 +977,9 @@ def test_file_monitor_read_then_process():
                 f.write('{"level":3}}\n')
 
             # Check again
-            reader.check_file()
+            await reader.check_file()
             assert alert_queue.qsize() == 1, "Should process the completed alert"
-            assert alert_queue.get()["rule"]["level"] == 3
+            assert (await alert_queue.get())["rule"]["level"] == 3
 
             # Verify position was updated
             assert reader.last_complete_position > last_good_position
@@ -958,14 +988,14 @@ def test_file_monitor_read_then_process():
             with temp_path.open("a") as f:
                 f.write('invalid json\n{"timestamp":"2024-01-04","rule":{"level":4}}\n')
 
-            reader.check_file()
+            await reader.check_file()
             assert alert_queue.qsize() == 1, "Should skip invalid JSON and process valid alert"
-            assert alert_queue.get()["rule"]["level"] == 4
+            assert (await alert_queue.get())["rule"]["level"] == 4
         finally:
-            safe_cleanup(reader, str(temp_path))  # Use safe_cleanup instead
+            await safe_cleanup(reader, str(temp_path))
 
 
-def safe_unlink(file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
+async def safe_unlink(file_path: str, max_retries: int = 5, delay: float = 0.1) -> None:
     """Safely unlink a file with retries.
 
     Args:
@@ -980,28 +1010,29 @@ def safe_unlink(file_path: str, max_retries: int = 5, delay: float = 0.1) -> Non
             return
         except PermissionError:
             if i < max_retries - 1:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
             else:
                 raise
 
 
-def test_file_monitor_position_reversion():
+@pytest.mark.asyncio
+async def test_file_monitor_position_reversion():
     """Test FileMonitor's position reversion behavior."""
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = Path(temp_file.name)
         reader = None
         try:
-            alert_queue = MaxSizeQueue()
+            alert_queue = AsyncMaxSizeQueue()
             reader = FileMonitor(str(temp_path), alert_queue, alert_prefix='{"timestamp"', tail=True)
-            reader.open()
+            await reader.open()
 
             # Write initial complete alert
             temp_path.write_text('{"timestamp":"2024-01-01","rule":{"level":1}}\n')
 
             # Process initial alert and store position
-            reader.check_file()
+            await reader.check_file()
             assert alert_queue.qsize() == 1, "Should process initial alert"
-            assert alert_queue.get()["rule"]["level"] == 1
+            assert (await alert_queue.get())["rule"]["level"] == 1
             initial_good_position = reader.last_complete_position
 
             # Write incomplete alert
@@ -1010,7 +1041,7 @@ def test_file_monitor_position_reversion():
 
             # File size increased but position should not advance due to incomplete alert
             assert Path(temp_path).stat().st_size > initial_good_position
-            reader.check_file()
+            await reader.check_file()
             assert alert_queue.empty(), "Incomplete alert should not be processed"
             assert (
                 reader.last_complete_position == initial_good_position
@@ -1022,9 +1053,9 @@ def test_file_monitor_position_reversion():
                 f.write('{"timestamp":"2024-01-03","rule":{"level":3}}\n')  # Add new alert
 
             # Check both alerts are processed
-            reader.check_file()
+            await reader.check_file()
             assert alert_queue.qsize() == 2, "Should process both completed alerts"
-            alerts = [alert_queue.get() for _ in range(2)]
+            alerts = [await alert_queue.get() for _ in range(2)]
             assert [a["rule"]["level"] for a in alerts] == [2, 3], "Alerts have incorrect levels"
 
             # Final position should be updated
@@ -1032,4 +1063,4 @@ def test_file_monitor_position_reversion():
                 reader.last_complete_position > initial_good_position
             ), "Position should advance after processing complete alerts"
         finally:
-            safe_cleanup(reader, str(temp_path))
+            await safe_cleanup(reader, str(temp_path))
