@@ -2,18 +2,7 @@
 
 import argparse
 import logging
-from pathlib import Path
-from typing import Any
-
-# Import tomllib from stdlib for Python 3.11+ or tomli as fallback
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib  # type: ignore[]
-    except ImportError:
-        tomllib = None
-
+import tomllib
 import yaml
 from .exceptions import ConfigValidationError
 from cryptography import x509
@@ -22,7 +11,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Any
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -203,7 +194,7 @@ class WazuhConfig(BaseModel):
             v: The value to validate, typically a string or tuple
 
         Returns:
-            Union[str, tuple]: Either the original string or a tuple of (host, port)
+            (tuple[str, int] | Unknown | str): Either the original string or a tuple of (host, port)
 
         Raises:
             ValueError: If the format resembles a tuple but is malformed
@@ -761,11 +752,6 @@ class Config(BaseModel):
         Raises:
             ConfigValidationError: If configuration validation fails
         """
-        if not tomllib:
-            raise ImportError(
-                "tomllib or tomli package is required for TOML support. ", "Install tomli for Python < 3.11"
-            )
-
         # Start with defaults or use provided config
         if config is None:
             config = cls()
