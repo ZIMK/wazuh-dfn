@@ -10,7 +10,7 @@ black==25.1.0
 cffi==1.17.1; platform_python_implementation != "PyPy"
 click==8.1.8
 colorama==0.4.6; sys_platform == "win32" or platform_system == "Windows"
-coverage[toml]==7.7.1
+coverage[toml]==7.8.0
 cryptography==44.0.2
 hypothesis==6.130.7
 iniconfig==2.1.0
@@ -34,7 +34,7 @@ python-dotenv==1.1.0
 pyyaml==6.0.2
 ruff==0.11.2
 sortedcontainers==2.4.0
-termcolor==2.5.0
+termcolor==3.0.1
 types-aiofiles==24.1.0.20250326
 types-psutil==7.0.0.20250401
 types-pyyaml==6.0.12.20250402

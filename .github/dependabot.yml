@@ -28,10 +28,13 @@ updates:
       python-packages:
         patterns:
           - "*"
-    # Add vulnerability alerts configuration
+    # Specify that pip should update pyproject.toml
     allow:
       - dependency-type: "direct"
       - dependency-type: "indirect"
+    versioning-strategy: "lockfile-only"
+    # Explicitly tell dependabot to use pyproject.toml
+    file-type: "toml"
     ignore:
       # Ignore patch updates for non-critical dependencies
       - dependency-name: "black"
