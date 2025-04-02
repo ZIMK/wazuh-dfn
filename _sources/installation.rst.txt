@@ -4,19 +4,72 @@ Installation
 Prerequisites
 -------------
 
--  Python 3.12
+-  Python 3.12 or later
 -  Wazuh manager installed
 -  DFN-CERT membership and valid certificates
 -  Access to DFN SOC Kafka broker
 
-Installation
-------------
+About wazuh-dfn
+---------------
+
+The wazuh-dfn service is built with Python's asyncio for efficient, non-blocking I/O operations. This architecture provides:
+
+- High performance alert processing with minimal overhead
+- Efficient handling of large volumes of alerts
+- Robust error recovery mechanisms
+- Resource-efficient operation even under heavy loads
+
+Installation Methods
+--------------------
+
+There are several ways to install the wazuh-dfn service:
+
+Using pip (Recommended)
+^^^^^^^^^^^^^^^^^^^^^^^
+
+The simplest method is to install from PyPI using pip:
+
+.. code-block:: bash
+
+    python3 -m pip install wazuh-dfn
+
+This will install the latest stable version of the service.
+
+Install from Source with PDM
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For development or to get the latest features:
+
+.. code-block:: bash
+
+    # Clone the repository
+    git clone https://github.com/ZIMK/wazuh-dfn.git
+    cd wazuh-dfn
+    
+    # Install PDM (Python Dependency Manager)
+    python -m pip install --upgrade pip pdm
+    
+    # Install the project
+    pdm install
+
+Docker Container
+^^^^^^^^^^^^^^^^
+
+A Docker container is available for easy deployment:
+
+.. code-block:: bash
+
+    docker pull zimk/wazuh-dfn:latest
+    docker run -v /path/to/config:/etc/wazuh-dfn -v /path/to/certs:/opt/wazuh-dfn/certs zimk/wazuh-dfn:latest
+
+OS-Specific Installation
+------------------------
 
    **Note**: The service will run as the ``wazuh`` user, so all
    directories and files must be owned by this user.
 
 Rocky Linux 9
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -39,7 +92,7 @@ Rocky Linux 9
    sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh_dfn-latest.tar.gz
 
 Ubuntu 24.04
-~~~~~~~~~~~~
+^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -64,16 +117,23 @@ Ubuntu 24.04
 Configuration
 -------------
 
-1. Create configuration directory and copy the sample configuration:
+The service now supports both YAML and TOML configuration formats. You can generate a sample configuration file using:
+
+.. code-block:: bash
+
+    # Generate sample configuration - YAML format
+    /opt/wazuh-dfn/venv/bin/wazuh-dfn --generate-sample-config --output-format yaml > /opt/wazuh-dfn/config/config.yaml
+    
+    # Or TOML format (recommended)
+    /opt/wazuh-dfn/venv/bin/wazuh-dfn --generate-sample-config --output-format toml > /opt/wazuh-dfn/config/config.toml
+
+1. Create configuration directory if not already done:
 
 .. code:: bash
 
    mkdir -p /opt/wazuh-dfn/{config,certs,logs}
-   curl -o /opt/wazuh-dfn/config/config.yaml https://raw.githubusercontent.com/your-repo/wazuh-dfn/main/config.sample.yaml
 
-2. Configure the service by editing
-   ``/opt/wazuh-dfn/config/config.yaml``. The DFN settings are
-   **required** and must be configured:
+2. Configure the service by editing the configuration file. The DFN settings are **required** and must be configured:
 
 .. code:: yaml
 
@@ -94,7 +154,7 @@ Configuration
 
    # Miscellaneous settings
    misc:
-     num_workers: 10 # Number of worker threads for processing alerts
+     num_workers: 10 # Number of worker tasks for asyncio processing 
      own_network: # Optional: Network CIDR for own network filtering (e.g. "10.0.0.0/8")
 
 3. Important path considerations:
@@ -102,8 +162,8 @@ Configuration
    -  If you have a non-default Wazuh installation, you may need to
       adjust:
 
-      -  ``wazuh.json_alert_file``: Path to Wazuh’s JSON alert file
-      -  ``wazuh.unix_socket_path``: Path to Wazuh’s Unix domain socket
+      -  ``wazuh.json_alert_file``: Path to Wazuh's JSON alert file
+      -  ``wazuh.unix_socket_path``: Path to Wazuh's Unix domain socket
 
    -  You can customize the log location by changing:
 
@@ -125,7 +185,7 @@ Service Setup
 -------------
 
 Rocky Linux 9 and Ubuntu 24.04
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 1. Create a systemd service file:
 
@@ -138,18 +198,20 @@ Rocky Linux 9 and Ubuntu 24.04
 .. code:: ini
 
    [Unit]
-   Description=Wazuh DFN Service
-   After=network.target
-
+   Description=Wazuh DFN Integration Service
+   After=network.target wazuh-manager.service
+   
    [Service]
    Type=simple
    ExecStart=/opt/wazuh-dfn/venv/bin/wazuh-dfn -c /opt/wazuh-dfn/config/config.yaml
    WorkingDirectory=/opt/wazuh-dfn
    User=wazuh
    Group=wazuh
-   Restart=always
-   RestartSec=5
-
+   Restart=on-failure
+   RestartSec=10
+   StandardOutput=journal
+   StandardError=journal
+   
    [Install]
    WantedBy=multi-user.target
 
@@ -169,3 +231,52 @@ Rocky Linux 9 and Ubuntu 24.04
    sudo systemctl daemon-reload
    sudo systemctl enable wazuh-dfn
    sudo systemctl start wazuh-dfn
+
+Windows Service
+^^^^^^^^^^^^^^^^^^^^^^^
+
+On Windows, you can use NSSM (Non-Sucking Service Manager) to create a service:
+
+.. code-block:: powershell
+
+    # Install NSSM if not already installed
+    # Using Chocolatey: choco install nssm
+    
+    # Create the service
+    nssm install WazuhDFN "C:\Path\to\Python\python.exe" "-m wazuh_dfn --config C:\path\to\config.toml"
+    nssm set WazuhDFN DisplayName "Wazuh DFN Integration"
+    nssm set WazuhDFN Description "Forwards Wazuh alerts to DFN-CERT SOC"
+    nssm set WazuhDFN Start SERVICE_AUTO_START
+    
+    # Start the service
+    nssm start WazuhDFN
+
+Verifying Installation
+----------------------
+
+To verify that your installation is working correctly:
+
+1. Check the service status:
+
+   .. code-block:: bash
+
+       # On Linux with systemd
+       sudo systemctl status wazuh-dfn
+       
+       # On Windows
+       sc query WazuhDFN
+
+2. Check the logs for successful startup messages:
+
+   .. code-block:: bash
+
+       # If configured to log to a file
+       tail -f /opt/wazuh-dfn/logs/wazuh-dfn.log
+       
+       # Or check the journal on systemd systems
+       sudo journalctl -fu wazuh-dfn
+
+Next Steps
+----------
+
+For detailed configuration options, refer to the :doc:`configuration` section to further customize your wazuh-dfn instance.

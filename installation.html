@@ -3,12 +3,13 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Configuration Methods" href="configuration.html" /><link rel="prev" title="About" href="about.html" />
+<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Configuration" href="configuration.html" /><link rel="prev" title="About" href="about.html" />
 
-    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.1.3 and Furo 2024.08.06 -->
+    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.2.3 and Furo 2024.08.06 -->
         <title>Installation - wazuh-dfn</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=354aac6f" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=302659d7" />
     <link rel="stylesheet" type="text/css" href="_static/custom.css?v=deb4e717" />
     
@@ -232,11 +233,21 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <ul class="current">
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Installation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a></li>
 </ul>
 
 </div>
@@ -276,14 +287,59 @@
 <section id="prerequisites">
 <h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p>Python 3.12</p></li>
+<li><p>Python 3.12 or later</p></li>
 <li><p>Wazuh manager installed</p></li>
 <li><p>DFN-CERT membership and valid certificates</p></li>
 <li><p>Access to DFN SOC Kafka broker</p></li>
 </ul>
 </section>
-<section id="id1">
-<h2>Installation<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<section id="about-wazuh-dfn">
+<h2>About wazuh-dfn<a class="headerlink" href="#about-wazuh-dfn" title="Link to this heading">¶</a></h2>
+<p>The wazuh-dfn service is built with Python’s asyncio for efficient, non-blocking I/O operations. This architecture provides:</p>
+<ul class="simple">
+<li><p>High performance alert processing with minimal overhead</p></li>
+<li><p>Efficient handling of large volumes of alerts</p></li>
+<li><p>Robust error recovery mechanisms</p></li>
+<li><p>Resource-efficient operation even under heavy loads</p></li>
+</ul>
+</section>
+<section id="installation-methods">
+<h2>Installation Methods<a class="headerlink" href="#installation-methods" title="Link to this heading">¶</a></h2>
+<p>There are several ways to install the wazuh-dfn service:</p>
+<section id="using-pip-recommended">
+<h3>Using pip (Recommended)<a class="headerlink" href="#using-pip-recommended" title="Link to this heading">¶</a></h3>
+<p>The simplest method is to install from PyPI using pip:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>wazuh-dfn
+</pre></div>
+</div>
+<p>This will install the latest stable version of the service.</p>
+</section>
+<section id="install-from-source-with-pdm">
+<h3>Install from Source with PDM<a class="headerlink" href="#install-from-source-with-pdm" title="Link to this heading">¶</a></h3>
+<p>For development or to get the latest features:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Clone the repository</span>
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ZIMK/wazuh-dfn.git
+<span class="nb">cd</span><span class="w"> </span>wazuh-dfn
+
+<span class="c1"># Install PDM (Python Dependency Manager)</span>
+python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip<span class="w"> </span>pdm
+
+<span class="c1"># Install the project</span>
+pdm<span class="w"> </span>install
+</pre></div>
+</div>
+</section>
+<section id="docker-container">
+<h3>Docker Container<a class="headerlink" href="#docker-container" title="Link to this heading">¶</a></h3>
+<p>A Docker container is available for easy deployment:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>pull<span class="w"> </span>zimk/wazuh-dfn:latest
+docker<span class="w"> </span>run<span class="w"> </span>-v<span class="w"> </span>/path/to/config:/etc/wazuh-dfn<span class="w"> </span>-v<span class="w"> </span>/path/to/certs:/opt/wazuh-dfn/certs<span class="w"> </span>zimk/wazuh-dfn:latest
+</pre></div>
+</div>
+</section>
+</section>
+<section id="os-specific-installation">
+<h2>OS-Specific Installation<a class="headerlink" href="#os-specific-installation" title="Link to this heading">¶</a></h2>
 <blockquote>
 <div><p><strong>Note</strong>: The service will run as the <code class="docutils literal notranslate"><span class="pre">wazuh</span></code> user, so all
 directories and files must be owned by this user.</p>
@@ -335,17 +391,22 @@ sudo<span class="w"> </span>-u<span class="w"> </span>wazuh<span class="w"> </sp
 </section>
 <section id="configuration">
 <h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h2>
+<p>The service now supports both YAML and TOML configuration formats. You can generate a sample configuration file using:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate sample configuration - YAML format</span>
+/opt/wazuh-dfn/venv/bin/wazuh-dfn<span class="w"> </span>--generate-sample-config<span class="w"> </span>--output-format<span class="w"> </span>yaml<span class="w"> </span>&gt;<span class="w"> </span>/opt/wazuh-dfn/config/config.yaml
+
+<span class="c1"># Or TOML format (recommended)</span>
+/opt/wazuh-dfn/venv/bin/wazuh-dfn<span class="w"> </span>--generate-sample-config<span class="w"> </span>--output-format<span class="w"> </span>toml<span class="w"> </span>&gt;<span class="w"> </span>/opt/wazuh-dfn/config/config.toml
+</pre></div>
+</div>
 <ol class="arabic simple">
-<li><p>Create configuration directory and copy the sample configuration:</p></li>
+<li><p>Create configuration directory if not already done:</p></li>
 </ol>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>/opt/wazuh-dfn/<span class="o">{</span>config,certs,logs<span class="o">}</span>
-curl<span class="w"> </span>-o<span class="w"> </span>/opt/wazuh-dfn/config/config.yaml<span class="w"> </span>https://raw.githubusercontent.com/your-repo/wazuh-dfn/main/config.sample.yaml
 </pre></div>
 </div>
 <ol class="arabic simple" start="2">
-<li><p>Configure the service by editing
-<code class="docutils literal notranslate"><span class="pre">/opt/wazuh-dfn/config/config.yaml</span></code>. The DFN settings are
-<strong>required</strong> and must be configured:</p></li>
+<li><p>Configure the service by editing the configuration file. The DFN settings are <strong>required</strong> and must be configured:</p></li>
 </ol>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Required DFN settings - these must be configured</span>
 <span class="nt">dfn</span><span class="p">:</span>
@@ -364,7 +425,7 @@ curl<span class="w"> </span>-o<span class="w"> </span>/opt/wazuh-dfn/config/conf
 
 <span class="c1"># Miscellaneous settings</span>
 <span class="nt">misc</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">num_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w"> </span><span class="c1"># Number of worker threads for processing alerts</span>
+<span class="w">  </span><span class="nt">num_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w"> </span><span class="c1"># Number of worker tasks for asyncio processing</span>
 <span class="w">  </span><span class="nt">own_network</span><span class="p">:</span><span class="w"> </span><span class="c1"># Optional: Network CIDR for own network filtering (e.g. &quot;10.0.0.0/8&quot;)</span>
 </pre></div>
 </div>
@@ -410,8 +471,8 @@ adjust:</p>
 <li><p>Add the following content:</p></li>
 </ol>
 <div class="highlight-ini notranslate"><div class="highlight"><pre><span></span><span class="k">[Unit]</span>
-<span class="na">Description</span><span class="o">=</span><span class="s">Wazuh DFN Service</span>
-<span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+<span class="na">Description</span><span class="o">=</span><span class="s">Wazuh DFN Integration Service</span>
+<span class="na">After</span><span class="o">=</span><span class="s">network.target wazuh-manager.service</span>
 
 <span class="k">[Service]</span>
 <span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
@@ -419,8 +480,10 @@ adjust:</p>
 <span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/opt/wazuh-dfn</span>
 <span class="na">User</span><span class="o">=</span><span class="s">wazuh</span>
 <span class="na">Group</span><span class="o">=</span><span class="s">wazuh</span>
-<span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
-<span class="na">RestartSec</span><span class="o">=</span><span class="s">5</span>
+<span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+<span class="na">RestartSec</span><span class="o">=</span><span class="s">10</span>
+<span class="na">StandardOutput</span><span class="o">=</span><span class="s">journal</span>
+<span class="na">StandardError</span><span class="o">=</span><span class="s">journal</span>
 
 <span class="k">[Install]</span>
 <span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
@@ -444,6 +507,51 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
 </pre></div>
 </div>
 </section>
+<section id="windows-service">
+<h3>Windows Service<a class="headerlink" href="#windows-service" title="Link to this heading">¶</a></h3>
+<p>On Windows, you can use NSSM (Non-Sucking Service Manager) to create a service:</p>
+<div class="highlight-powershell notranslate"><div class="highlight"><pre><span></span><span class="c"># Install NSSM if not already installed</span>
+<span class="c"># Using Chocolatey: choco install nssm</span>
+
+<span class="c"># Create the service</span>
+<span class="n">nssm</span> <span class="n">install</span> <span class="n">WazuhDFN</span> <span class="s2">&quot;C:\Path\to\Python\python.exe&quot;</span> <span class="s2">&quot;-m wazuh_dfn --config C:\path\to\config.toml&quot;</span>
+<span class="n">nssm</span> <span class="nb">set </span><span class="n">WazuhDFN</span> <span class="n">DisplayName</span> <span class="s2">&quot;Wazuh DFN Integration&quot;</span>
+<span class="n">nssm</span> <span class="nb">set </span><span class="n">WazuhDFN</span> <span class="n">Description</span> <span class="s2">&quot;Forwards Wazuh alerts to DFN-CERT SOC&quot;</span>
+<span class="n">nssm</span> <span class="nb">set </span><span class="n">WazuhDFN</span> <span class="nb">Start </span><span class="n">SERVICE_AUTO_START</span>
+
+<span class="c"># Start the service</span>
+<span class="n">nssm</span> <span class="nb">start </span><span class="n">WazuhDFN</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="verifying-installation">
+<h2>Verifying Installation<a class="headerlink" href="#verifying-installation" title="Link to this heading">¶</a></h2>
+<p>To verify that your installation is working correctly:</p>
+<ol class="arabic">
+<li><p>Check the service status:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># On Linux with systemd</span>
+sudo<span class="w"> </span>systemctl<span class="w"> </span>status<span class="w"> </span>wazuh-dfn
+
+<span class="c1"># On Windows</span>
+sc<span class="w"> </span>query<span class="w"> </span>WazuhDFN
+</pre></div>
+</div>
+</li>
+<li><p>Check the logs for successful startup messages:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># If configured to log to a file</span>
+tail<span class="w"> </span>-f<span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+
+<span class="c1"># Or check the journal on systemd systems</span>
+sudo<span class="w"> </span>journalctl<span class="w"> </span>-fu<span class="w"> </span>wazuh-dfn
+</pre></div>
+</div>
+</li>
+</ol>
+</section>
+<section id="next-steps">
+<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading">¶</a></h2>
+<p>For detailed configuration options, refer to the <a class="reference internal" href="configuration.html"><span class="doc">Configuration</span></a> section to further customize your wazuh-dfn instance.</p>
 </section>
 </section>
 
@@ -457,7 +565,7 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Configuration Methods</div>
+                <div class="title">Configuration</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
@@ -476,7 +584,7 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
         <div class="bottom-of-page">
           <div class="left-details">
             <div class="copyright">
-                Copyright &#169; 2025 - 2025, University of Trier - ZIMK
+                Copyright &#169; 2023 - 2025, University of Trier - ZIMK
             </div>
             Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
             
@@ -511,7 +619,14 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
             <ul>
 <li><a class="reference internal" href="#">Installation</a><ul>
 <li><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
-<li><a class="reference internal" href="#id1">Installation</a><ul>
+<li><a class="reference internal" href="#about-wazuh-dfn">About wazuh-dfn</a></li>
+<li><a class="reference internal" href="#installation-methods">Installation Methods</a><ul>
+<li><a class="reference internal" href="#using-pip-recommended">Using pip (Recommended)</a></li>
+<li><a class="reference internal" href="#install-from-source-with-pdm">Install from Source with PDM</a></li>
+<li><a class="reference internal" href="#docker-container">Docker Container</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#os-specific-installation">OS-Specific Installation</a><ul>
 <li><a class="reference internal" href="#rocky-linux-9">Rocky Linux 9</a></li>
 <li><a class="reference internal" href="#ubuntu-24-04">Ubuntu 24.04</a></li>
 </ul>
@@ -519,8 +634,11 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
 <li><a class="reference internal" href="#configuration">Configuration</a></li>
 <li><a class="reference internal" href="#service-setup">Service Setup</a><ul>
 <li><a class="reference internal" href="#rocky-linux-9-and-ubuntu-24-04">Rocky Linux 9 and Ubuntu 24.04</a></li>
+<li><a class="reference internal" href="#windows-service">Windows Service</a></li>
 </ul>
 </li>
+<li><a class="reference internal" href="#verifying-installation">Verifying Installation</a></li>
+<li><a class="reference internal" href="#next-steps">Next Steps</a></li>
 </ul>
 </li>
 </ul>
@@ -536,5 +654,7 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=5fa4622c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=30646c52"></script>
     </body>
 </html>

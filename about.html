@@ -3,12 +3,13 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="author" title="About these documents" href="#" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Installation" href="installation.html" /><link rel="prev" title="wazuh-dfn documentation" href="index.html" />
+<link rel="author" title="About these documents" href="#" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Installation" href="installation.html" /><link rel="prev" title="Wazuh-DFN Documentation" href="index.html" />
 
-    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.1.3 and Furo 2024.08.06 -->
+    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.2.3 and Furo 2024.08.06 -->
         <title>About - wazuh-dfn</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=354aac6f" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=302659d7" />
     <link rel="stylesheet" type="text/css" href="_static/custom.css?v=deb4e717" />
     
@@ -232,11 +233,21 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <ul class="current">
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">About</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a></li>
 </ul>
 
 </div>
@@ -276,10 +287,12 @@
 <p>The <code class="docutils literal notranslate"><span class="pre">wazuh-dfn</span></code> is a specialized daemon that integrates Wazuh with
 DFN-CERT services. It monitors Wazuh alert files and forwards relevant
 security events to the DFN SOC (Security Operations Center) for advanced
-analysis and threat detection.</p>
+analysis and threat detection. The service is built with asyncio for efficient,
+non-blocking I/O operations, resulting in high performance and scalability.</p>
 <section id="features">
 <h2>Features<a class="headerlink" href="#features" title="Link to this heading">¶</a></h2>
 <ul class="simple">
+<li><p>Asynchronous processing with Python’s asyncio</p></li>
 <li><p>Efficient polling of Wazuh JSON alert file</p></li>
 <li><p>Processing of critical Windows security events:</p>
 <ul>
@@ -293,32 +306,42 @@ analysis and threat detection.</p>
 </li>
 <li><p>Fail2Ban alert processing</p></li>
 <li><p>Secure communication with DFN SOC via Kafka</p></li>
-<li><p>Multi-threaded architecture for efficient processing</p></li>
+<li><p>Concurrent processing for efficient alert handling</p></li>
 <li><p>Built-in monitoring and statistics</p></li>
+<li><p>Support for YAML and TOML configuration</p></li>
 </ul>
 </section>
 <section id="how-it-works">
 <h2>How It Works<a class="headerlink" href="#how-it-works" title="Link to this heading">¶</a></h2>
-<p>The daemon operates using three main components:</p>
+<p>The daemon operates using several asynchronous components:</p>
 <ol class="arabic simple">
-<li><p><strong>Alert File Watcher</strong>: Efficiently polls the Wazuh JSON alert file
-for new alerts. It tracks file position and handles file rotation,
+<li><p><strong>Alert File Watcher</strong>: Efficiently monitors the Wazuh JSON alert file
+for new alerts using non-blocking I/O. It tracks file position and handles file rotation,
 ensuring no alerts are missed. The watcher:</p>
 <ul class="simple">
-<li><p>Reads alerts line by line from the JSON alert file</p></li>
+<li><p>Reads alerts asynchronously from the JSON alert file</p></li>
 <li><p>Handles file truncation and rotation automatically</p></li>
-<li><p>Uses efficient buffered reading for optimal performance</p></li>
+<li><p>Uses aiofiles for efficient non-blocking file operations</p></li>
 <li><p>Maintains file position between reads</p></li>
 <li><p>Provides robust error handling for file access issues</p></li>
 </ul>
 </li>
-<li><p><strong>Alert Analysis Workers</strong>: Multiple worker threads process queued
-alerts in parallel. They:</p>
+<li><p><strong>Alert Processing Workers</strong>: Multiple asynchronous tasks process queued
+alerts concurrently. They:</p>
 <ul class="simple">
 <li><p>Filter relevant security events</p></li>
 <li><p>Transform Windows events to XML schema</p></li>
 <li><p>Add RFC 5424 priority to Fail2Ban messages</p></li>
 <li><p>Forward processed alerts to DFN SOC via Kafka</p></li>
+<li><p>Process alerts in parallel without blocking the event loop</p></li>
+</ul>
+</li>
+<li><p><strong>Kafka Service</strong>: Handles communication with the Kafka broker:</p>
+<ul class="simple">
+<li><p>Uses aiokafka for asynchronous Kafka operations</p></li>
+<li><p>Implements automatic reconnection and retry logic</p></li>
+<li><p>Provides TLS/SSL security for communication</p></li>
+<li><p>Handles message delivery guarantees</p></li>
 </ul>
 </li>
 <li><p><strong>System Monitor</strong>: Tracks and logs system metrics including:</p>
@@ -327,10 +350,21 @@ alerts in parallel. They:</p>
 <li><p>Memory consumption</p></li>
 <li><p>File processing statistics</p></li>
 <li><p>Kafka producer health</p></li>
-<li><p>Worker thread status</p></li>
+<li><p>Worker task status</p></li>
 </ul>
 </li>
 </ol>
+</section>
+<section id="technical-stack">
+<h2>Technical Stack<a class="headerlink" href="#technical-stack" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Python</strong>: Version 3.12 or later</p></li>
+<li><p><strong>asyncio</strong>: For non-blocking I/O and concurrent operations</p></li>
+<li><p><strong>aiokafka</strong>: Asynchronous Kafka client</p></li>
+<li><p><strong>aiofiles</strong>: Asynchronous file operations</p></li>
+<li><p><strong>Pydantic</strong>: For configuration validation</p></li>
+<li><p><strong>PDM</strong>: Modern Python package and dependency management</p></li>
+</ul>
 </section>
 </section>
 
@@ -363,7 +397,7 @@ alerts in parallel. They:</p>
         <div class="bottom-of-page">
           <div class="left-details">
             <div class="copyright">
-                Copyright &#169; 2025 - 2025, University of Trier - ZIMK
+                Copyright &#169; 2023 - 2025, University of Trier - ZIMK
             </div>
             Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
             
@@ -399,6 +433,7 @@ alerts in parallel. They:</p>
 <li><a class="reference internal" href="#">About</a><ul>
 <li><a class="reference internal" href="#features">Features</a></li>
 <li><a class="reference internal" href="#how-it-works">How It Works</a></li>
+<li><a class="reference internal" href="#technical-stack">Technical Stack</a></li>
 </ul>
 </li>
 </ul>
@@ -414,5 +449,7 @@ alerts in parallel. They:</p>
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=5fa4622c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=30646c52"></script>
     </body>
 </html>

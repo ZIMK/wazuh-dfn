@@ -5,10 +5,11 @@
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="About" href="about.html" />
 
-    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.1.3 and Furo 2024.08.06 -->
+    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.2.3 and Furo 2024.08.06 -->
         <title>wazuh-dfn</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=354aac6f" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=302659d7" />
     <link rel="stylesheet" type="text/css" href="_static/custom.css?v=deb4e717" />
     
@@ -232,11 +233,21 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <ul>
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a></li>
 </ul>
 
 </div>
@@ -272,42 +283,121 @@
         </div>
         <article role="main" id="furo-main-content">
           <section id="wazuh-dfn-documentation">
-<h1>wazuh-dfn documentation<a class="headerlink" href="#wazuh-dfn-documentation" title="Link to this heading">¶</a></h1>
-<p>The <strong>wazuh-dfn</strong> is a specialized daemon that integrates Wazuh with DFN-CERT services. It monitors Wazuh alert files and forwards relevant security events to the DFN SOC (Security Operations Center) for advanced analysis and threat detection.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>wazuh-dfn</strong> requires at least Python 3.12. Python 2 is not supported.</p>
-</div>
-<section id="user-guide">
-<h2>User Guide<a class="headerlink" href="#user-guide" title="Link to this heading">¶</a></h2>
-<p>This sections explains how to install and configure <strong>wazuh-dfn</strong>.</p>
+<h1>Wazuh-DFN Documentation<a class="headerlink" href="#wazuh-dfn-documentation" title="Link to this heading">¶</a></h1>
+<p>Welcome to the Wazuh-DFN documentation!</p>
+<p>Wazuh-DFN is a specialized daemon that integrates Wazuh with DFN-CERT services. It monitors Wazuh alert files and forwards relevant security events to the DFN SOC (Security Operations Center) for advanced analysis and threat detection. The service is built with asyncio for efficient, non-blocking I/O operations, resulting in high performance and scalability.</p>
+<section id="contents">
+<h2>Contents<a class="headerlink" href="#contents" title="Link to this heading">¶</a></h2>
 <div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="about.html#features">Features</a></li>
 <li class="toctree-l2"><a class="reference internal" href="about.html#how-it-works">How It Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="about.html#technical-stack">Technical Stack</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="installation.html#id1">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#about-wazuh-dfn">About wazuh-dfn</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#installation-methods">Installation Methods</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#os-specific-installation">OS-Specific Installation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#configuration">Configuration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html#service-setup">Service Setup</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#verifying-installation">Verifying Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#next-steps">Next Steps</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration Methods</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="configuration.html#configuration-options">Configuration Options</a></li>
-<li class="toctree-l2"><a class="reference internal" href="configuration.html#configuration-examples">Configuration Examples</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#configuration-file-formats">Configuration File Formats</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#configuration-sections">Configuration Sections</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#environment-variables">Environment Variables</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#command-line-arguments">Command-Line Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#verifying-configuration">Verifying Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#best-practices">Best Practices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html#next-steps">Next Steps</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#basic-usage">Basic Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#command-line-arguments">Command-Line Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#asyncio-service-operation">Asyncio Service Operation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#running-as-a-service">Running as a Service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#environment-variables">Environment Variables</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#monitoring-and-performance-tuning">Monitoring and Performance Tuning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#troubleshooting">Troubleshooting</a></li>
+<li class="toctree-l2"><a class="reference internal" href="usage.html#security-considerations">Security Considerations</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="troubleshooting.html#monitoring">Monitoring</a></li>
-<li class="toctree-l2"><a class="reference internal" href="troubleshooting.html#id1">Troubleshooting</a></li>
+<li class="toctree-l2"><a class="reference internal" href="troubleshooting.html#common-issues-and-solutions">Common Issues and Solutions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="troubleshooting.html#performance-tuning">Performance Tuning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="troubleshooting.html#diagnostic-procedures">Diagnostic Procedures</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#asynchronous-flow">Asynchronous Flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#asyncio-task-management">Asyncio Task Management</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#error-handling-and-recovery">Error Handling and Recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#configuration">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#performance-considerations">Performance Considerations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="architecture.html#extension-points">Extension Points</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#development-setup">Development Setup</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#code-style">Code Style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#testing">Testing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#pull-request-process">Pull Request Process</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#development-workflow">Development Workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#code-review-process">Code Review Process</a></li>
+<li class="toctree-l2"><a class="reference internal" href="contributing.html#release-process">Release Process</a></li>
 </ul>
 </li>
 </ul>
 </div>
 </section>
+<section id="features">
+<h2>Features<a class="headerlink" href="#features" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Asynchronous Architecture</strong>: Built with Python’s asyncio for efficient I/O operations</p></li>
+<li><p><strong>Robust Error Handling</strong>: Automatic reconnection, queue management, and error recovery</p></li>
+<li><p><strong>High Performance</strong>: Processes large volumes of alerts with minimal overhead</p></li>
+<li><p><strong>Secure Communication</strong>: TLS/SSL support for Kafka communication</p></li>
+<li><p><strong>Extensible</strong>: Modular design with specialized handlers for different alert types</p></li>
+<li><p><strong>Configurable</strong>: Flexible configuration options via YAML, TOML, environment variables, or CLI arguments</p></li>
+<li><p><strong>Metrics &amp; Logging</strong>: Comprehensive logging and performance metrics</p></li>
+</ul>
+</section>
+<section id="requirements">
+<h2>Requirements<a class="headerlink" href="#requirements" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Python 3.12 or later</p></li>
+<li><p>Wazuh manager instance</p></li>
+<li><p>DFN-CERT Kafka broker access</p></li>
+<li><p>TLS/SSL certificates for secure communication</p></li>
+</ul>
+</section>
+</section>
+<section id="indices-and-tables">
+<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Link to this heading">¶</a></h1>
+<ul class="simple">
+<li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="py-modindex.html"><span class="std std-ref">Module Index</span></a></p></li>
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
 </section>
 
         </article>
@@ -329,7 +419,7 @@
         <div class="bottom-of-page">
           <div class="left-details">
             <div class="copyright">
-                Copyright &#169; 2025 - 2025, University of Trier - ZIMK
+                Copyright &#169; 2023 - 2025, University of Trier - ZIMK
             </div>
             Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
             
@@ -362,10 +452,15 @@
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">wazuh-dfn documentation</a><ul>
-<li><a class="reference internal" href="#user-guide">User Guide</a></li>
+<li><a class="reference internal" href="#">Wazuh-DFN Documentation</a><ul>
+<li><a class="reference internal" href="#contents">Contents</a><ul>
 </ul>
 </li>
+<li><a class="reference internal" href="#features">Features</a></li>
+<li><a class="reference internal" href="#requirements">Requirements</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#indices-and-tables">Indices and tables</a></li>
 </ul>
 
           </div>
@@ -379,5 +474,7 @@
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=5fa4622c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=30646c52"></script>
     </body>
 </html>

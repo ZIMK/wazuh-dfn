@@ -3,12 +3,13 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="prev" title="Configuration Methods" href="configuration.html" />
+<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Wazuh-DFN Architecture" href="architecture.html" /><link rel="prev" title="Wazuh-DFN Usage Guide" href="usage.html" />
 
-    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.1.3 and Furo 2024.08.06 -->
+    <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.2.3 and Furo 2024.08.06 -->
         <title>Troubleshooting - wazuh-dfn</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=354aac6f" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=302659d7" />
     <link rel="stylesheet" type="text/css" href="_static/custom.css?v=deb4e717" />
     
@@ -232,11 +233,21 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <ul class="current">
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Troubleshooting</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a></li>
 </ul>
 
 </div>
@@ -273,6 +284,7 @@
         <article role="main" id="furo-main-content">
           <section id="troubleshooting">
 <h1>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">¶</a></h1>
+<p>This guide will help you diagnose and resolve common issues with the wazuh-dfn service.</p>
 <section id="monitoring">
 <h2>Monitoring<a class="headerlink" href="#monitoring" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -285,42 +297,218 @@
 <li><p>View logs:</p></li>
 </ul>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>tail<span class="w"> </span>-f<span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+
+<span class="c1"># Or with journalctl if using systemd:</span>
+sudo<span class="w"> </span>journalctl<span class="w"> </span>-fu<span class="w"> </span>wazuh-dfn
 </pre></div>
 </div>
 </section>
-<section id="id1">
-<h2>Troubleshooting<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
-<ol class="arabic simple">
-<li><p>Check virtualenv activation:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>/opt/wazuh-dfn/venv/bin/activate
-python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Should show Python 3.12.x</span>
+<section id="common-issues-and-solutions">
+<h2>Common Issues and Solutions<a class="headerlink" href="#common-issues-and-solutions" title="Link to this heading">¶</a></h2>
+<section id="startup-issues">
+<h3>Startup Issues<a class="headerlink" href="#startup-issues" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p><strong>Service fails to start</strong></p>
+<p>Check for configuration errors:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run with print-config-only to validate configuration</span>
+sudo<span class="w"> </span>-u<span class="w"> </span>wazuh<span class="w"> </span>/opt/wazuh-dfn/venv/bin/wazuh-dfn<span class="w"> </span>--print-config-only<span class="w"> </span>--config<span class="w"> </span>/opt/wazuh-dfn/config/config.toml
+
+<span class="c1"># Check logs for specific errors</span>
+sudo<span class="w"> </span>tail<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
 </pre></div>
 </div>
-<ol class="arabic simple" start="2">
-<li><p>Verify Wazuh alert file permissions:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>/var/ossec/logs/alerts/alerts.json
+</li>
+<li><p><strong>Python version errors</strong></p>
+<p>Verify Python version:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check Python version in virtualenv</span>
+<span class="nb">source</span><span class="w"> </span>/opt/wazuh-dfn/venv/bin/activate
+python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Should show Python 3.12.x or later</span>
+
+<span class="c1"># If incorrect, recreate virtualenv with correct Python version</span>
+python3.12<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>/opt/wazuh-dfn/venv<span class="w"> </span>--clear
 </pre></div>
 </div>
-<ol class="arabic simple" start="3">
-<li><p>Check Kafka connectivity:</p></li>
+</li>
 </ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>telnet<span class="w"> </span>incubator-stream.soc.dfn.de<span class="w"> </span><span class="m">443</span>
+</section>
+<section id="connection-issues">
+<h3>Connection Issues<a class="headerlink" href="#connection-issues" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p><strong>Wazuh socket connection failures</strong></p>
+<p>Check socket path and permissions:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Verify socket exists</span>
+sudo<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>/var/ossec/queue/sockets/queue
+
+<span class="c1"># Verify socket permissions</span>
+sudo<span class="w"> </span>ls<span class="w"> </span>-la<span class="w"> </span>/var/ossec/queue/sockets/
+
+<span class="c1"># Make sure wazuh user can access the socket</span>
+sudo<span class="w"> </span>usermod<span class="w"> </span>-a<span class="w"> </span>-G<span class="w"> </span>wazuh<span class="w"> </span>wazuh
 </pre></div>
 </div>
-<ol class="arabic simple" start="4">
-<li><p>Validate certificate permissions:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ls<span class="w"> </span>-l<span class="w"> </span>/opt/wazuh-dfn/certs/
+</li>
+<li><p><strong>Kafka connectivity issues</strong></p>
+<p>Test connection to Kafka broker:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Basic connectivity test</span>
+telnet<span class="w"> </span>kafka.example.org<span class="w"> </span><span class="m">443</span>
+
+<span class="c1"># Advanced test with kcat/kafkacat</span>
+kcat<span class="w"> </span>-b<span class="w"> </span>kafka.example.org:443<span class="w"> </span>-X<span class="w"> </span>security.protocol<span class="o">=</span>ssl<span class="w"> </span><span class="se">\</span>
+<span class="w">     </span>-X<span class="w"> </span>ssl.ca.location<span class="o">=</span>/opt/wazuh-dfn/certs/dfn-ca.pem<span class="w"> </span><span class="se">\</span>
+<span class="w">     </span>-X<span class="w"> </span>ssl.certificate.location<span class="o">=</span>/opt/wazuh-dfn/certs/dfn-cert.pem<span class="w"> </span><span class="se">\</span>
+<span class="w">     </span>-X<span class="w"> </span>ssl.key.location<span class="o">=</span>/opt/wazuh-dfn/certs/dfn-key.pem<span class="w"> </span><span class="se">\</span>
+<span class="w">     </span>-L
 </pre></div>
 </div>
-<ol class="arabic simple" start="5">
-<li><p>Review logs for specific error messages:</p></li>
-</ol>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>tail<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+</li>
+<li><p><strong>Certificate issues</strong></p>
+<p>Validate certificate permissions and expiration:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check certificate permissions</span>
+ls<span class="w"> </span>-l<span class="w"> </span>/opt/wazuh-dfn/certs/
+
+<span class="c1"># Check certificate expiration</span>
+openssl<span class="w"> </span>x509<span class="w"> </span>-enddate<span class="w"> </span>-noout<span class="w"> </span>-in<span class="w"> </span>/opt/wazuh-dfn/certs/dfn-cert.pem
+
+<span class="c1"># Verify certificate chain</span>
+openssl<span class="w"> </span>verify<span class="w"> </span>-CAfile<span class="w"> </span>/opt/wazuh-dfn/certs/dfn-ca.pem<span class="w"> </span>/opt/wazuh-dfn/certs/dfn-cert.pem
 </pre></div>
 </div>
+</li>
+</ol>
+</section>
+<section id="alert-processing-issues">
+<h3>Alert Processing Issues<a class="headerlink" href="#alert-processing-issues" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p><strong>No alerts being processed</strong></p>
+<p>Check alert file and permissions:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Verify alert file exists and is being updated</span>
+sudo<span class="w"> </span>ls<span class="w"> </span>-la<span class="w"> </span>/var/ossec/logs/alerts/alerts.json
+sudo<span class="w"> </span>tail<span class="w"> </span>-f<span class="w"> </span>/var/ossec/logs/alerts/alerts.json
+
+<span class="c1"># Check if wazuh user can read the file</span>
+sudo<span class="w"> </span>-u<span class="w"> </span>wazuh<span class="w"> </span>cat<span class="w"> </span>/var/ossec/logs/alerts/alerts.json
+</pre></div>
+</div>
+</li>
+<li><p><strong>Alerts queued but not sent</strong></p>
+<p>Check Kafka connection and worker status:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Look for specific error patterns in logs</span>
+grep<span class="w"> </span><span class="s2">&quot;Error&quot;</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+grep<span class="w"> </span><span class="s2">&quot;Kafka&quot;</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+
+<span class="c1"># Check for failed alerts if storage is enabled</span>
+ls<span class="w"> </span>-la<span class="w"> </span>/opt/wazuh-dfn/failed-alerts/
+</pre></div>
+</div>
+</li>
+</ol>
+</section>
+<section id="asyncio-specific-issues">
+<h3>Asyncio-Specific Issues<a class="headerlink" href="#asyncio-specific-issues" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p><strong>Task cancellation warnings</strong></p>
+<p>When you see task cancellation warnings in logs, it’s usually during shutdown. If they appear during normal operation:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Look for task-related errors</span>
+grep<span class="w"> </span><span class="s2">&quot;task&quot;</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+
+<span class="c1"># Check for worker errors</span>
+grep<span class="w"> </span><span class="s2">&quot;worker&quot;</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+</pre></div>
+</div>
+</li>
+<li><p><strong>High CPU usage</strong></p>
+<p>May indicate infinite loops or blocking operations in asyncio context:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Monitor CPU usage</span>
+top<span class="w"> </span>-p<span class="w"> </span><span class="k">$(</span>pgrep<span class="w"> </span>-f<span class="w"> </span>wazuh-dfn<span class="k">)</span>
+
+<span class="c1"># Adjust worker count to match your system&#39;s CPU cores</span>
+<span class="c1"># Edit in config.toml:</span>
+<span class="c1"># [misc]</span>
+<span class="c1"># num_workers = &lt;number_of_cores&gt;</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Queue overflow warnings</strong></p>
+<p>Indicates alert processing can’t keep up with incoming volume:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check for overflow messages</span>
+grep<span class="w"> </span><span class="s2">&quot;overflow&quot;</span><span class="w"> </span>/opt/wazuh-dfn/logs/wazuh-dfn.log
+
+<span class="c1"># Increase workers or queue size in config.toml</span>
+<span class="c1"># [misc]</span>
+<span class="c1"># num_workers = 20  # Increase for more parallel processing</span>
+<span class="c1"># [wazuh]</span>
+<span class="c1"># json_alert_queue_size = 200000  # Increase queue capacity</span>
+</pre></div>
+</div>
+</li>
+</ol>
+</section>
+</section>
+<section id="performance-tuning">
+<h2>Performance Tuning<a class="headerlink" href="#performance-tuning" title="Link to this heading">¶</a></h2>
+<ol class="arabic">
+<li><p><strong>Increasing throughput</strong></p>
+<p>Optimize for high-volume environments:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># config.toml
+[misc]
+num_workers = 20  # More workers for parallel processing
+
+[wazuh]
+json_alert_queue_size = 200000  # Larger queue
+json_alert_file_poll_interval = 0.5  # More frequent checks
+
+[kafka]
+producer_config = { &quot;batch.size&quot;: 32768, &quot;linger.ms&quot;: 5 }  # Tune Kafka batching
+</pre></div>
+</div>
+</li>
+<li><p><strong>Reducing memory usage</strong></p>
+<p>Optimize for resource-constrained environments:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="c1"># config.toml</span>
+<span class="k">[misc]</span>
+<span class="n">num_workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="w">  </span><span class="c1"># Fewer workers</span>
+
+<span class="k">[wazuh]</span>
+<span class="n">json_alert_queue_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">50000</span><span class="w">  </span><span class="c1"># Smaller queue</span>
+<span class="n">json_alert_file_poll_interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">2.0</span><span class="w">  </span><span class="c1"># Less frequent checks</span>
+
+<span class="k">[log]</span>
+<span class="n">interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1800</span><span class="w">  </span><span class="c1"># Reduce logging frequency</span>
+</pre></div>
+</div>
+</li>
+</ol>
+</section>
+<section id="diagnostic-procedures">
+<h2>Diagnostic Procedures<a class="headerlink" href="#diagnostic-procedures" title="Link to this heading">¶</a></h2>
+<ol class="arabic">
+<li><p>Run with detailed logging:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>-u<span class="w"> </span>wazuh<span class="w"> </span>/opt/wazuh-dfn/venv/bin/wazuh-dfn<span class="w"> </span>--log-level<span class="w"> </span>DEBUG<span class="w"> </span>--config<span class="w"> </span>/opt/wazuh-dfn/config/config.toml
+</pre></div>
+</div>
+</li>
+<li><p>Verify environment variables:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># For systemd service</span>
+sudo<span class="w"> </span>systemctl<span class="w"> </span>show<span class="w"> </span>wazuh-dfn<span class="w"> </span>-p<span class="w"> </span>Environment
+
+<span class="c1"># For troubleshooting</span>
+env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;DFN_|WAZUH_|KAFKA_|LOG_|MISC_&#39;</span>
+</pre></div>
+</div>
+</li>
+<li><p>Check for memory leaks:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Watch memory usage over time</span>
+watch<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="s1">&#39;ps -o pid,ppid,cmd,%mem,%cpu --sort=-%mem | grep wazuh-dfn&#39;</span>
+</pre></div>
+</div>
+</li>
+<li><p>Test alert processing manually:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Process a single alert file for testing</span>
+sudo<span class="w"> </span>-u<span class="w"> </span>wazuh<span class="w"> </span>/opt/wazuh-dfn/venv/bin/wazuh-dfn<span class="w"> </span>--wazuh-json-alert-file<span class="w"> </span>/path/to/test_alert.json
+</pre></div>
+</div>
+</li>
+</ol>
 </section>
 </section>
 
@@ -329,15 +517,23 @@ python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Shou
       <footer>
         
         <div class="related-pages">
-          
-          <a class="prev-page" href="configuration.html">
+          <a class="next-page" href="architecture.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Wazuh-DFN Architecture</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="usage.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Configuration Methods</div>
+                <div class="title">Wazuh-DFN Usage Guide</div>
                 
               </div>
             </a>
@@ -345,7 +541,7 @@ python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Shou
         <div class="bottom-of-page">
           <div class="left-details">
             <div class="copyright">
-                Copyright &#169; 2025 - 2025, University of Trier - ZIMK
+                Copyright &#169; 2023 - 2025, University of Trier - ZIMK
             </div>
             Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
             
@@ -380,7 +576,15 @@ python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Shou
             <ul>
 <li><a class="reference internal" href="#">Troubleshooting</a><ul>
 <li><a class="reference internal" href="#monitoring">Monitoring</a></li>
-<li><a class="reference internal" href="#id1">Troubleshooting</a></li>
+<li><a class="reference internal" href="#common-issues-and-solutions">Common Issues and Solutions</a><ul>
+<li><a class="reference internal" href="#startup-issues">Startup Issues</a></li>
+<li><a class="reference internal" href="#connection-issues">Connection Issues</a></li>
+<li><a class="reference internal" href="#alert-processing-issues">Alert Processing Issues</a></li>
+<li><a class="reference internal" href="#asyncio-specific-issues">Asyncio-Specific Issues</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#performance-tuning">Performance Tuning</a></li>
+<li><a class="reference internal" href="#diagnostic-procedures">Diagnostic Procedures</a></li>
 </ul>
 </li>
 </ul>
@@ -396,5 +600,7 @@ python<span class="w"> </span>-V<span class="w">  </span><span class="c1"># Shou
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=5fa4622c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=30646c52"></script>
     </body>
 </html>

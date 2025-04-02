@@ -3,10 +3,10 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Wazuh-DFN Usage Guide" href="usage.html" /><link rel="prev" title="Installation" href="installation.html" />
+<link rel="author" title="About these documents" href="about.html" /><link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="prev" title="Wazuh-DFN Architecture" href="architecture.html" />
 
     <link rel="shortcut icon" href="_static/favicon.ico"/><!-- Generated with Sphinx 8.2.3 and Furo 2024.08.06 -->
-        <title>Configuration - wazuh-dfn</title>
+        <title>Contributing to wazuh-dfn - wazuh-dfn</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=354aac6f" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -234,10 +234,10 @@
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
-<ul class="current">
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
 <li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
 </ul>
@@ -246,8 +246,8 @@
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Wazuh-DFN Architecture</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Development</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing to wazuh-dfn</a></li>
+<ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Contributing to wazuh-dfn</a></li>
 </ul>
 
 </div>
@@ -282,212 +282,113 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="configuration">
-<h1>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h1>
-<p>This section covers the configuration options for the wazuh-dfn service. The service supports multiple configuration methods with the following precedence (highest to lowest):</p>
+          <section id="contributing-to-wazuh-dfn">
+<h1>Contributing to wazuh-dfn<a class="headerlink" href="#contributing-to-wazuh-dfn" title="Link to this heading">¶</a></h1>
+<p>Thank you for your interest in contributing to wazuh-dfn! This document provides guidelines and instructions for contributing to the project.</p>
+<section id="development-setup">
+<h2>Development Setup<a class="headerlink" href="#development-setup" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p>Command-line arguments</p></li>
-<li><p>Environment variables</p></li>
-<li><p>Configuration file (YAML or TOML)</p></li>
+<li><p>Clone the repository:</p></li>
 </ol>
-<section id="configuration-file-formats">
-<h2>Configuration File Formats<a class="headerlink" href="#configuration-file-formats" title="Link to this heading">¶</a></h2>
-<p>The service supports both YAML and TOML configuration formats. You can generate a sample configuration file using:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate TOML configuration (recommended)</span>
-wazuh-dfn<span class="w"> </span>--generate-sample-config<span class="w"> </span>--output-format<span class="w"> </span>toml
-
-<span class="c1"># Or generate YAML configuration</span>
-wazuh-dfn<span class="w"> </span>--generate-sample-config<span class="w"> </span>--output-format<span class="w"> </span>yaml
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ZIMK/wazuh-dfn.git
+<span class="nb">cd</span><span class="w"> </span>wazuh-dfn
+</pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p>Install PDM (Python Dependency Manager):</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>pdm
+</pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p>Install project with development dependencies:</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pdm<span class="w"> </span>install
 </pre></div>
 </div>
 </section>
-<section id="configuration-sections">
-<h2>Configuration Sections<a class="headerlink" href="#configuration-sections" title="Link to this heading">¶</a></h2>
-<p>The configuration is organized into several sections:</p>
-<section id="dfn-configuration">
-<h3>DFN Configuration<a class="headerlink" href="#dfn-configuration" title="Link to this heading">¶</a></h3>
-<p>Settings related to DFN-CERT services and authentication:</p>
-<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[dfn]</span>
-<span class="c1"># DFN Kafka broker address</span>
-<span class="n">dfn_broker</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;kafka.example.org:443&quot;</span>
-
-<span class="c1"># Path to CA certificate for Kafka SSL</span>
-<span class="n">dfn_ca</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/opt/wazuh-dfn/certs/dfn-ca.pem&quot;</span>
-
-<span class="c1"># Path to client certificate for Kafka SSL</span>
-<span class="n">dfn_cert</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/opt/wazuh-dfn/certs/dfn-cert.pem&quot;</span>
-
-<span class="c1"># Path to client key for Kafka SSL</span>
-<span class="n">dfn_key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/opt/wazuh-dfn/certs/dfn-key.pem&quot;</span>
-
-<span class="c1"># DFN customer ID (required)</span>
-<span class="n">dfn_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;your-customer-id&quot;</span>
-</pre></div>
-</div>
-</section>
-<section id="wazuh-configuration">
-<h3>Wazuh Configuration<a class="headerlink" href="#wazuh-configuration" title="Link to this heading">¶</a></h3>
-<p>Settings for connecting to Wazuh and processing alerts:</p>
-<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[wazuh]</span>
-<span class="c1"># Path to Wazuh socket (Unix socket path or tuple of host and port for TCP)</span>
-<span class="n">unix_socket_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/ossec/queue/sockets/queue&quot;</span>
-
-<span class="c1"># Maximum size of events to process</span>
-<span class="n">max_event_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">65535</span>
-
-<span class="c1"># Full path to the JSON alerts file to monitor</span>
-<span class="n">json_alert_file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/ossec/logs/alerts/alerts.json&quot;</span>
-
-<span class="c1"># Expected prefix of JSON alert lines</span>
-<span class="n">json_alert_prefix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;{&quot;timestamp&quot;&#39;</span>
-
-<span class="c1"># Expected suffix of JSON alert lines</span>
-<span class="n">json_alert_suffix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;}&quot;</span>
-
-<span class="c1"># Maximum number of retries</span>
-<span class="n">max_retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span>
-
-<span class="c1"># Interval between retries in seconds</span>
-<span class="n">retry_interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-
-<span class="c1"># Interval in seconds between JSON alert file checks</span>
-<span class="n">json_alert_file_poll_interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.0</span>
-
-<span class="c1"># Whether to store failed alerts for later analysis</span>
-<span class="n">store_failed_alerts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-
-<span class="c1"># Directory path to store failed alerts</span>
-<span class="n">failed_alerts_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/opt/wazuh-dfn/failed-alerts&quot;</span>
-
-<span class="c1"># Maximum number of failed alert files to keep</span>
-<span class="n">max_failed_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span>
-
-<span class="c1"># Maximum number of alerts to queue for processing</span>
-<span class="n">json_alert_queue_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100000</span>
-</pre></div>
-</div>
-</section>
-<section id="kafka-configuration">
-<h3>Kafka Configuration<a class="headerlink" href="#kafka-configuration" title="Link to this heading">¶</a></h3>
-<p>Advanced Kafka client settings:</p>
-<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[kafka]</span>
-<span class="c1"># Kafka request timeout in seconds</span>
-<span class="n">timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">60</span>
-
-<span class="c1"># Interval between retries in seconds</span>
-<span class="n">retry_interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-
-<span class="c1"># Maximum number of connection retries</span>
-<span class="n">connection_max_retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-
-<span class="c1"># Maximum number of send retries</span>
-<span class="n">send_max_retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-
-<span class="c1"># Maximum wait time between retries in seconds</span>
-<span class="n">max_wait_time</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">60</span>
-
-<span class="c1"># Timeout for admin operations in seconds</span>
-<span class="n">admin_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span>
-
-<span class="c1"># Interval between service retries in seconds</span>
-<span class="n">service_retry_interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-</pre></div>
-</div>
-</section>
-<section id="logging-configuration">
-<h3>Logging Configuration<a class="headerlink" href="#logging-configuration" title="Link to this heading">¶</a></h3>
-<p>Settings for logging and statistics:</p>
-<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[log]</span>
-<span class="c1"># Enable console logging</span>
-<span class="n">console</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-
-<span class="c1"># Number of log files to keep when rotating</span>
-<span class="n">keep_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
-
-<span class="c1"># Statistics logging interval in seconds</span>
-<span class="n">interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">600</span>
-
-<span class="c1"># Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)</span>
-<span class="n">level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;INFO&quot;</span>
-
-<span class="c1"># Path to log file</span>
-<span class="n">file_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/wazuh-dfn.log&quot;</span>
-</pre></div>
-</div>
-</section>
-<section id="miscellaneous-configuration">
-<h3>Miscellaneous Configuration<a class="headerlink" href="#miscellaneous-configuration" title="Link to this heading">¶</a></h3>
-<p>Other service settings:</p>
-<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[misc]</span>
-<span class="c1"># Number of worker tasks (for asyncio worker pool)</span>
-<span class="n">num_workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span>
-
-<span class="c1"># Own network CIDR notation (optional)</span>
-<span class="c1"># Use this to identify &quot;internal&quot; IPs that should be ignored</span>
-<span class="n">own_network</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;192.168.0.0/16&quot;</span>
-</pre></div>
-</div>
-</section>
-</section>
-<section id="environment-variables">
-<h2>Environment Variables<a class="headerlink" href="#environment-variables" title="Link to this heading">¶</a></h2>
-<p>All configuration options can also be set using environment variables. The naming convention is:</p>
+<section id="code-style">
+<h2>Code Style<a class="headerlink" href="#code-style" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p>DFN settings: <cite>DFN_*</cite> (e.g., <cite>DFN_BROKER_ADDRESS</cite>)</p></li>
-<li><p>Wazuh settings: <cite>WAZUH_*</cite> (e.g., <cite>WAZUH_JSON_ALERT_FILE</cite>)</p></li>
-<li><p>Kafka settings: <cite>KAFKA_*</cite> (e.g., <cite>KAFKA_TIMEOUT</cite>)</p></li>
-<li><p>Log settings: <cite>LOG_*</cite> (e.g., <cite>LOG_LEVEL</cite>)</p></li>
-<li><p>Misc settings: <cite>MISC_*</cite> (e.g., <cite>MISC_NUM_WORKERS</cite>)</p></li>
+<li><p>Follow PEP 8 guidelines with a line length of 120 characters</p></li>
+<li><p>Use type hints for all function parameters and return values</p></li>
+<li><p>Write docstrings for all public functions and classes (Google docstring format)</p></li>
+<li><p>Use black for code formatting</p></li>
+<li><p>Use ruff for linting</p></li>
+<li><p>Properly type all async functions with appropriate return types</p></li>
 </ul>
-<p>For a complete list of environment variables, run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--help-all
+</section>
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Run the test suite:</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pdm<span class="w"> </span>run<span class="w"> </span>pytest
+</pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p>Ensure test coverage:</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pdm<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>--cov<span class="o">=</span>src/wazuh_dfn
+</pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p>Run async-specific tests:</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pdm<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>--asyncio-mode<span class="o">=</span>auto<span class="w"> </span>tests/
 </pre></div>
 </div>
 </section>
-<section id="command-line-arguments">
-<h2>Command-Line Arguments<a class="headerlink" href="#command-line-arguments" title="Link to this heading">¶</a></h2>
-<p>Command-line arguments have the highest precedence and override both configuration file settings and environment variables:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--dfn-broker-address<span class="w"> </span><span class="s2">&quot;kafka.example.org:443&quot;</span><span class="w"> </span>--log-level<span class="w"> </span><span class="s2">&quot;DEBUG&quot;</span>
-</pre></div>
-</div>
-<p>To see all available command-line options:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--help
-</pre></div>
-</div>
-<p>For a complete list of all configuration options with descriptions:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--help-all
-</pre></div>
-</div>
+<section id="pull-request-process">
+<h2>Pull Request Process<a class="headerlink" href="#pull-request-process" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Fork the repository</p></li>
+<li><p>Create a feature branch (<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">checkout</span> <span class="pre">-b</span> <span class="pre">feature/amazing-feature</span></code>)</p></li>
+<li><p>Make your changes</p></li>
+<li><p>Run the test suite and linting tools</p></li>
+<li><p>Update documentation if needed</p></li>
+<li><p>Commit your changes (<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">commit</span> <span class="pre">-m</span> <span class="pre">'Add</span> <span class="pre">amazing</span> <span class="pre">feature'</span></code>)</p></li>
+<li><p>Push to your fork (<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">push</span> <span class="pre">origin</span> <span class="pre">feature/amazing-feature</span></code>)</p></li>
+<li><p>Open a Pull Request</p></li>
+</ol>
+<section id="commit-messages">
+<h3>Commit Messages<a class="headerlink" href="#commit-messages" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Use the present tense (“Add feature” not “Added feature”)</p></li>
+<li><p>Use the imperative mood (“Move cursor to…” not “Moves cursor to…”)</p></li>
+<li><p>Limit the first line to 72 characters</p></li>
+<li><p>Reference issues and pull requests in the body</p></li>
+</ul>
 </section>
-<section id="verifying-configuration">
-<h2>Verifying Configuration<a class="headerlink" href="#verifying-configuration" title="Link to this heading">¶</a></h2>
-<p>To verify your configuration without starting the service:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--print-config-only<span class="w"> </span>--config<span class="w"> </span>/path/to/config.toml
-</pre></div>
-</div>
 </section>
-<section id="best-practices">
-<h2>Best Practices<a class="headerlink" href="#best-practices" title="Link to this heading">¶</a></h2>
-<ol class="arabic">
-<li><p><strong>Start with a sample configuration</strong>:
-Generate a sample config and customize it for your environment:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wazuh-dfn<span class="w"> </span>--generate-sample-config<span class="w"> </span>--output-format<span class="w"> </span>toml<span class="w"> </span>&gt;<span class="w"> </span>config.toml
-</pre></div>
-</div>
-</li>
-<li><p><strong>Use secure defaults</strong>:
-- Enable TLS/SSL with proper certificate validation
-- Set appropriate retry limits and timeouts
-- Configure proper logging for troubleshooting</p></li>
-<li><p><strong>Tune worker count</strong>:
-Adjust <cite>num_workers</cite> based on your CPU resources and alert volume</p></li>
-<li><p><strong>Monitor performance</strong>:
-Use the logging service’s statistics to monitor alert processing performance</p></li>
+<section id="development-workflow">
+<h2>Development Workflow<a class="headerlink" href="#development-workflow" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Pick an issue to work on or create a new one</p></li>
+<li><p>Discuss the proposed changes in the issue</p></li>
+<li><p>Fork and clone the repository</p></li>
+<li><p>Create a new branch for your changes</p></li>
+<li><p>Make your changes</p></li>
+<li><p>Write or update tests</p></li>
+<li><p>Update documentation</p></li>
+<li><p>Submit a pull request</p></li>
 </ol>
 </section>
-<section id="next-steps">
-<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading">¶</a></h2>
-<p>After configuring the service, proceed to the <a class="reference internal" href="usage.html"><span class="doc">Wazuh-DFN Usage Guide</span></a> section to learn how to run and manage the service.</p>
+<section id="code-review-process">
+<h2>Code Review Process<a class="headerlink" href="#code-review-process" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>At least one maintainer must review and approve the changes</p></li>
+<li><p>All automated checks must pass</p></li>
+<li><p>Documentation must be updated if needed</p></li>
+<li><p>Test coverage should not decrease</p></li>
+</ol>
+</section>
+<section id="release-process">
+<h2>Release Process<a class="headerlink" href="#release-process" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Update version in pyproject.toml</p></li>
+<li><p>Update CHANGELOG</p></li>
+</ol>
 </section>
 </section>
 
@@ -496,23 +397,15 @@ Use the logging service’s statistics to monitor alert processing performance</
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="usage.html">
-              <div class="page-info">
-                <div class="context">
-                  <span>Next</span>
-                </div>
-                <div class="title">Wazuh-DFN Usage Guide</div>
-              </div>
-              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
-            </a>
-          <a class="prev-page" href="installation.html">
+          
+          <a class="prev-page" href="architecture.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Installation</div>
+                <div class="title">Wazuh-DFN Architecture</div>
                 
               </div>
             </a>
@@ -553,21 +446,17 @@ Use the logging service’s statistics to monitor alert processing performance</
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">Configuration</a><ul>
-<li><a class="reference internal" href="#configuration-file-formats">Configuration File Formats</a></li>
-<li><a class="reference internal" href="#configuration-sections">Configuration Sections</a><ul>
-<li><a class="reference internal" href="#dfn-configuration">DFN Configuration</a></li>
-<li><a class="reference internal" href="#wazuh-configuration">Wazuh Configuration</a></li>
-<li><a class="reference internal" href="#kafka-configuration">Kafka Configuration</a></li>
-<li><a class="reference internal" href="#logging-configuration">Logging Configuration</a></li>
-<li><a class="reference internal" href="#miscellaneous-configuration">Miscellaneous Configuration</a></li>
+<li><a class="reference internal" href="#">Contributing to wazuh-dfn</a><ul>
+<li><a class="reference internal" href="#development-setup">Development Setup</a></li>
+<li><a class="reference internal" href="#code-style">Code Style</a></li>
+<li><a class="reference internal" href="#testing">Testing</a></li>
+<li><a class="reference internal" href="#pull-request-process">Pull Request Process</a><ul>
+<li><a class="reference internal" href="#commit-messages">Commit Messages</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#environment-variables">Environment Variables</a></li>
-<li><a class="reference internal" href="#command-line-arguments">Command-Line Arguments</a></li>
-<li><a class="reference internal" href="#verifying-configuration">Verifying Configuration</a></li>
-<li><a class="reference internal" href="#best-practices">Best Practices</a></li>
-<li><a class="reference internal" href="#next-steps">Next Steps</a></li>
+<li><a class="reference internal" href="#development-workflow">Development Workflow</a></li>
+<li><a class="reference internal" href="#code-review-process">Code Review Process</a></li>
+<li><a class="reference internal" href="#release-process">Release Process</a></li>
 </ul>
 </li>
 </ul>
