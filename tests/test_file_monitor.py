@@ -6,7 +6,8 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from wazuh_dfn.services.file_monitor import FileMonitor
+from unittest.mock import patch
+from wazuh_dfn.services.file_monitor import MAX_WAIT_TIME, FileMonitor
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -264,7 +265,7 @@ async def test_process_alert_with_replace(mocker):
         alert_queue=mock_queue,
         alert_prefix='{"timestamp"',
         store_failed_alerts=True,
-        failed_alerts_path="/tmp",
+        failed_alerts_path="/tmp",  # noqa: S108
     )
 
     # Create alert bytes with invalid UTF-8 sequence
@@ -280,3 +281,110 @@ async def test_process_alert_with_replace(mocker):
     assert result is True
     mock_queue.put.assert_called_once()
     _save_mock.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_file_monitor_handle_nonexistent_inode(file_monitor, temp_log_file):
+    """Test handling of file rotation with nonexistent path."""
+    try:
+        # First make sure file is open
+        assert await file_monitor.open()
+
+        # Store current inode
+        original_inode = file_monitor.current_inode
+        assert original_inode is not None
+
+        # Mock Path.stat() to raise an exception
+        with patch("pathlib.Path.stat", side_effect=FileNotFoundError("No such file")):
+            # Check inode should handle the error
+            assert await file_monitor._check_inode() is False
+            # Current inode should remain unchanged
+            assert file_monitor.current_inode == original_inode
+            # Buffer should be untouched
+            assert len(file_monitor.buffer) == 0
+    finally:
+        await file_monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_data_timeout(file_monitor):
+    """Test waiting for data with timeout."""
+    try:
+        # Add data to buffer to trigger waiting
+        file_monitor.buffer.extend(b'{"incomplete": "alert"')
+
+        # Test with wait_start already set (should return the same wait_start)
+        wait_start = time.time() - 0.05  # Started 50ms ago
+        result = await file_monitor._wait_for_data(wait_start)
+        assert result == wait_start  # Should return the same wait_start
+
+        # Test timeout (wait_start older than MAX_WAIT_TIME)
+        old_wait_start = time.time() - (MAX_WAIT_TIME + 0.1)  # Just past the timeout
+        result = await file_monitor._wait_for_data(old_wait_start)
+        assert result is None  # Should return None after timeout
+    finally:
+        await file_monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failed_alerts_error_handling(file_monitor, temp_failed_alerts_dir):
+    """Test error handling in cleanup_failed_alerts."""
+    try:
+        # Create test files
+        failed_dir = Path(temp_failed_alerts_dir)
+        test_files = []
+        for i in range(5):
+            test_file = failed_dir / f"test_{i}_failed_alert.json"
+            test_file.write_text("{}")
+            test_files.append(test_file)
+
+        # Mock unlink to raise an error for one file
+        with patch.object(Path, "unlink", side_effect=PermissionError("Access denied")):
+            # This should log the error but not fail
+            await file_monitor._cleanup_failed_alerts()
+
+            # Files should still exist since deletion failed
+            assert all(f.exists() for f in test_files)
+    finally:
+        await file_monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_file_status_nonexistent_file(file_monitor, temp_log_file):
+    """Test handling file status when file doesn't exist."""
+    try:
+        # First make sure file is opened
+        assert await file_monitor.open()
+
+        # Close the file explicitly before attempting to delete it
+        await file_monitor.close()
+        await asyncio.sleep(0.2)  # Give time for OS to release file handle
+
+        # Try to delete the file with retries
+        file_deleted = False
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                Path(temp_log_file).unlink()
+                file_deleted = True
+                break
+            except PermissionError:
+                if attempt < max_attempts - 1:
+                    LOGGER.warning(f"File still locked, waiting before retry {attempt+1}/{max_attempts}")
+                    await asyncio.sleep(0.3)
+                else:
+                    LOGGER.error("Could not delete file, will mock the file as missing instead")
+
+        # If we couldn't delete the file, mock Path.exists() to simulate it being gone
+        if not file_deleted:
+            with patch.object(Path, "exists", return_value=False):
+                result = await file_monitor._handle_file_status()
+                assert result is False
+                assert file_monitor.fp is None
+        else:
+            # File was successfully deleted, test without mocking
+            result = await file_monitor._handle_file_status()
+            assert result is False
+            assert file_monitor.fp is None
+    finally:
+        await file_monitor.close()

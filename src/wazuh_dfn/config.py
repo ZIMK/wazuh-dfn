@@ -785,6 +785,7 @@ class Config(BaseModel):
     @staticmethod
     def _load_from_env(config: "Config") -> None:
         """Load configuration from environment variables."""
+        import json  # Import json for parsing JSON strings in env vars
         import os  # Import os only for environment variables access
 
         env_updates = {}
@@ -800,6 +801,17 @@ class Config(BaseModel):
                 env_var = field_info.json_schema_extra.get("env_var") if field_info.json_schema_extra else None
                 if env_var and env_var in os.environ:
                     value = os.environ[env_var]
+
+                    # If the field type is a dictionary and the value is a JSON string, parse it
+                    field_type = field_info.annotation
+                    if field_type is dict or (hasattr(field_type, "__origin__") and field_type.__origin__ is dict):
+                        # Try to parse as JSON if it looks like JSON
+                        if isinstance(value, str) and value.strip().startswith("{") and value.strip().endswith("}"):
+                            try:
+                                value = json.loads(value)
+                            except json.JSONDecodeError:
+                                LOGGER.warning(f"Failed to parse JSON for environment variable {env_var}")
+
                     section_updates[field_name] = value
 
             if section_updates:

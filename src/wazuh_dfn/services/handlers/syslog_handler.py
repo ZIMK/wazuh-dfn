@@ -148,12 +148,11 @@ class SyslogHandler:
         try:
             ip_addr = ipaddress.ip_address(ip)
 
-            if (
-                self.own_network
-                and type(ip_addr) is ipaddress.IPv4Address
-                and ip_addr in ipaddress.ip_network(self.own_network)
-            ):
+            # Handle own_network check for IPv4
+            if self.own_network and type(ip_addr) is ipaddress.IPv4Address and ip_addr in self.own_network:
                 return False
+
+            # Let Python's ipaddress module determine if the IP is global
             return ip_addr.is_global
 
         except Exception:
@@ -210,8 +209,12 @@ class SyslogHandler:
         msg_data["event_raw"] = f"<{priority}> 1 {msg}"
 
         index_of = -1
-        if len(alert["data"]["severity"]) > 0:
-            index_of = msg_data["event_raw"].index(alert["data"]["severity"])
+        severity_str = alert["data"].get("severity", "")
+        if severity_str and len(severity_str) > 0:
+            # Only search for non-empty severity strings
+            if severity_str in msg_data["event_raw"]:
+                index_of = msg_data["event_raw"].index(severity_str)
+
         if index_of >= 0:
             msg_data["body"] = msg_data["event_raw"][index_of:]
         else:

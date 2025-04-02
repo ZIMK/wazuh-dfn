@@ -335,3 +335,84 @@ async def test_syslog_handler_invalid_ip_format(syslog_handler, caplog):
 
     # Now the mock should have the called attribute
     assert not syslog_handler.kafka_service.send_message.called
+
+
+@pytest.mark.asyncio
+async def test_process_alert_unexpected_exception(syslog_handler, caplog):
+    """Test handling of unexpected exceptions in process_alert."""
+    caplog.set_level(logging.ERROR)
+
+    # Create a test alert
+    test_alert = {
+        "id": "test-error-alert",
+        "data": {"srcip": "192.168.1.100", "program_name": "fail2ban.actions"},
+        "rule": {"groups": ["fail2ban"]},
+    }
+
+    # Mock _is_relevant_fail2ban_alert to raise an exception
+    with patch.object(syslog_handler, "_is_relevant_fail2ban_alert", side_effect=Exception("Unexpected test error")):
+        await syslog_handler.process_alert(test_alert)
+
+    # Check error was logged with the alert ID
+    assert any("Error processing Syslog alert: test-error-alert" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_is_global_ip_various_cases(syslog_handler):
+    """Test IP address validation with various cases."""
+    # Setup test network
+    syslog_handler.own_network = ipaddress.ip_network("10.0.0.0/8")
+
+    # Test cases
+    assert syslog_handler._is_global_ip("8.8.8.8") is True  # Public IP
+    assert syslog_handler._is_global_ip("192.168.1.1") is False  # Private IP
+    assert syslog_handler._is_global_ip("10.1.2.3") is False  # Own network
+    assert syslog_handler._is_global_ip("invalid_ip") is False  # Invalid IP
+    assert syslog_handler._is_global_ip("2001:db8::1") is False  # IPv6 documentation address
+    assert syslog_handler._is_global_ip("fe80::1") is False  # IPv6 link-local
+
+
+@pytest.mark.asyncio
+async def test_create_message_data_variations(syslog_handler):
+    """Test message data creation with different alert structures."""
+    # Test with minimal alert
+    minimal_alert = {
+        "timestamp": "2023-01-01T00:00:00",
+        "data": {"program_name": "fail2ban.actions", "srcip": "192.168.1.1", "severity": ""},
+        "rule": {"groups": ["fail2ban"]},
+        "full_log": "Test log message",
+        "agent": {"name": "test-agent"},
+    }
+
+    message = syslog_handler._create_message_data(minimal_alert)
+    assert message["timestamp"] == "2023-01-01T00:00:00"
+    assert message["appName"] == "fail2ban.actions"
+    assert message["event_raw"].endswith("Test log message")
+
+    # Test with severity variations
+    for severity, expected in [("NOTICE", 5), ("WARNING", 4), ("ERROR", 3)]:
+        alert = minimal_alert.copy()
+        alert["data"] = alert["data"].copy()
+        alert["data"]["severity"] = severity
+        message = syslog_handler._create_message_data(alert)
+        assert message["severity"] == expected
+
+
+@pytest.mark.asyncio
+async def test_send_message_error_handling(syslog_handler):
+    """Test error handling in _send_message method."""
+    # Create test message and mock services
+    test_message = {"timestamp": "2023-01-01T00:00:00", "context_alert": {"id": "test-send-error"}}
+
+    # Mock Kafka service to fail
+    syslog_handler.kafka_service.send_message = AsyncMock(return_value=False)
+    syslog_handler.wazuh_service.send_error = AsyncMock()
+
+    # Call method and verify error handling
+    await syslog_handler._send_message(test_message, "test-send-error")
+
+    # Verify error was sent to Wazuh
+    syslog_handler.wazuh_service.send_error.assert_called_once()
+    call_args = syslog_handler.wazuh_service.send_error.call_args[0][0]
+    assert call_args["error"] == 503
+    assert "Failed to send fail2ban alert" in call_args["description"]

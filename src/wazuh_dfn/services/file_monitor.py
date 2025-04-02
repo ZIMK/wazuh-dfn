@@ -365,7 +365,7 @@ class FileMonitor:
         if len(self.buffer) > 0:
             if wait_start is None:
                 return time.time()
-            elif time.time() - wait_start > MAX_WAIT_TIME:
+            elif time.time() - wait_start > MAX_WAIT_TIME:  # Use module-level constant
                 LOGGER.debug("Max wait time reached, will process buffer in next round")
                 return None
             await asyncio.sleep(0.1)

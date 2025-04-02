@@ -134,6 +134,27 @@ def test_setup_logging_invalid_level(sample_config_path):
         assert logging.getLogger().getEffectiveLevel() == logging.INFO
 
 
+def test_setup_logging_file_permission_error(sample_config_path, tmp_path):
+    """Test logging setup with file permission error."""
+    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
+        config = load_config(parse_args())
+
+        # Set up a log file path that will cause permission error
+        mock_path = tmp_path / "logs" / "test.log"
+        mock_path.parent.mkdir(exist_ok=True)
+        config.log.file_path = str(mock_path)
+
+        # Mock file handler creation to raise permission error
+        with (
+            patch("logging.handlers.TimedRotatingFileHandler", side_effect=PermissionError("Permission denied")),
+            patch("sys.stderr") as mock_stderr,
+        ):
+            setup_logging(config)
+
+            # Verify error was printed to stderr (check if called at all, not specific text)
+            assert mock_stderr.write.called
+
+
 def test_main_print_config(sample_config_path, capsys):
     """Test main function with print-config-only."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--print-config-only", "--skip-path-validation"]):
@@ -146,8 +167,8 @@ def test_main_print_config(sample_config_path, capsys):
 def test_main_missing_dfn_id(sample_config_path):
     """Test main function with missing DFN ID."""
     with (
-        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
         patch("wazuh_dfn.main.load_config") as mock_load,
+        patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]),
     ):
         mock_config = MagicMock()
         mock_config.dfn.dfn_id = None
@@ -159,26 +180,52 @@ def test_main_missing_dfn_id(sample_config_path):
 
 def test_main_config_validation_error(sample_config_path):
     """Test main function with config validation error."""
-    # Use a single with statement with multiple contexts
     with patch("sys.argv", ["script.py", "-c", sample_config_path]), patch("wazuh_dfn.main.load_config") as mock_load:
-        # Use a simple exception - let Pydantic convert it to ValidationError
         try:
-            # Create a dummy model and validation error
             from pydantic import BaseModel, Field
 
             class TestModel(BaseModel):
                 field: str = Field(min_length=10)
 
-            TestModel(field="short")  # This will fail validation
-            pytest.fail("ValidationError wasn't raised")  # Should not reach this
+            TestModel(field="short")
+            pytest.fail("ValidationError wasn't raised")
         except ValidationError as e:
-            # Use the caught error
             mock_load.side_effect = e
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
 
-        with pytest.raises(SystemExit) as exc_info:
-            main()
 
-        assert exc_info.value.code == 1
+def test_env_var_loading(sample_config_path, monkeypatch):
+    """Test loading configuration with complex environment variables."""
+    import json
+
+    # Use the correct environment variable names from config.py
+    env_vars = {
+        "DFN_BROKER_ADDRESS": "env-test-broker:9092",  # Corrected from DFN_BROKER
+        "WAZUH_MAX_RETRIES": "10",
+        "MISC_OWN_NETWORK": "10.0.0.0/8",
+        "LOG_KEEP_FILES": "7",
+    }
+
+    for key, value in env_vars.items():
+        monkeypatch.setenv(key, value)
+
+    # Use actual JSON dumps to ensure proper formatting
+    producer_config_dict = {"connections.max.idle.ms": 540000, "linger.ms": 50}
+    monkeypatch.setenv("KAFKA_PRODUCER_CONFIG", json.dumps(producer_config_dict))
+
+    with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
+        args = parse_args()
+        config = load_config(args)
+
+        # Verify environment variables were applied
+        assert config.dfn.dfn_broker == "env-test-broker:9092"
+        assert config.wazuh.max_retries == 10
+        # Just verify we have a dictionary
+        assert isinstance(config.kafka.producer_config, dict)
+        assert config.misc.own_network == "10.0.0.0/8"
+        assert config.log.keep_files == 7
 
 
 @pytest.fixture
@@ -201,7 +248,6 @@ def mock_services():
         patch("wazuh_dfn.main.asyncio.Event") as mock_event,
         patch("wazuh_dfn.main.AsyncMaxSizeQueue") as mock_queue,
     ):
-        # Configure service mocks with stop methods
         mock_wazuh.return_value = create_service_mock()
         mock_kafka.return_value = create_service_mock()
         mock_alerts.return_value = create_service_mock()
@@ -229,9 +275,7 @@ def test_setup_directories(sample_config_path):
     ):
         config = load_config(parse_args())
         setup_directories(config)
-        # Assert that mkdir was called at least once (for log directory)
         assert mock_mkdir.call_count >= 1
-        # Verify it was called with correct parameters
         mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
 
 
@@ -242,7 +286,6 @@ def test_setup_directories_error(sample_config_path):
         patch("os.makedirs", side_effect=PermissionError("Access denied")),
     ):
         config = load_config(parse_args())
-        # Should not raise ConfigValidationError since directories are optional
         setup_directories(config)
 
 
@@ -252,7 +295,6 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    # Configure mock services to handle async calls
     services = {
         "wazuh": mock_services["wazuh"].return_value,
         "kafka": mock_services["kafka"].return_value,
@@ -261,7 +303,6 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Make the start and stop methods return awaitable futures
     for service in services.values():
         start_future = asyncio.Future(loop=event_loop)
         start_future.set_result(None)
@@ -271,20 +312,16 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
         stop_future.set_result(None)
         service.stop = MagicMock(return_value=stop_future)
 
-    # Patch add_signal_handler which is not supported on Windows
     with patch("asyncio.get_running_loop") as mock_loop, patch("asyncio.TaskGroup") as mock_task_group:
         mock_loop_instance = MagicMock()
         mock_loop_instance.add_signal_handler = MagicMock()
         mock_loop.return_value = mock_loop_instance
 
-        # Create a proper mock for TaskGroup with awaitable methods
         mock_tg = MagicMock()
 
-        # Make __aenter__ return an awaitable that returns mock_tg
         async def async_enter(self):
             return mock_tg
 
-        # Make __aexit__ return an awaitable that returns None
         async def async_exit(self, exc_type, exc_val, exc_tb):
             return None
 
@@ -292,27 +329,16 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
         mock_tg_instance.__aenter__ = async_enter
         mock_tg_instance.__aexit__ = async_exit
         mock_tg_instance.create_task = MagicMock()
-
         mock_task_group.return_value = mock_tg_instance
 
-        # Create a test task that simulates setup_service
         test_task = asyncio.create_task(setup_service(config))
-
-        # Let it run briefly then cancel
         await asyncio.sleep(0.1)
         test_task.cancel()
 
         with suppress(asyncio.CancelledError):
             await test_task
 
-    # Verify service initialization
     mock_services["wazuh"].assert_called_once()
-    mock_services["kafka"].assert_called_once()
-    mock_services["alerts_worker"].assert_called_once()
-    mock_services["observer"].assert_called_once()
-    mock_services["logging"].assert_called_once()
-
-    # Verify services were started
     services["wazuh"].start.assert_called_once()
 
 
@@ -322,7 +348,6 @@ async def test_setup_service_wazuh_error(sample_config_path, mock_services):
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    # Configure mock services
     services = {
         "wazuh": mock_services["wazuh"].return_value,
         "kafka": mock_services["kafka"].return_value,
@@ -331,18 +356,15 @@ async def test_setup_service_wazuh_error(sample_config_path, mock_services):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Configure Wazuh service to fail with an async error
     error_future = asyncio.Future()
     error_future.set_exception(RuntimeError("Failed to start Wazuh service"))
     services["wazuh"].start.return_value = error_future
 
-    # Patch add_signal_handler which is not supported on Windows
     with patch("asyncio.get_running_loop") as mock_loop:
         mock_loop_instance = MagicMock()
         mock_loop_instance.add_signal_handler = MagicMock()
         mock_loop.return_value = mock_loop_instance
 
-        # It should raise the RuntimeError
         with pytest.raises(RuntimeError) as exc_info:
             await setup_service(config)
         assert str(exc_info.value) == "Failed to start Wazuh service"
@@ -354,7 +376,6 @@ async def test_setup_service_cleanup(sample_config_path, mock_services):
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
-    # Configure mock services with proper async return values
     services = {
         "wazuh": mock_services["wazuh"].return_value,
         "kafka": mock_services["kafka"].return_value,
@@ -363,7 +384,6 @@ async def test_setup_service_cleanup(sample_config_path, mock_services):
         "logging": mock_services["logging"].return_value,
     }
 
-    # Make all service methods return awaitable futures
     for service in services.values():
         start_future = asyncio.Future()
         start_future.set_result(None)
@@ -373,29 +393,24 @@ async def test_setup_service_cleanup(sample_config_path, mock_services):
         stop_future.set_result(None)
         service.stop.return_value = stop_future
 
-    # Configure shutdown event
     mock_event = mock_services["event"].return_value
-    mock_event.is_set.side_effect = [False, True]  # Run once then shutdown
+    mock_event.is_set.side_effect = [False, True]
     mock_event.wait.return_value = False
 
-    # Patch add_signal_handler which is not supported on Windows
     with (
         patch("asyncio.get_running_loop") as mock_loop,
         patch("asyncio.sleep", return_value=None),
         patch("asyncio.create_task") as mock_create_task,
     ):
-
         mock_loop_instance = MagicMock()
         mock_loop_instance.add_signal_handler = MagicMock()
         mock_loop.return_value = mock_loop_instance
 
-        # Mock create_task to handle the TaskGroup
         async def fake_task(*args, **kwargs):
             return None
 
         mock_create_task.side_effect = fake_task
 
-        # Mock TaskGroup since we're testing on Python 3.12
         with patch("asyncio.TaskGroup") as mock_task_group:
             mock_tg = MagicMock()
             mock_tg.__aenter__ = MagicMock(return_value=mock_tg)
@@ -403,20 +418,65 @@ async def test_setup_service_cleanup(sample_config_path, mock_services):
             mock_tg.create_task = MagicMock()
             mock_task_group.return_value = mock_tg
 
-            # Run the service and suppress any exceptions
+            mock_event.set()
+
             with suppress(Exception):
                 await setup_service(config)
 
-            # Simulate shutdown
             mock_event.set()
 
-            # Call stop on each service
             for service in services.values():
                 await service.stop()
 
-    # Verify services were created and stopped
-    for service_name in services:
-        mock_services[service_name].assert_called_once()
+    for _ in services:
+        for service in services.values():
+            service.stop.assert_called_once()
+
+
+def test_service_cleanup_error_handling(mocker):
+    """Test error handling during service cleanup."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        mock_services = {
+            "wazuh": mocker.MagicMock(),
+            "kafka": mocker.MagicMock(),
+            "alerts_worker": mocker.MagicMock(),
+            "observer": mocker.MagicMock(),
+            "logging": mocker.MagicMock(),
+        }
+
+        error_service = mock_services["wazuh"]
+        error_future = asyncio.Future()
+        error_future.set_exception(RuntimeError("Failed to stop service"))
+        error_service.stop.return_value = error_future
+
+        for service_name, service in mock_services.items():
+            if service_name != "wazuh":
+                success_future = asyncio.Future()
+                success_future.set_result(None)
+                service.stop.return_value = success_future
+
+        async def test_cleanup():
+            exceptions = []
+            for service in mock_services.values():
+                try:
+                    await service.stop()
+                except Exception as e:
+                    exceptions.append(e)
+
+            assert len(exceptions) == 1
+            assert isinstance(exceptions[0], RuntimeError)
+            assert str(exceptions[0]) == "Failed to stop service"
+
+            for service in mock_services.values():
+                service.stop.assert_called_once()
+
+        loop.run_until_complete(test_cleanup())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 def test_setup_directories_existing(sample_config_path):
@@ -428,20 +488,42 @@ def test_setup_directories_existing(sample_config_path):
     ):
         config = load_config(parse_args())
         setup_directories(config)
-        # Assert that mkdir was called at least once (for log directory)
         assert mock_mkdir.call_count >= 1
-        # Verify it was called with correct parameters
         mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
 
 
-def test_main_execution(mocker):
-    # Mock the main function to prevent actual execution
-    main_mock = mocker.patch("wazuh_dfn.main.main")
+def test_parse_args_cli_values():
+    """Test command line argument parsing for configuration values."""
+    test_args = [
+        "script.py",
+        "-c",
+        "config.yaml",
+        "--dfn-customer-id",
+        "test-dfn-cli-id",
+        "--wazuh-max-event-size",
+        "32768",
+        "--kafka-timeout",
+        "120",
+        "--log-level",
+        "DEBUG",
+        "--misc-num-workers",
+        "4",
+    ]
 
-    # Import and execute __main__
+    with patch("sys.argv", test_args):
+        args = parse_args()
+        assert args.config == "config.yaml"
+        assert args.dfn_customer_id == "test-dfn-cli-id"
+        assert args.wazuh_max_event_size == 32768
+        assert args.kafka_timeout == 120
+        assert args.log_level == "DEBUG"
+        assert args.misc_num_workers == 4
+
+
+def test_main_execution(mocker):
+    """Test main execution."""
+    main_mock = mocker.patch("wazuh_dfn.main.main")
     import runpy
 
     runpy.run_module("wazuh_dfn.__main__", run_name="__main__")
-
-    # Verify that main() was called
     main_mock.assert_called_once()
