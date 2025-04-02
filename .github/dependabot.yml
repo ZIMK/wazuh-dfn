@@ -28,3 +28,34 @@ updates:
       python-packages:
         patterns:
           - "*"
+    # Add vulnerability alerts configuration
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore patch updates for non-critical dependencies
+      - dependency-name: "black"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "ruff"
+        update-types: ["version-update:semver-patch"]
+
+  # Add GitHub Actions ecosystem monitoring
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "-"
+    reviewers:
+      - "sebastian2010"
+    target-branch: "main"

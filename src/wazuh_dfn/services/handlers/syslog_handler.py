@@ -48,10 +48,32 @@ class SyslogHandler:
             alert: Alert data to process
         """
         try:
-            self._process_fail2ban_alert(alert)
+            if self._is_relevant_fail2ban_alert(alert):
+                self._process_fail2ban_alert(alert)
+            else:
+                LOGGER.debug("No fail2ban alert to process")
         except Exception as error:
             alert_id = alert.get("id", "Unknown")
             LOGGER.error(f"Error processing Syslog alert: {alert_id}: {error!s}", exc_info=True)
+
+    def _is_relevant_fail2ban_alert(self, alert: dict[str, Any]) -> bool:
+        """Check if the alert is a relevant fail2ban alert to process.
+
+        Args:
+            alert: Alert data to check
+
+        Returns:
+            bool: True if the alert is a relevant fail2ban alert
+        """
+        return (
+            "data" in alert
+            and "srcip" in alert["data"]
+            and "program_name" in alert["data"]
+            and alert["data"]["program_name"] == "fail2ban.actions"
+            and "rule" in alert
+            and "groups" in alert["rule"]
+            and "fail2ban" in alert["rule"]["groups"]
+        )
 
     def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
         """Process fail2ban-specific alert data.
@@ -62,35 +84,24 @@ class SyslogHandler:
         LOGGER.debug("Processing fail2ban alert...")
         LOGGER.debug("Executing _process_fail2ban_alert method")
 
-        if (
-            "data" in alert
-            and "srcip" in alert["data"]
-            and "program_name" in alert["data"]
-            and alert["data"]["program_name"] == "fail2ban.actions"
-            and "rule" in alert
-            and "groups" in alert["rule"]
-            and "fail2ban" in alert["rule"]["groups"]
-        ):
-            # Extract source IP
-            source_ip = alert["data"]["srcip"]
-            if not source_ip:
-                LOGGER.error("No source IP in fail2ban alert")
-                return
+        # Extract source IP
+        source_ip = alert["data"]["srcip"]
+        if not source_ip:
+            LOGGER.error("No source IP in fail2ban alert")
+            return
 
-            # Check if IP is internal (only if own_network is configured)
-            if self.own_network and not self._is_global_ip(source_ip):
-                LOGGER.info(f"Ignoring internal IP: {source_ip}")
-                return
+        # Check if IP is internal (only if own_network is configured)
+        if self.own_network and not self._is_global_ip(source_ip):
+            LOGGER.info(f"Ignoring internal IP: {source_ip}")
+            return
 
-            # Create message data for Kafka
-            message_data = self._create_message_data(alert)
+        # Create message data for Kafka
+        message_data = self._create_message_data(alert)
 
-            # Use asyncio to send to Kafka
-            alert_id = alert.get("id", "Unknown")
-            # Store the task reference to fix RUF006, and suppress the linting error
-            _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
-        else:
-            LOGGER.debug("No fail2ban alert to process")
+        # Use asyncio to send to Kafka
+        alert_id = alert.get("id", "Unknown")
+        # Store the task reference to fix RUF006, and suppress the linting error
+        _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
 
     async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
         """Send message to Kafka asynchronously.

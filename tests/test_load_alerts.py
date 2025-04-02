@@ -7,19 +7,20 @@ from pathlib import Path
 from wazuh_dfn.services.file_monitor import FileMonitor
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
+TEST_DIR = Path(__file__).parent
+INTEGRATION_DIR = TEST_DIR / "integration_files"
+
 
 # Utility functions
 def load_json_alert(filename):
     """Load a JSON alert file from the tests directory"""
-    test_dir = Path(__file__).parent
-    with (test_dir / filename).open() as f:
+    with (INTEGRATION_DIR / filename).open() as f:
         return json.load(f)
 
 
 def get_test_files():
     """Get list of all JSON test files"""
-    test_dir = Path(__file__).parent
-    return [f.name for f in test_dir.glob("*.json")]
+    return [f.name for f in INTEGRATION_DIR.glob("*.json")]
 
 
 async def write_alerts_to_temp_file(alerts):
@@ -64,7 +65,7 @@ def test_alert_types():
     assert win_alert["rule"]["id"] == "60204"
 
     # Test Fail2ban alert
-    f2b_alert = load_json_alert("lin_fail2ban-1.json")
+    f2b_alert = load_json_alert("lin_fail2ban-1-SKIP.json")
     assert f2b_alert["data"]["program_name"] == "fail2ban.filter"
     assert f2b_alert["rule"]["id"] == "833002"
 
@@ -135,7 +136,7 @@ async def test_file_monitor_rotation():
     """Test FileMonitor handling file rotation"""
     # Load test alerts
     alerts_batch1 = [load_json_alert("win_4625.json")]
-    alerts_batch2 = [load_json_alert("lin_fail2ban-1.json")]
+    alerts_batch2 = [load_json_alert("lin_fail2ban-2.json")]
 
     temp_file = await write_alerts_to_temp_file(alerts_batch1)
     monitor = None
@@ -180,7 +181,7 @@ async def test_file_monitor_rotation():
         # Verify second batch
         assert not alert_queue.empty(), "No alerts processed after rotation"
         second_alert = await alert_queue.get()
-        assert second_alert["rule"]["id"] == "833002", "Wrong alert processed after rotation"
+        assert second_alert["rule"]["id"] == "833001", "Wrong alert processed after rotation"
         alert_queue.task_done()
 
         # Verify no extra alerts

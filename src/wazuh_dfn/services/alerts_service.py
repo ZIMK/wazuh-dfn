@@ -43,6 +43,22 @@ class AlertsService:
         self.syslog_handler = SyslogHandler(config, kafka_service, wazuh_service)
         self.windows_handler = WindowsHandler(kafka_service, wazuh_service)
 
+    def is_relevant_alert(self, alert: dict[str, Any]) -> bool:
+        """Check if an alert is relevant for processing.
+
+        Consults the appropriate handlers to determine if the alert
+        should be processed.
+
+        Args:
+            alert: Alert data to check
+
+        Returns:
+            bool: True if the alert is relevant for processing
+        """
+        return self.windows_handler._is_relevant_windows_alert(
+            alert
+        ) or self.syslog_handler._is_relevant_fail2ban_alert(alert)
+
     async def process_alert(self, alert: dict[str, Any]) -> None:
         """Process an alert.
 

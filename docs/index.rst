@@ -1,24 +1,57 @@
-.. wazuh-dfn documentation master file, created by
-   sphinx-quickstart on Thu Jan  2 09:32:54 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Wazuh-DFN Documentation
+=====================
 
-wazuh-dfn documentation
-=======================
+Welcome to the Wazuh-DFN documentation!
 
-The **wazuh-dfn** is a specialized daemon that integrates Wazuh with DFN-CERT services. It monitors Wazuh alert files and forwards relevant security events to the DFN SOC (Security Operations Center) for advanced analysis and threat detection.
+Wazuh-DFN is a specialized daemon that integrates Wazuh with DFN-CERT services. It monitors Wazuh alert files and forwards relevant security events to the DFN SOC (Security Operations Center) for advanced analysis and threat detection. The service is built with asyncio for efficient, non-blocking I/O operations, resulting in high performance and scalability.
 
-.. note:: **wazuh-dfn** requires at least Python 3.12. Python 2 is not supported.
-
-User Guide
-----------
-
-This sections explains how to install and configure **wazuh-dfn**.
+Contents
+-------
 
 .. toctree::
    :maxdepth: 2
+   :caption: User Guide
 
    about
    installation
    configuration
+   usage
    troubleshooting
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Architecture
+
+   architecture
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Development
+
+   contributing
+
+Features
+-------
+
+- **Asynchronous Architecture**: Built with Python's asyncio for efficient I/O operations
+- **Robust Error Handling**: Automatic reconnection, queue management, and error recovery
+- **High Performance**: Processes large volumes of alerts with minimal overhead
+- **Secure Communication**: TLS/SSL support for Kafka communication
+- **Extensible**: Modular design with specialized handlers for different alert types
+- **Configurable**: Flexible configuration options via YAML, TOML, environment variables, or CLI arguments
+- **Metrics & Logging**: Comprehensive logging and performance metrics
+
+Requirements
+----------
+
+- Python 3.12 or later
+- Wazuh manager instance
+- DFN-CERT Kafka broker access
+- TLS/SSL certificates for secure communication
+
+Indices and tables
+================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`

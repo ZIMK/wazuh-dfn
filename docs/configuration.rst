@@ -1,331 +1,233 @@
-Configuration Methods
-=====================
+Configuration
+=============
 
-The service can be configured in three ways, with the following
-precedence (highest to lowest):
+This section covers the configuration options for the wazuh-dfn service. The service supports multiple configuration methods with the following precedence (highest to lowest):
 
 1. Command-line arguments
 2. Environment variables
-3. Configuration file (YAML)
+3. Configuration file (YAML or TOML)
 
-Configuration Options
-~~~~~~~~~~~~~~~~~~~~~
+Configuration File Formats
+-------------------------
 
-Here’s a comprehensive list of all configuration options and how to set
-them:
+The service supports both YAML and TOML configuration formats. You can generate a sample configuration file using:
+
+.. code-block:: bash
+
+    # Generate TOML configuration (recommended)
+    wazuh-dfn --generate-sample-config --output-format toml
+    
+    # Or generate YAML configuration
+    wazuh-dfn --generate-sample-config --output-format yaml
+
+Configuration Sections
+--------------------
+
+The configuration is organized into several sections:
 
 DFN Configuration
-^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^
 
-.. list-table:: DFN Configuration
-   :header-rows: 1
+Settings related to DFN-CERT services and authentication:
 
-   * - Option
-     - YAML Key
-     - Environment Variable
-     - CLI Argument
-     - Default
-     - Description
-   * - Customer ID
-     - `dfn.dfn_id`
-     - `DFN_CUSTOMER_ID`
-     - `--dfn-customer-id`
-     - None
-     - DFN customer ID
-   * - Broker Address
-     - `dfn.dfn_broker`
-     - `DFN_BROKER_ADDRESS`
-     - `--dfn-broker-address`
-     - kafka.example.org:443
-     - DFN Kafka broker address
-   * - CA Certificate
-     - `dfn.dfn_ca`
-     - `DFN_CA_PATH`
-     - `--dfn-ca-path`
-     - /opt/wazuh-dfn/certs/dfn-ca.pem
-     - Path to CA certificate for Kafka SSL
-   * - Client Certificate
-     - `dfn.dfn_cert`
-     - `DFN_CERT_PATH`
-     - `--dfn-cert-path`
-     - /opt/wazuh-dfn/certs/dfn-cert.pem
-     - Path to client certificate for Kafka SSL
-   * - Client Key
-     - `dfn.dfn_key`
-     - `DFN_KEY_PATH`
-     - `--dfn-key-path`
-     - /opt/wazuh-dfn/certs/dfn-key.pem
-     - Path to client key for Kafka SSL
+.. code-block:: toml
+
+    [dfn]
+    # DFN Kafka broker address
+    dfn_broker = "kafka.example.org:443"
+    
+    # Path to CA certificate for Kafka SSL
+    dfn_ca = "/opt/wazuh-dfn/certs/dfn-ca.pem"
+    
+    # Path to client certificate for Kafka SSL
+    dfn_cert = "/opt/wazuh-dfn/certs/dfn-cert.pem"
+    
+    # Path to client key for Kafka SSL
+    dfn_key = "/opt/wazuh-dfn/certs/dfn-key.pem"
+    
+    # DFN customer ID (required)
+    dfn_id = "your-customer-id"
 
 Wazuh Configuration
-^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^
 
-.. list-table:: Wazuh Configuration
-   :header-rows: 1
+Settings for connecting to Wazuh and processing alerts:
 
-   * - Option
-     - YAML Key
-     - Environment Variable
-     - CLI Argument
-     - Default
-     - Description
-   * - Socket Path
-     - `wazuh.unix_socket_path`
-     - `WAZUH_UNIX_SOCKET_PATH`
-     - `--wazuh-unix-socket-path`
-     - /var/ossec/queue/sockets/queue
-     - Path to Wazuh socket
-   * - Max Event Size
-     - `wazuh.max_event_size`
-     - `WAZUH_MAX_EVENT_SIZE`
-     - `--wazuh-max-event-size`
-     - 65535
-     - Maximum size of events to process
-   * - Alert File
-     - `wazuh.json_alert_file`
-     - `WAZUH_JSON_ALERT_FILE`
-     - `--wazuh-json-alert-file`
-     - /var/ossec/logs/alerts/alerts.json
-     - Path to JSON alerts file
-   * - Alert Prefix
-     - `wazuh.json_alert_prefix`
-     - `WAZUH_JSON_ALERT_PREFIX`
-     - `--wazuh-json-prefix`
-     - {"timestamp"
-     - Expected prefix of JSON alert lines
-   * - Alert Suffix
-     - `wazuh.json_alert_suffix`
-     - `WAZUH_JSON_ALERT_SUFFIX`
-     - `--wazuh-json-suffix`
-     - }
-     - Expected suffix of JSON alert lines
-   * - Poll Interval
-     - `wazuh.json_alert_file_poll_interval`
-     - `WAZUH_JSON_ALERT_FILE_POLL_INTERVAL`
-     - `--wazuh-json-alert-file-poll-interval`
-     - 1.0
-     - Interval between file checks (seconds)
-   * - Max Retries
-     - `wazuh.max_retries`
-     - `WAZUH_MAX_RETRIES`
-     - `--wazuh-max-retries`
-     - 5
-     - Maximum number of retries
-   * - Retry Interval
-     - `wazuh.retry_interval`
-     - `WAZUH_RETRY_INTERVAL`
-     - `--wazuh-retry-interval`
-     - 5
-     - Interval between retries (seconds)
+.. code-block:: toml
+
+    [wazuh]
+    # Path to Wazuh socket (Unix socket path or tuple of host and port for TCP)
+    unix_socket_path = "/var/ossec/queue/sockets/queue"
+    
+    # Maximum size of events to process
+    max_event_size = 65535
+    
+    # Full path to the JSON alerts file to monitor
+    json_alert_file = "/var/ossec/logs/alerts/alerts.json"
+    
+    # Expected prefix of JSON alert lines
+    json_alert_prefix = '{"timestamp"'
+    
+    # Expected suffix of JSON alert lines
+    json_alert_suffix = "}"
+    
+    # Maximum number of retries
+    max_retries = 42
+    
+    # Interval between retries in seconds
+    retry_interval = 5
+    
+    # Interval in seconds between JSON alert file checks
+    json_alert_file_poll_interval = 1.0
+    
+    # Whether to store failed alerts for later analysis
+    store_failed_alerts = false
+    
+    # Directory path to store failed alerts
+    failed_alerts_path = "/opt/wazuh-dfn/failed-alerts"
+    
+    # Maximum number of failed alert files to keep
+    max_failed_files = 100
+    
+    # Maximum number of alerts to queue for processing
+    json_alert_queue_size = 100000
 
 Kafka Configuration
-^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^
 
-.. list-table:: Kafka Configuration
-   :header-rows: 1
+Advanced Kafka client settings:
 
-   * - Option
-     - YAML Key
-     - Environment Variable
-     - CLI Argument
-     - Default
-     - Description
-   * - Timeout
-     - `kafka.timeout`
-     - `KAFKA_TIMEOUT`
-     - `--kafka-timeout`
-     - 60
-     - Kafka request timeout (seconds)
-   * - Retry Interval
-     - `kafka.retry_interval`
-     - `KAFKA_RETRY_INTERVAL`
-     - `--kafka-retry-interval`
-     - 5
-     - Interval between retries (seconds)
-   * - Connection Retries
-     - `kafka.connection_max_retries`
-     - `KAFKA_CONNECTION_MAX_RETRIES`
-     - `--kafka-connection-max-retries`
-     - 5
-     - Maximum connection retry attempts
-   * - Send Retries
-     - `kafka.send_max_retries`
-     - `KAFKA_SEND_MAX_RETRIES`
-     - `--kafka-send-max-retries`
-     - 5
-     - Maximum send retry attempts
-   * - Max Wait Time
-     - `kafka.max_wait_time`
-     - `KAFKA_MAX_WAIT_TIME`
-     - `--kafka-max-wait-time`
-     - 60
-     - Maximum wait time (seconds)
-   * - Admin Timeout
-     - `kafka.admin_timeout`
-     - `KAFKA_ADMIN_TIMEOUT`
-     - `--kafka-admin-timeout`
-     - 10
-     - Admin operation timeout (seconds)
-   * - Service Retry Interval
-     - `kafka.service_retry_interval`
-     - `KAFKA_SERVICE_RETRY_INTERVAL`
-     - `--kafka-service-retry-interval`
-     - 5
-     - Service retry interval (seconds)
-   * - Producer Config
-     - `kafka.producer_config`
-     - `KAFKA_PRODUCER_CONFIG`
-     - `--kafka-producer-config`
-     - See below
-     - Kafka producer configuration
+.. code-block:: toml
 
-Default producer configuration:
-
-.. code:: yaml
-
-   producer_config:
-     request.timeout.ms: 60000
-     connections.max.idle.ms: 540000 # 9 minutes
-     socket.keepalive.enable: true
-     linger.ms: 1000 # Controls how long to wait before sending a batch
-     batch.size: 16384 # Maximum size of a batch in bytes
-     batch.num.messages: 100 # Maximum number of messages in a batch
-     enable.idempotence: true # Ensure exactly-once delivery
-     acks: "all" # Wait for all replicas
-     statistics.interval.ms: 0 # Disable stats for better performance
-     log_level: 0 # Only log errors
+    [kafka]
+    # Kafka request timeout in seconds
+    timeout = 60
+    
+    # Interval between retries in seconds
+    retry_interval = 5
+    
+    # Maximum number of connection retries
+    connection_max_retries = 5
+    
+    # Maximum number of send retries
+    send_max_retries = 5
+    
+    # Maximum wait time between retries in seconds
+    max_wait_time = 60
+    
+    # Timeout for admin operations in seconds
+    admin_timeout = 10
+    
+    # Interval between service retries in seconds
+    service_retry_interval = 5
 
 Logging Configuration
-^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^
 
-.. list-table:: Logging Configuration
-   :header-rows: 1
+Settings for logging and statistics:
 
-   * - Option
-     - YAML Key
-     - Environment Variable
-     - CLI Argument
-     - Default
-     - Description
-   * - Console Logging
-     - `log.console`
-     - `LOG_CONSOLE_ENABLED`
-     - `--log-console-enabled`
-     - true
-     - Enable console logging
-   * - Log File
-     - `log.file_path`
-     - `LOG_FILE_PATH`
-     - `--log-file-path`
-     - /opt/wazuh-dfn/logs/wazuh-dfn.log
-     - Path to log file
-   * - Log Interval
-     - `log.interval`
-     - `LOG_INTERVAL`
-     - `--log-interval`
-     - 600
-     - Statistics logging interval (seconds)
-   * - Log Level
-     - `log.level`
-     - `LOG_LEVEL`
-     - `--log-level`
-     - INFO
-     - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+.. code-block:: toml
+
+    [log]
+    # Enable console logging
+    console = true
+    
+    # Number of log files to keep when rotating
+    keep_files = 5
+    
+    # Statistics logging interval in seconds
+    interval = 600
+    
+    # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    level = "INFO"
+    
+    # Path to log file
+    file_path = "/var/log/wazuh-dfn.log"
 
 Miscellaneous Configuration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. list-table:: Miscellaneous Configuration
-   :header-rows: 1
-
-   * - Option
-     - YAML Key
-     - Environment Variable
-     - CLI Argument
-     - Default
-     - Description
-   * - Worker Threads
-     - `misc.num_workers`
-     - `MISC_NUM_WORKERS`
-     - `--misc-num-workers`
-     - 10
-     - Number of worker threads
-   * - Own Network
-     - `misc.own_network`
-     - `MISC_OWN_NETWORK`
-     - `--misc-own-network`
-     - None
-     - Own network CIDR notation (optional)
-
-Configuration Examples
-~~~~~~~~~~~~~~~~~~~~~~
-
-Using Environment Variables
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   # Required DFN settings
-   export DFN_CUSTOMER_ID="12345678-abcd-efgh-ijkl-01234567890ab"
-   export DFN_BROKER_ADDRESS="kafka.example.org:443"
-   export DFN_CA_PATH="/opt/wazuh-dfn/certs/dfn-ca.pem"
-   export DFN_CERT_PATH="/opt/wazuh-dfn/certs/dfn-cert.pem"
-   export DFN_KEY_PATH="/opt/wazuh-dfn/certs/dfn-key.pem"
-
-   # Logging configuration
-   export LOG_CONSOLE_ENABLED="true"
-   export LOG_FILE_PATH="/opt/wazuh-dfn/logs/wazuh-dfn.log"
-   export LOG_INTERVAL="600"
-   export LOG_LEVEL="INFO"
-
-   # Miscellaneous settings
-   export MISC_NUM_WORKERS="10"
-   # Optional: Network CIDR for own network filtering
-   # export MISC_OWN_NETWORK="192.0.2.0/24"
-
-   # Start the service
-   wazuh-dfn -c /opt/wazuh-dfn/config/config.yaml
-
-Using Command Line Arguments
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   wazuh-dfn -c /opt/wazuh-dfn/config/config.yaml \
-     --dfn-customer-id "12345678-abcd-efgh-ijkl-01234567890ab" \
-     --dfn-broker-address "kafka.example.org:443" \
-     --dfn-ca-path "/opt/wazuh-dfn/certs/dfn-ca.pem" \
-     --dfn-cert-path "/opt/wazuh-dfn/certs/dfn-cert.pem" \
-     --dfn-key-path "/opt/wazuh-dfn/certs/dfn-key.pem" \
-     --log-console-enabled true \
-     --log-file-path "/opt/wazuh-dfn/logs/wazuh-dfn.log" \
-     --log-interval 600 \
-     --log-level INFO \
-     --misc-num-workers 10
-
-Using YAML Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. code:: yaml
+Other service settings:
 
-   # Wazuh DFN Service Configuration
+.. code-block:: toml
 
-   # Required DFN settings - these must be configured
-   dfn:
-     dfn_id: "12345678-abcd-efgh-ijkl-01234567890ab" # DFN customer ID
-     dfn_broker: "kafka.example.org:443" # DFN Kafka broker address
-     dfn_ca: "/opt/wazuh-dfn/certs/dfn-ca.pem" # Path to CA certificate for Kafka SSL
-     dfn_cert: "/opt/wazuh-dfn/certs/dfn-cert.pem" # Path to client certificate for Kafka SSL
-     dfn_key: "/opt/wazuh-dfn/certs/dfn-key.pem" # Path to client key for Kafka SSL
+    [misc]
+    # Number of worker tasks (for asyncio worker pool)
+    num_workers = 10
+    
+    # Own network CIDR notation (optional)
+    # Use this to identify "internal" IPs that should be ignored
+    own_network = "192.168.0.0/16"
 
-   # Logging configuration
-   log:
-     console: true # Enable console logging
-     file_path: "/opt/wazuh-dfn/logs/wazuh-dfn.log" # Path to log file
-     interval: 600 # Statistics logging interval in seconds
-     level: "INFO" # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+Environment Variables
+-------------------
 
-   # Miscellaneous settings
-   misc:
-     num_workers: 10 # Number of worker threads for processing alerts
-     own_network: # Optional: Network CIDR for own network filtering (e.g. "192.0.2.0/24")
+All configuration options can also be set using environment variables. The naming convention is:
+
+- DFN settings: `DFN_*` (e.g., `DFN_BROKER_ADDRESS`)
+- Wazuh settings: `WAZUH_*` (e.g., `WAZUH_JSON_ALERT_FILE`)
+- Kafka settings: `KAFKA_*` (e.g., `KAFKA_TIMEOUT`)
+- Log settings: `LOG_*` (e.g., `LOG_LEVEL`)
+- Misc settings: `MISC_*` (e.g., `MISC_NUM_WORKERS`)
+
+For a complete list of environment variables, run:
+
+.. code-block:: bash
+
+    wazuh-dfn --help-all
+
+Command-Line Arguments
+--------------------
+
+Command-line arguments have the highest precedence and override both configuration file settings and environment variables:
+
+.. code-block:: bash
+
+    wazuh-dfn --dfn-broker-address "kafka.example.org:443" --log-level "DEBUG"
+
+To see all available command-line options:
+
+.. code-block:: bash
+
+    wazuh-dfn --help
+
+For a complete list of all configuration options with descriptions:
+
+.. code-block:: bash
+
+    wazuh-dfn --help-all
+
+Verifying Configuration
+---------------------
+
+To verify your configuration without starting the service:
+
+.. code-block:: bash
+
+    wazuh-dfn --print-config-only --config /path/to/config.toml
+
+Best Practices
+------------
+
+1. **Start with a sample configuration**:
+   Generate a sample config and customize it for your environment:
+   
+   .. code-block:: bash
+       
+       wazuh-dfn --generate-sample-config --output-format toml > config.toml
+       
+2. **Use secure defaults**:
+   - Enable TLS/SSL with proper certificate validation
+   - Set appropriate retry limits and timeouts
+   - Configure proper logging for troubleshooting
+   
+3. **Tune worker count**:
+   Adjust `num_workers` based on your CPU resources and alert volume
+   
+4. **Monitor performance**:
+   Use the logging service's statistics to monitor alert processing performance
+
+Next Steps
+---------
+
+After configuring the service, proceed to the :doc:`usage` section to learn how to run and manage the service.

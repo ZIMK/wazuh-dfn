@@ -38,16 +38,22 @@ class WindowsHandler:
             alert: Alert data to process
         """
         try:
-            self._process_windows_alert(alert)
+            if self._is_relevant_windows_alert(alert):
+                self._process_windows_alert(alert)
+            else:
+                LOGGER.debug("No windows alert to process")
         except Exception as error:
             alert_id = alert.get("id", "Unknown")
             LOGGER.error(f"Error processing Windows alert: {alert_id}: {error!s}", exc_info=True)
 
-    def _process_windows_alert(self, alert: dict[str, Any]) -> None:
-        """Process Windows-specific alert data.
+    def _is_relevant_windows_alert(self, alert: dict[str, Any]) -> bool:
+        """Check if the alert is a relevant Windows alert to process.
 
         Args:
-            alert: Alert data to process
+            alert: Alert data to check
+
+        Returns:
+            bool: True if the alert is a relevant Windows alert
         """
         if (
             "data" in alert
@@ -58,7 +64,7 @@ class WindowsHandler:
             event_id = str(alert["data"]["win"]["system"]["eventID"])
 
             # Complete list of event IDs to process
-            if event_id in [
+            return event_id in [
                 "4625",  # Failed logon attempt
                 "4719",  # System audit policy was changed
                 "4964",  # Special groups assigned to a new logon
@@ -71,16 +77,24 @@ class WindowsHandler:
                 "4672",  # Special privileges assigned to new logon
                 "4720",  # User account was created
                 "1100",  # Event logging service was shut down
-            ]:
-                # Create message data for Kafka
-                message_data = self._create_message_data(alert, event_id)
+            ]
+        return False
 
-                # Use asyncio to send to Kafka
-                alert_id = alert.get("id", "Unknown")
-                # Store the task reference to fix RUF006, and suppress the linting error
-                _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
-        else:
-            LOGGER.debug("No windows alert to process")
+    def _process_windows_alert(self, alert: dict[str, Any]) -> None:
+        """Process Windows-specific alert data.
+
+        Args:
+            alert: Alert data to process
+        """
+        event_id = str(alert["data"]["win"]["system"]["eventID"])
+
+        # Create message data for Kafka
+        message_data = self._create_message_data(alert, event_id)
+
+        # Use asyncio to send to Kafka
+        alert_id = alert.get("id", "Unknown")
+        # Store the task reference to fix RUF006, and suppress the linting error
+        _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
 
     async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
         """Send message to Kafka asynchronously.

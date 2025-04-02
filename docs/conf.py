@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.abspath(".."))
 year = datetime.now().year
 
 project = "wazuh-dfn"
-copyright = f"2025 - {year}, University of Trier - ZIMK"
+copyright = f"2023 - {year}, University of Trier - ZIMK"
 author = "Sebastian Wolf (wolf@uni-trier.de)"
 
 # -- General configuration ---------------------------------------------------
@@ -41,6 +41,9 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.githubpages",
     "sphinx.ext.napoleon",
+    "sphinx.ext.viewcode",  # Adds links to view source code
+    "sphinx.ext.intersphinx",  # Reference other projects' documentation
+    "sphinx_copybutton",  # Add copy button to code blocks
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -126,14 +129,25 @@ html_theme_options = {
     ],
 }
 
+# Set autodoc settings for proper asyncio documentation
 autodoc_typehints = "description"
 autodoc_typehints_description_target = "documented"
-
 autodoc_class_signature = "separated"
-
+autodoc_member_order = "bysource"  # Document members in source order
 add_module_names = False
 
+# Set syntax highlighting style
 pygments_style = "zenburn"
+
+# Set intersphinx mapping for Python 3.12 docs
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3.12', None),
+    'asyncio': ('https://docs.python.org/3.12/library/asyncio.html', None),
+}
+
+# Enable copybutton settings
+copybutton_prompt_text = r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "
+copybutton_prompt_is_regexp = True
 
 # -- Options for HTMLHelp output ---------------------------------------------
 
@@ -146,16 +160,16 @@ htmlhelp_basename = project + "-doc"
 latex_elements = {
     # The paper size ('letterpaper' or 'a4paper').
     #
-    # 'papersize': 'letterpaper',
+    'papersize': 'a4paper',
     # The font size ('10pt', '11pt' or '12pt').
     #
-    # 'pointsize': '10pt',
+    'pointsize': '11pt',
     # Additional stuff for the LaTeX preamble.
     #
     # 'preamble': '',
     # Latex figure (float) alignment
     #
-    # 'figure_align': 'htbp',
+    'figure_align': 'htbp',
 }
 
 # Grouping the document tree into LaTeX files. List of tuples
@@ -191,7 +205,7 @@ texinfo_documents = [
         project + " Documentation",
         author,
         project,
-        "One line description of project.",
+        "Wazuh integration with DFN-CERT services",
         "Miscellaneous",
     )
 ]
