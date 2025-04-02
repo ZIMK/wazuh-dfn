@@ -573,3 +573,52 @@ async def test_kafka_service_start_with_connect_error(kafka_service, shutdown_ev
     finally:
         # Restore original method
         kafka_service.connect = original_connect
+
+
+@pytest.mark.asyncio
+async def test_kafka_connection_error_handling(mocker):
+    """Test that Kafka connection errors are properly handled."""
+    # Setup mocks
+    mock_config = mocker.MagicMock()
+    mock_dfn_config = mocker.MagicMock()
+
+    # Create a proper mock for wazuh_service with AsyncMock for send_error method
+    mock_wazuh = mocker.MagicMock()
+    mock_wazuh.send_error = mocker.AsyncMock()
+
+    mock_event = mocker.MagicMock()
+
+    # Configure mocks
+    mock_config.connection_max_retries = 2
+    mock_config.retry_interval = 0.01  # Use small values for faster tests
+    mock_config.max_wait_time = 0.02
+
+    # Ensure shutdown_event.is_set() returns False to allow the retry loop to run
+    mock_event.is_set.return_value = False
+
+    kafka_service = KafkaService(
+        config=mock_config, dfn_config=mock_dfn_config, wazuh_service=mock_wazuh, shutdown_event=mock_event
+    )
+
+    # Rather than replacing the error handler, we'll spy on it to verify calls
+    # while preserving its original behavior
+    spy_handle_error = mocker.spy(kafka_service, "_handle_connect_error")
+
+    # Mock _create_producer to always raise an exception
+    mocker.patch.object(kafka_service, "_create_producer", side_effect=Exception("Connection error"))
+
+    # Mock _test_connection to prevent it from being called (as create_producer will always fail)
+    mocker.patch.object(kafka_service, "_test_connection", new=mocker.AsyncMock())
+
+    # Mock asyncio.sleep to speed up the test
+    mocker.patch("asyncio.sleep", new=mocker.AsyncMock())
+
+    # Attempt to connect - this should trigger retries and eventually raise ConnectionError
+    with pytest.raises(ConnectionError, match="Failed to connect to Kafka broker"):
+        await kafka_service.connect()
+
+    # Verify error handler was called exactly max_retries times
+    assert spy_handle_error.call_count == mock_config.connection_max_retries
+
+    # Verify wazuh_service.send_error was called
+    assert mock_wazuh.send_error.call_count == mock_config.connection_max_retries

@@ -432,3 +432,16 @@ def test_setup_directories_existing(sample_config_path):
         assert mock_mkdir.call_count >= 1
         # Verify it was called with correct parameters
         mock_mkdir.assert_called_with(mode=0o700, parents=True, exist_ok=True)
+
+
+def test_main_execution(mocker):
+    # Mock the main function to prevent actual execution
+    main_mock = mocker.patch("wazuh_dfn.main.main")
+
+    # Import and execute __main__
+    import runpy
+
+    runpy.run_module("wazuh_dfn.__main__", run_name="__main__")
+
+    # Verify that main() was called
+    main_mock.assert_called_once()

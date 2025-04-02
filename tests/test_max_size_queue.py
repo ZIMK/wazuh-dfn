@@ -85,3 +85,22 @@ async def test_log_threshold():
 
         # Should have logged again
         assert mock_logger.warning.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_queue_overflow():
+    """Test that the queue discards oldest items when it reaches maxsize."""
+    # Create a queue with a small maxsize
+    queue = AsyncMaxSizeQueue(maxsize=2)
+
+    # Fill the queue
+    await queue.put("item1")
+    await queue.put("item2")
+
+    # Add one more item, should discard oldest
+    await queue.put("item3")
+
+    # Check that the oldest item was discarded
+    assert await queue.get() == "item2"
+    assert await queue.get() == "item3"
+    assert queue.empty()

@@ -258,3 +258,28 @@ async def test_alerts_worker_service_shutdown(alerts_worker_service, alert_queue
         print(f"Error or timeout during cleanup: {e}")
 
     await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_dump_alert_error_handling(mocker):
+    """Test error handling in the _dump_alert method."""
+    # Setup mocks
+    mock_alerts_service = mocker.MagicMock()
+    mock_queue = mocker.MagicMock()
+    mock_event = mocker.MagicMock()
+
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(), alert_queue=mock_queue, alerts_service=mock_alerts_service, shutdown_event=mock_event
+    )
+
+    # Create a test alert
+    test_alert = {"rule": {"id": "12345"}, "data": {"field": "value"}}
+
+    # Mock _write_file to raise an exception
+    mocker.patch.object(worker_service, "_write_file", side_effect=Exception("Test error"))
+
+    # Test error handling in _dump_alert
+    result = await worker_service._dump_alert(test_alert)
+
+    # Verify result is None when error occurs
+    assert result is None

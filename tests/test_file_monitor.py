@@ -250,3 +250,33 @@ async def test_large_alert_spanning_chunks(file_monitor, temp_log_file):
         assert file_monitor.errors == 0
     finally:
         await file_monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_process_alert_with_replace(mocker):
+    # Setup mocks
+    mock_queue = mocker.MagicMock()
+    # Create AsyncMock for the put method
+    mock_queue.put = mocker.AsyncMock()
+
+    file_monitor = FileMonitor(
+        file_path="/test/path",
+        alert_queue=mock_queue,
+        alert_prefix='{"timestamp"',
+        store_failed_alerts=True,
+        failed_alerts_path="/tmp",
+    )
+
+    # Create alert bytes with invalid UTF-8 sequence
+    alert_bytes = b'{"timestamp": "2023-01-01T00:00:00", "data": "\xff"}'
+
+    # Mock _save_failed_alert
+    _save_mock = mocker.patch.object(file_monitor, "_save_failed_alert")
+
+    # Test processing with replacement
+    result = await file_monitor._process_alert_with_replace(alert_bytes)
+
+    # Verify alert was processed and saved with replacement
+    assert result is True
+    mock_queue.put.assert_called_once()
+    _save_mock.assert_called()
