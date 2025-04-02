@@ -16,6 +16,8 @@ import os
 import sys
 from pathlib import Path
 
+PYPROJECT_FILE = "pyproject.toml"
+
 
 class ClassDefinitionCollector(ast.NodeVisitor):
     """Collect all class definitions in a module."""
@@ -75,7 +77,7 @@ class ImportCollector(ast.NodeVisitor):
                     self.imported_constants[name.name] = module_path
                 else:  # First letter uppercase = class
                     self.imported_classes[name.name] = module_path
-            else:  # lowercase = function
+            else:  # lowercase function
                 self.imported_functions[name.name] = module_path
 
         self.generic_visit(node)
@@ -85,10 +87,10 @@ def determine_package_name(package_root):  # NOSONAR
     """Extract the package name from pyproject.toml."""
     package_root = Path(package_root)
     # Try to get package name from pyproject.toml
-    pyproject_path = package_root / "pyproject.toml"
+    pyproject_path = package_root / PYPROJECT_FILE
     if pyproject_path.exists():
         try:
-            with open(pyproject_path, "r") as f:
+            with Path(pyproject_path).open() as f:
                 content = f.read()
                 # Look for name in [project] section or in tool.poetry section
                 for line in content.split("\n"):
@@ -99,8 +101,8 @@ def determine_package_name(package_root):  # NOSONAR
                             name = parts[1].strip().strip("\"'").split()[0]
                             if name:
                                 return name
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error reading pyproject.toml: {e}", file=sys.stderr)
 
     # Fallback: use the directory name of the package root
     return package_root.name
@@ -113,7 +115,7 @@ class AllDefinitionCollector(ast.NodeVisitor):
         self.defined_in_all: set[str] = set()
         self.has_all = False
 
-    def visit_Assign(self, node):  # noqa: N802
+    def visit_Assign(self, node):  # noqa: N802 NOSONAR
         # Check for __all__ = [...] syntax
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id == "__all__":
@@ -170,7 +172,7 @@ class ImportUsageChecker(ast.NodeVisitor):
 
         if file_path:
             try:
-                with open(file_path, "r") as f:
+                with Path(file_path).open() as f:
                     tree = ast.parse(f.read())
                     collector = ClassDefinitionCollector()
                     collector.visit(tree)
@@ -194,7 +196,7 @@ class ImportUsageChecker(ast.NodeVisitor):
 
         if file_path:
             try:
-                with open(file_path, "r") as f:
+                with Path(file_path).open() as f:
                     tree = ast.parse(f.read())
                     collector = FunctionDefinitionCollector()
                     collector.visit(tree)
@@ -218,7 +220,7 @@ class ImportUsageChecker(ast.NodeVisitor):
 
         if file_path:
             try:
-                with open(file_path, "r") as f:
+                with Path(file_path).open() as f:
                     tree = ast.parse(f.read())
                     collector = ConstantDefinitionCollector()
                     collector.visit(tree)
@@ -239,7 +241,7 @@ class ImportUsageChecker(ast.NodeVisitor):
 
         if file_path:
             try:
-                with open(file_path, "r") as f:
+                with Path(file_path).open() as f:
                     tree = ast.parse(f.read())
                     collector = ImportCollector()
                     collector.visit(tree)
@@ -258,7 +260,7 @@ class ImportUsageChecker(ast.NodeVisitor):
             return set(), False
 
         try:
-            with open(file_path, "r") as f:
+            with Path(file_path).open() as f:
                 tree = ast.parse(f.read())
                 collector = AllDefinitionCollector()
                 collector.visit(tree)
@@ -283,10 +285,7 @@ class ImportUsageChecker(ast.NodeVisitor):
         source_module = imports[class_name]
 
         # Check if the source module is part of the same package
-        if source_module.startswith(package_path) or source_module.startswith("."):
-            return True
-
-        return False
+        return bool(source_module.startswith(package_path) or source_module.startswith("."))
 
     def _class_exists_in_module_or_reexports(self, module_path, class_name):
         """Check if the class exists in the module or is a valid re-export."""
@@ -305,7 +304,7 @@ class ImportUsageChecker(ast.NodeVisitor):
 
         return False
 
-    def visit_ImportFrom(self, node):
+    def visit_ImportFrom(self, node):  # noqa: N802, PLR0912 NOSONAR
         module_path = node.module
         if module_path is None:  # relative import with no module
             return
@@ -320,18 +319,22 @@ class ImportUsageChecker(ast.NodeVisitor):
         else:
             # For relative imports, check if the resolved module exists in our package
             file_dir = self.file_path.parent
-            rel_to_pkg = file_dir.relative_to(self.package_root) if self.package_root != file_dir else Path(".")
+            rel_to_pkg = file_dir.relative_to(self.package_root) if self.package_root != file_dir else Path()
             if str(rel_to_pkg) == ".":
                 current_pkg_path = ""
             else:
                 current_pkg_path = str(rel_to_pkg).replace(os.sep, ".")
 
+            # Resolve the module path
+            resolved_module_path = module_path.lstrip(".")
+            if module_path != ".":
+                if module_path.startswith("."):
+                    resolved_module_path = f"{current_pkg_path}.{module_path.lstrip('.')}"
+                else:
+                    resolved_module_path = module_path
+
             # Skip if we can't resolve the module path
-            if not self._get_module_file_path(
-                module_path.lstrip(".")
-                if module_path == "."
-                else f"{current_pkg_path}.{module_path.lstrip('.')}" if module_path.startswith(".") else module_path
-            ):
+            if not self._get_module_file_path(resolved_module_path):
                 return
 
         for name in node.names:
@@ -342,16 +345,16 @@ class ImportUsageChecker(ast.NodeVisitor):
                 # Check constant imports (all uppercase)
                 constants = self._get_module_constants(module_path)
                 if name.name not in constants:
-                    self.issues.append((name.name, module_path, node.lineno, 2))  # 2 = constant
+                    self.issues.append((name.name, module_path, node.lineno, 2))  # 2 constant
             elif name.name[0].isupper():
                 # Check class imports (uppercase first letter)
                 if not self._class_exists_in_module_or_reexports(module_path, name.name):
-                    self.issues.append((name.name, module_path, node.lineno, 0))  # 0 = class
+                    self.issues.append((name.name, module_path, node.lineno, 0))  # 0 class
             elif self.check_functions:
                 # Check function imports (lowercase)
                 functions = self._get_module_functions(module_path)
                 if name.name not in functions:
-                    self.issues.append((name.name, module_path, node.lineno, 1))  # 1 = function
+                    self.issues.append((name.name, module_path, node.lineno, 1))  # 1 function
 
         self.generic_visit(node)
 
@@ -365,12 +368,12 @@ def find_package_root(path):
         path = path.parent
 
     # Check if pyproject.toml exists in the provided directory
-    if (path / "pyproject.toml").exists():
+    if (path / PYPROJECT_FILE).exists():
         return path
 
     # Look up the directory tree
     while path != path.parent:  # Until we reach filesystem root
-        if (path / "pyproject.toml").exists():
+        if (path / PYPROJECT_FILE).exists():
             return path
         path = path.parent
 
@@ -423,7 +426,7 @@ def detect_source_directory(package_root, package_name=None):
     return package_root
 
 
-def check_all_imports(
+def check_all_imports(  # noqa: PLR0912 NOSONAR
     source_dir, package_root=None, verbose=False, check_functions=False, check_constants=False, ignore_patterns=None
 ):
     """Check all Python files in the source directory for incorrect imports.
@@ -458,10 +461,7 @@ def check_all_imports(
     def should_ignore(file_path):
         """Check if a file should be ignored based on patterns."""
         rel_path = file_path.relative_to(source_path)
-        for pattern in ignore_patterns:
-            if fnmatch.fnmatch(str(rel_path), pattern):
-                return True
-        return False
+        return any(fnmatch.fnmatch(str(rel_path), pattern) for pattern in ignore_patterns)
 
     for root, _, files in os.walk(source_path):
         for file in files:
@@ -480,7 +480,7 @@ def check_all_imports(
                     print(f"Checking file: {file_path}")
 
                 try:
-                    with open(file_path, "r") as f:
+                    with Path(file_path).open() as f:
                         tree = ast.parse(f.read())
                         checker = ImportUsageChecker(file_path, package_root, check_functions, check_constants)
                         checker.visit(tree)
@@ -490,7 +490,8 @@ def check_all_imports(
                             results.append((str(file_path), name, module_path, line_number, item_type))
                             if verbose:
                                 print(
-                                    f"  ISSUE: {item_type_str} '{name}' imported from '{module_path}' but not defined there"
+                                    f"  ISSUE: {item_type_str} '{name}' imported from '{module_path}' "
+                                    "but not defined there"
                                 )
                 except SyntaxError as e:
                     print(f"Syntax error in {file_path}: {e}", file=sys.stderr)
@@ -587,7 +588,8 @@ if __name__ == "__main__":
         for file_path, name, module_path, line_number, item_type in issues:
             item_type_str = ["Class", "Function", "Constant"][item_type]
             print(
-                f"{file_path}:{line_number}: {item_type_str} '{name}' imported from '{module_path}' but not defined there"
+                f"{file_path}:{line_number}: {item_type_str} '{name}' "
+                f"imported from '{module_path}' but not defined there"
             )
         sys.exit(1)
     else:
