@@ -10,7 +10,7 @@ Prerequisites
 -  Access to DFN SOC Kafka broker
 
 About wazuh-dfn
---------------
+---------------
 
 The wazuh-dfn service is built with Python's asyncio for efficient, non-blocking I/O operations. This architecture provides:
 
@@ -20,7 +20,7 @@ The wazuh-dfn service is built with Python's asyncio for efficient, non-blocking
 - Resource-efficient operation even under heavy loads
 
 Installation Methods
-------------------
+--------------------
 
 There are several ways to install the wazuh-dfn service:
 
@@ -53,7 +53,7 @@ For development or to get the latest features:
     pdm install
 
 Docker Container
-^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^
 
 A Docker container is available for easy deployment:
 
@@ -63,13 +63,13 @@ A Docker container is available for easy deployment:
     docker run -v /path/to/config:/etc/wazuh-dfn -v /path/to/certs:/opt/wazuh-dfn/certs zimk/wazuh-dfn:latest
 
 OS-Specific Installation
------------------------
+------------------------
 
    **Note**: The service will run as the ``wazuh`` user, so all
    directories and files must be owned by this user.
 
 Rocky Linux 9
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -92,7 +92,7 @@ Rocky Linux 9
    sudo -u wazuh /opt/wazuh-dfn/venv/bin/pip3.12 install wazuh_dfn-latest.tar.gz
 
 Ubuntu 24.04
-~~~~~~~~~~~~
+^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -185,7 +185,7 @@ Service Setup
 -------------
 
 Rocky Linux 9 and Ubuntu 24.04
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 1. Create a systemd service file:
 
@@ -233,7 +233,7 @@ Rocky Linux 9 and Ubuntu 24.04
    sudo systemctl start wazuh-dfn
 
 Windows Service
-~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^
 
 On Windows, you can use NSSM (Non-Sucking Service Manager) to create a service:
 
@@ -252,7 +252,7 @@ On Windows, you can use NSSM (Non-Sucking Service Manager) to create a service:
     nssm start WazuhDFN
 
 Verifying Installation
----------------------
+----------------------
 
 To verify that your installation is working correctly:
 
@@ -277,6 +277,6 @@ To verify that your installation is working correctly:
        sudo journalctl -fu wazuh-dfn
 
 Next Steps
----------
+----------
 
 For detailed configuration options, refer to the :doc:`configuration` section to further customize your wazuh-dfn instance.

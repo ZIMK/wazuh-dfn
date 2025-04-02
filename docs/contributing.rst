@@ -1,10 +1,10 @@
 Contributing to wazuh-dfn
-=======================
+=========================
 
 Thank you for your interest in contributing to wazuh-dfn! This document provides guidelines and instructions for contributing to the project.
 
 Development Setup
---------------
+-----------------
 
 1. Clone the repository:
 
@@ -26,7 +26,7 @@ Development Setup
    pdm install
 
 Code Style
---------
+----------
 
 - Follow PEP 8 guidelines with a line length of 120 characters
 - Use type hints for all function parameters and return values
@@ -36,7 +36,7 @@ Code Style
 - Properly type all async functions with appropriate return types
 
 Testing
-------
+-------
 
 1. Run the test suite:
 
@@ -57,7 +57,7 @@ Testing
    pdm run pytest --asyncio-mode=auto tests/
 
 Pull Request Process
------------------
+-------------------
 
 1. Fork the repository
 2. Create a feature branch (``git checkout -b feature/amazing-feature``)
@@ -69,7 +69,7 @@ Pull Request Process
 8. Open a Pull Request
 
 Commit Messages
-~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 - Use the present tense ("Add feature" not "Added feature")
 - Use the imperative mood ("Move cursor to..." not "Moves cursor to...")
@@ -77,7 +77,7 @@ Commit Messages
 - Reference issues and pull requests in the body
 
 Development Workflow
------------------
+-------------------
 
 1. Pick an issue to work on or create a new one
 2. Discuss the proposed changes in the issue
@@ -89,7 +89,7 @@ Development Workflow
 8. Submit a pull request
 
 Code Review Process
-----------------
+------------------
 
 1. At least one maintainer must review and approve the changes
 2. All automated checks must pass
@@ -97,7 +97,7 @@ Code Review Process
 4. Test coverage should not decrease
 
 Release Process
-------------
+--------------
 
 1. Update version in pyproject.toml
 2. Update CHANGELOG

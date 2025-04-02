@@ -1,5 +1,5 @@
 About
-=========
+=====
 
 The ``wazuh-dfn`` is a specialized daemon that integrates Wazuh with
 DFN-CERT services. It monitors Wazuh alert files and forwards relevant
@@ -67,7 +67,7 @@ The daemon operates using several asynchronous components:
    -  Worker task status
 
 Technical Stack
---------------
+---------------
 
 - **Python**: Version 3.12 or later
 - **asyncio**: For non-blocking I/O and concurrent operations

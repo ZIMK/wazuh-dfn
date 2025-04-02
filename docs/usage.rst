@@ -130,7 +130,7 @@ To install and run as a Windows service, you can use ``nssm`` (Non-Sucking Servi
 1. Download and install `NSSM <https://nssm.cc/>`_
 2. Open a Command Prompt as Administrator and run:
 
-.. code-block:: cmd
+.. code-block:: doscon
 
    nssm install WazuhDFN
 
@@ -143,7 +143,7 @@ To install and run as a Windows service, you can use ``nssm`` (Non-Sucking Servi
 
 4. Start the service:
 
-.. code-block:: cmd
+.. code-block:: doscon
 
    nssm start WazuhDFN
 

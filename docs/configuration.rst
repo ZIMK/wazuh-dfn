@@ -8,7 +8,7 @@ This section covers the configuration options for the wazuh-dfn service. The ser
 3. Configuration file (YAML or TOML)
 
 Configuration File Formats
--------------------------
+--------------------------
 
 The service supports both YAML and TOML configuration formats. You can generate a sample configuration file using:
 
@@ -21,12 +21,12 @@ The service supports both YAML and TOML configuration formats. You can generate 
     wazuh-dfn --generate-sample-config --output-format yaml
 
 Configuration Sections
---------------------
+----------------------
 
 The configuration is organized into several sections:
 
 DFN Configuration
-^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^
 
 Settings related to DFN-CERT services and authentication:
 
@@ -49,7 +49,7 @@ Settings related to DFN-CERT services and authentication:
     dfn_id = "your-customer-id"
 
 Wazuh Configuration
-^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
 
 Settings for connecting to Wazuh and processing alerts:
 
@@ -93,7 +93,7 @@ Settings for connecting to Wazuh and processing alerts:
     json_alert_queue_size = 100000
 
 Kafka Configuration
-^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
 
 Advanced Kafka client settings:
 
@@ -122,7 +122,7 @@ Advanced Kafka client settings:
     service_retry_interval = 5
 
 Logging Configuration
-^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
 
 Settings for logging and statistics:
 
@@ -145,7 +145,7 @@ Settings for logging and statistics:
     file_path = "/var/log/wazuh-dfn.log"
 
 Miscellaneous Configuration
-^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Other service settings:
 
@@ -160,7 +160,7 @@ Other service settings:
     own_network = "192.168.0.0/16"
 
 Environment Variables
--------------------
+---------------------
 
 All configuration options can also be set using environment variables. The naming convention is:
 
@@ -177,7 +177,7 @@ For a complete list of environment variables, run:
     wazuh-dfn --help-all
 
 Command-Line Arguments
---------------------
+----------------------
 
 Command-line arguments have the highest precedence and override both configuration file settings and environment variables:
 
@@ -198,7 +198,7 @@ For a complete list of all configuration options with descriptions:
     wazuh-dfn --help-all
 
 Verifying Configuration
----------------------
+-----------------------
 
 To verify your configuration without starting the service:
 
@@ -207,7 +207,7 @@ To verify your configuration without starting the service:
     wazuh-dfn --print-config-only --config /path/to/config.toml
 
 Best Practices
-------------
+--------------
 
 1. **Start with a sample configuration**:
    Generate a sample config and customize it for your environment:
@@ -228,6 +228,6 @@ Best Practices
    Use the logging service's statistics to monitor alert processing performance
 
 Next Steps
----------
+----------
 
 After configuring the service, proceed to the :doc:`usage` section to learn how to run and manage the service.

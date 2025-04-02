@@ -53,7 +53,7 @@ Startup Issues
       python3.12 -m venv /opt/wazuh-dfn/venv --clear
 
 Connection Issues
-~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 1. **Wazuh socket connection failures**
 
@@ -102,7 +102,7 @@ Connection Issues
       openssl verify -CAfile /opt/wazuh-dfn/certs/dfn-ca.pem /opt/wazuh-dfn/certs/dfn-cert.pem
 
 Alert Processing Issues
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 
 1. **No alerts being processed**
 
@@ -131,7 +131,7 @@ Alert Processing Issues
       ls -la /opt/wazuh-dfn/failed-alerts/
 
 Asyncio-Specific Issues
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 
 1. **Task cancellation warnings**
 
@@ -175,13 +175,13 @@ Asyncio-Specific Issues
       # json_alert_queue_size = 200000  # Increase queue capacity
 
 Performance Tuning
-----------------
+-----------------
 
 1. **Increasing throughput**
 
    Optimize for high-volume environments:
    
-   .. code:: toml
+   .. code-block:: text
    
       # config.toml
       [misc]
@@ -212,7 +212,7 @@ Performance Tuning
       interval = 1800  # Reduce logging frequency
 
 Diagnostic Procedures
--------------------
+--------------------
 
 1. Run with detailed logging:
 

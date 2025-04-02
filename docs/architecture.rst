@@ -13,12 +13,6 @@ Wazuh-DFN is built as a set of asynchronous services that work together to proce
 - **Extensible**: Allow new alert handlers to be added easily
 - **Configurable**: Support multiple configuration methods
 
-Core Components
---------------
-
-.. image:: ./img/architecture.png
-   :alt: Architecture Diagram
-
 Main Service Orchestrator
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -60,7 +54,7 @@ Services
 All services are designed to work asynchronously and can be categorized into:
 
 Core Services
-^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
 
 - **WazuhService**: Handles communication with the Wazuh server
 
@@ -79,7 +73,7 @@ Core Services
   - Implements retry logic with exponential backoff
 
 Alert Processing Services
-^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - **AlertsWatcherService**: Monitors alert files for new alerts
 
@@ -100,7 +94,7 @@ Alert Processing Services
   - Coordinates processing between handlers
 
 Auxiliary Services
-^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - **LoggingService**: Handles logging and statistics
 
@@ -110,7 +104,7 @@ Auxiliary Services
   - Reports queue sizes and processing rates
 
 Specialized Handlers
-~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 
 - **SyslogHandler**: Processes syslog-specific alerts (e.g., fail2ban)
   - Formats events according to RFC 5424
@@ -123,7 +117,7 @@ Specialized Handlers
   - Preserves original event structure
 
 Helper Components
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - **AsyncMaxSizeQueue**: Queue implementation with specific features:
   - Discards oldest items when full
@@ -139,7 +133,7 @@ Helper Components
   - Character encoding handling
 
 Asynchronous Flow
-----------------
+-----------------
 
 The asynchronous flow of the application follows these steps:
 
@@ -158,7 +152,7 @@ This flow is fully asynchronous, allowing for:
 - Graceful handling of backpressure
 
 Asyncio Task Management
-----------------------
+-----------------------
 
 The application uses modern asyncio patterns:
 
@@ -169,7 +163,7 @@ The application uses modern asyncio patterns:
 - **Event Signaling**: AsyncEvent for coordination between services
 
 Error Handling and Recovery
---------------------------
+---------------------------
 
 The architecture includes several mechanisms for error handling and recovery:
 
@@ -181,7 +175,7 @@ The architecture includes several mechanisms for error handling and recovery:
 - **Character Encoding Handling**: Automatic handling of encoding issues in alerts
 
 Configuration
-------------
+-------------
 
 The system supports multiple configuration methods:
 
@@ -197,7 +191,7 @@ Configuration is validated using Pydantic models with:
 - Secure handling of sensitive information
 
 Performance Considerations
-------------------------
+--------------------------
 
 The asyncio-based architecture provides several performance benefits:
 
@@ -209,7 +203,7 @@ The asyncio-based architecture provides several performance benefits:
 - **Resource Monitoring**: Built-in monitoring of queue sizes and processing rates
 
 Extension Points
---------------
+----------------
 
 To extend the system with new functionality:
 

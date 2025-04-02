@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Configuration file for the Sphinx documentation builder.
 #
@@ -52,8 +51,7 @@ templates_path = ["_templates"]
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-# source_suffix = ['.rst', '.md']
-source_suffix = ".rst"
+source_suffix = {'.rst': 'restructuredtext'}
 
 # The master toctree document.
 master_doc = "index"
@@ -142,7 +140,6 @@ pygments_style = "zenburn"
 # Set intersphinx mapping for Python 3.12 docs
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3.12', None),
-    'asyncio': ('https://docs.python.org/3.12/library/asyncio.html', None),
 }
 
 # Enable copybutton settings
