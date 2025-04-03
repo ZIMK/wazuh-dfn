@@ -49,7 +49,7 @@ class SyslogHandler:
         """
         try:
             if self._is_relevant_fail2ban_alert(alert):
-                self._process_fail2ban_alert(alert)
+                await self._process_fail2ban_alert(alert)
             else:
                 LOGGER.debug("No fail2ban alert to process")
         except Exception as error:
@@ -75,7 +75,7 @@ class SyslogHandler:
             and "fail2ban" in alert["rule"]["groups"]
         )
 
-    def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
+    async def _process_fail2ban_alert(self, alert: dict[str, Any]) -> None:
         """Process fail2ban-specific alert data.
 
         Args:
@@ -100,8 +100,9 @@ class SyslogHandler:
 
         # Use asyncio to send to Kafka
         alert_id = alert.get("id", "Unknown")
-        # Store the task reference to fix RUF006, and suppress the linting error
-        _task = asyncio.create_task(self._send_message(message_data, alert_id))  # noqa: RUF006
+
+        # Wait for _send_message to complete instead of fire-and-forget
+        await self._send_message(message_data, alert_id)
 
     async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
         """Send message to Kafka asynchronously.
@@ -119,22 +120,54 @@ class SyslogHandler:
             # Extract the original alert from the message_data context
             alert = message_data.get("context_alert", {})
 
-            # Send to Wazuh with the original format
-            await self.wazuh_service.send_event(
-                alert=alert,
-                event_format="syslog5424-json",
-                wz_timestamp=alert.get("timestamp"),
+            # Send to Wazuh with the original format as fire-and-forget
+            asyncio.create_task(  # noqa: RUF006
+                self._send_to_wazuh(
+                    alert=alert, event_format="syslog5424-json", wz_timestamp=alert.get("timestamp"), alert_id=alert_id
+                )
             )
         else:
             error_msg = f"Failed to send fail2ban alert to Kafka {alert_id}"
             LOGGER.error(error_msg)
-            # Send error to Wazuh
+            # Send error to Wazuh as fire-and-forget
+            asyncio.create_task(self._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id))  # noqa: RUF006
+
+    async def _send_to_wazuh(
+        self, alert: dict[str, Any], event_format: str, wz_timestamp: str | None, alert_id: str
+    ) -> None:
+        """Send event to Wazuh service with error handling.
+
+        Args:
+            alert: Alert data to send
+            event_format: Format of the event
+            wz_timestamp: Wazuh event timestamp
+            alert_id: Alert ID for error tracking
+        """
+        try:
+            await self.wazuh_service.send_event(
+                alert=alert,
+                event_format=event_format,
+                wz_timestamp=wz_timestamp,
+            )
+        except Exception as e:
+            LOGGER.error(f"Failed to send event to Wazuh for alert {alert_id}: {e}")
+
+    async def _send_error_to_wazuh(self, error_msg: str, alert_id: str) -> None:
+        """Send error to Wazuh service with error handling.
+
+        Args:
+            error_msg: Error message to send
+            alert_id: Alert ID for error tracking
+        """
+        try:
             await self.wazuh_service.send_error(
                 {
                     "error": 503,
                     "description": error_msg,
                 }
             )
+        except Exception as e:
+            LOGGER.error(f"Failed to send error to Wazuh for alert {alert_id}: {e}")
 
     def _is_global_ip(self, ip: str) -> bool:
         """Check if IP is global (not private/local).
@@ -158,7 +191,7 @@ class SyslogHandler:
         except Exception:
             return False
 
-    def _create_message_data(self, alert: dict[str, Any]) -> KafkaMessage:
+    def _create_message_data(self, alert: dict[str, Any]) -> KafkaMessage:  # NOSONAR
         """Create message data for Kafka.
 
         Args:

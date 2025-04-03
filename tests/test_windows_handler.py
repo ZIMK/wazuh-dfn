@@ -504,3 +504,88 @@ async def test_windows_handler_missing_required_fields(windows_handler):
     assert not windows_handler.kafka_service.send_message.called
     # It might log an error or send an error message
     assert windows_handler.wazuh_service.send_error.called or not windows_handler.wazuh_service.send_event.called
+
+
+@pytest.mark.asyncio
+async def test_send_to_wazuh_success(windows_handler):
+    """Test _send_to_wazuh method with successful execution."""
+    alert = {"id": "test-alert-1", "timestamp": "2024-01-01T00:00:00", "data": {"win": {"system": {"eventID": "4625"}}}}
+
+    windows_handler.wazuh_service.send_event = AsyncMock()
+
+    await windows_handler._send_to_wazuh(
+        alert=alert,
+        event_format="windows-xml",
+        event_id="4625",
+        win_timestamp="2024-01-01T00:00:00",
+        wz_timestamp="2024-01-01T00:00:00",
+        alert_id="test-alert-1",
+    )
+
+    # Verify send_event was called with correct parameters
+    windows_handler.wazuh_service.send_event.assert_called_once_with(
+        alert=alert,
+        event_format="windows-xml",
+        event_id="4625",
+        win_timestamp="2024-01-01T00:00:00",
+        wz_timestamp="2024-01-01T00:00:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_to_wazuh_error(windows_handler, caplog):
+    """Test _send_to_wazuh method with exception handling."""
+    caplog.set_level(logging.ERROR)
+
+    alert = {"id": "test-alert-1", "timestamp": "2024-01-01T00:00:00", "data": {"win": {"system": {"eventID": "4625"}}}}
+
+    # Mock send_event to raise an exception
+    windows_handler.wazuh_service.send_event = AsyncMock(side_effect=Exception("Test error"))
+
+    await windows_handler._send_to_wazuh(
+        alert=alert,
+        event_format="windows-xml",
+        event_id="4625",
+        win_timestamp="2024-01-01T00:00:00",
+        wz_timestamp="2024-01-01T00:00:00",
+        alert_id="test-alert-1",
+    )
+
+    # Verify error was logged
+    assert "Failed to send event to Wazuh for alert test-alert-1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_error_to_wazuh_success(windows_handler):
+    """Test _send_error_to_wazuh method with successful execution."""
+    error_msg = "Test error message"
+    alert_id = "test-alert-1"
+
+    windows_handler.wazuh_service.send_error = AsyncMock()
+
+    await windows_handler._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id)
+
+    # Verify send_error was called with correct parameters
+    windows_handler.wazuh_service.send_error.assert_called_once_with(
+        {
+            "error": 503,
+            "description": error_msg,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_error_to_wazuh_exception(windows_handler, caplog):
+    """Test _send_error_to_wazuh method with exception handling."""
+    caplog.set_level(logging.ERROR)
+
+    error_msg = "Test error message"
+    alert_id = "test-alert-1"
+
+    # Mock send_error to raise an exception
+    windows_handler.wazuh_service.send_error = AsyncMock(side_effect=Exception("Test error"))
+
+    await windows_handler._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id)
+
+    # Verify error was logged
+    assert "Failed to send error to Wazuh for alert test-alert-1" in caplog.text

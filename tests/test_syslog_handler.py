@@ -411,8 +411,90 @@ async def test_send_message_error_handling(syslog_handler):
     # Call method and verify error handling
     await syslog_handler._send_message(test_message, "test-send-error")
 
+    # Wait for the asyncio task to complete
+    await asyncio.sleep(0.1)
+
     # Verify error was sent to Wazuh
     syslog_handler.wazuh_service.send_error.assert_called_once()
     call_args = syslog_handler.wazuh_service.send_error.call_args[0][0]
     assert call_args["error"] == 503
     assert "Failed to send fail2ban alert" in call_args["description"]
+
+
+@pytest.mark.asyncio
+async def test_send_to_wazuh_success(syslog_handler):
+    """Test _send_to_wazuh method with successful execution."""
+    alert = {
+        "id": "test-alert-1",
+        "timestamp": "2024-01-01T00:00:00",
+    }
+
+    syslog_handler.wazuh_service.send_event = AsyncMock()
+
+    await syslog_handler._send_to_wazuh(
+        alert=alert, event_format="syslog5424-json", wz_timestamp="2024-01-01T00:00:00", alert_id="test-alert-1"
+    )
+
+    # Verify send_event was called with correct parameters
+    syslog_handler.wazuh_service.send_event.assert_called_once_with(
+        alert=alert,
+        event_format="syslog5424-json",
+        wz_timestamp="2024-01-01T00:00:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_to_wazuh_error(syslog_handler, caplog):
+    """Test _send_to_wazuh method with exception handling."""
+    caplog.set_level(logging.ERROR)
+
+    alert = {
+        "id": "test-alert-1",
+        "timestamp": "2024-01-01T00:00:00",
+    }
+
+    # Mock send_event to raise an exception
+    syslog_handler.wazuh_service.send_event = AsyncMock(side_effect=Exception("Test error"))
+
+    await syslog_handler._send_to_wazuh(
+        alert=alert, event_format="syslog5424-json", wz_timestamp="2024-01-01T00:00:00", alert_id="test-alert-1"
+    )
+
+    # Verify error was logged
+    assert "Failed to send event to Wazuh for alert test-alert-1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_error_to_wazuh_success(syslog_handler):
+    """Test _send_error_to_wazuh method with successful execution."""
+    error_msg = "Test error message"
+    alert_id = "test-alert-1"
+
+    syslog_handler.wazuh_service.send_error = AsyncMock()
+
+    await syslog_handler._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id)
+
+    # Verify send_error was called with correct parameters
+    syslog_handler.wazuh_service.send_error.assert_called_once_with(
+        {
+            "error": 503,
+            "description": error_msg,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_error_to_wazuh_exception(syslog_handler, caplog):
+    """Test _send_error_to_wazuh method with exception handling."""
+    caplog.set_level(logging.ERROR)
+
+    error_msg = "Test error message"
+    alert_id = "test-alert-1"
+
+    # Mock send_error to raise an exception
+    syslog_handler.wazuh_service.send_error = AsyncMock(side_effect=Exception("Test error"))
+
+    await syslog_handler._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id)
+
+    # Verify error was logged
+    assert "Failed to send error to Wazuh for alert test-alert-1" in caplog.text
