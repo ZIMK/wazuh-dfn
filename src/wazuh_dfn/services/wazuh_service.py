@@ -6,6 +6,7 @@ import logging
 import sys
 import time
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, TypedDict
 
 from wazuh_dfn.config import WazuhConfig
@@ -119,10 +120,36 @@ class WazuhService:
                     host, port_str = self.config.unix_socket_path.split(":")
                     port = int(port_str)
 
+                LOGGER.info(f"Connecting to Wazuh server via TCP socket - host: {host}, port: {port}")
                 self._reader, self._writer = await asyncio.open_connection(host, port)
             else:
                 # For Unix systems
-                self._reader, self._writer = await asyncio.open_unix_connection(self.config.unix_socket_path)
+                socket_path = Path(self.config.unix_socket_path)
+                LOGGER.info(f"Connecting to Wazuh server via Unix socket - path: {socket_path}")
+
+                # Check if socket file exists
+                if not socket_path.exists():
+                    LOGGER.error(f"Unix socket path does not exist: {socket_path}")
+                    raise FileNotFoundError(f"Unix socket path not found: {socket_path}")
+
+                # Log socket file permissions and details
+                try:
+                    socket_stat = socket_path.stat()
+                    LOGGER.debug(f"Socket file details - mode: {oct(socket_stat.st_mode)}, size: {socket_stat.st_size}")
+                except Exception as stat_error:
+                    LOGGER.warning(f"Could not get socket file details: {stat_error}")
+
+                try:
+                    # Convert Path back to string for asyncio.open_unix_connection
+                    self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))
+                except OSError as sock_error:
+                    if "Protocol wrong type for socket" in str(sock_error) or getattr(sock_error, "errno", 0) == 91:
+                        LOGGER.error(
+                            f"Socket protocol type error when connecting to {socket_path}. "
+                            "This usually means the socket exists but is not the correct socket type "
+                            "or is not accepting connections."
+                        )
+                    raise
 
             LOGGER.info("Connected to Wazuh server")
             self._is_reconnecting = False
