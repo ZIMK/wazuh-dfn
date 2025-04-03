@@ -128,7 +128,7 @@ class KafkaService:
         """
         if self.producer:
             try:
-                await self.producer.stop()
+                await self.producer.stop() # type: ignore[]
             except Exception as e:
                 LOGGER.warning(f"Error closing existing Kafka producer: {e}")
             self.producer = None
