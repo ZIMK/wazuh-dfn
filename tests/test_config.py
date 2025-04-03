@@ -2,13 +2,15 @@
 
 import argparse
 import datetime
-import pytest
 
 # Add pytest-asyncio import
 import tempfile
 from pathlib import Path
-from pydantic import BaseModel, ValidationError, field_validator
 from unittest.mock import MagicMock, patch
+
+import pytest
+from pydantic import BaseModel, ValidationError, field_validator
+
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, LogLevel, MiscConfig, WazuhConfig
 from wazuh_dfn.exceptions import ConfigValidationError
 
@@ -706,3 +708,164 @@ def test_yaml_config_invalid_format():
             Config.from_yaml(yaml_path)
     finally:
         Path(yaml_path).unlink()
+
+
+def test_config_value_precedence():
+    """Test configuration value precedence when loading from multiple sources."""
+    # Create a temporary YAML config file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+        yaml_path = tmp.name
+        tmp.write(
+            """
+dfn:
+  dfn_id: yaml-id
+  dfn_broker: yaml-broker:9092
+wazuh:
+  max_event_size: 40000
+            """
+        )
+
+    try:
+        # 1. Start with defaults
+        config = Config()
+        assert config.dfn.dfn_id is None  # Default is None
+        assert config.dfn.dfn_broker == "kafka.example.org:443"  # Default value
+        assert config.wazuh.max_event_size == 65535  # Default value
+
+        # 2. Load from YAML file (overrides defaults)
+        config = Config.from_yaml(yaml_path, config)
+        assert config.dfn.dfn_id == "yaml-id"
+        assert config.dfn.dfn_broker == "yaml-broker:9092"
+        assert config.wazuh.max_event_size == 40000
+
+        # 3. Load from environment (should only override fields not set in YAML)
+        with patch.dict(
+            "os.environ",
+            {
+                "DFN_CUSTOMER_ID": "env-id",  # Should NOT override YAML
+                "DFN_BROKER_ADDRESS": "env-broker:9092",  # Should NOT override YAML
+                "KAFKA_TIMEOUT": "120",  # Should override default
+            },
+        ):
+            Config._load_from_env(config)
+            # Values from YAML should be preserved
+            assert config.dfn.dfn_id == "yaml-id"  # Still from YAML
+            assert config.dfn.dfn_broker == "yaml-broker:9092"  # Still from YAML
+            # Default should be overridden by env var
+            assert config.kafka.timeout == 120  # From env
+
+        # 4. Load from CLI (highest precedence, overrides everything)
+        args = argparse.Namespace()
+        args.dfn_customer_id = "cli-id"
+        args.dfn_broker_address = "cli-broker:9092"
+        args.kafka_timeout = 180
+
+        Config._load_from_cli(config, args)
+        # CLI should override all previous values
+        assert config.dfn.dfn_id == "cli-id"  # From CLI
+        assert config.dfn.dfn_broker == "cli-broker:9092"  # From CLI
+        assert config.kafka.timeout == 180  # From CLI
+    finally:
+        Path(yaml_path).unlink()
+
+
+def test_merge_config_values():
+    """Test the _merge_config_values method directly."""
+    # Create a base config with default values
+    base_config = Config()
+
+    # Create updates
+    updates = {"dfn": {"dfn_id": "test-id", "dfn_broker": "test-broker:9092"}, "wazuh": {"max_event_size": 32768}}
+
+    # Test with overwrite_existing=True
+    merged = Config._merge_config_values(base_config, updates, overwrite_existing=True)
+    assert merged["dfn"]["dfn_id"] == "test-id"
+    assert merged["dfn"]["dfn_broker"] == "test-broker:9092"
+    assert merged["wazuh"]["max_event_size"] == 32768
+
+    # Modify base config to have non-default values
+    modified_config = Config(
+        dfn=DFNConfig(dfn_id="original-id", dfn_broker="original-broker:9092"), wazuh=WazuhConfig(max_event_size=54321)
+    )
+
+    # Test with overwrite_existing=False (should preserve existing non-default values)
+    merged = Config._merge_config_values(modified_config, updates, overwrite_existing=False)
+    assert merged["dfn"]["dfn_id"] == "original-id"  # Preserved
+    assert merged["dfn"]["dfn_broker"] == "original-broker:9092"  # Preserved
+    assert merged["wazuh"]["max_event_size"] == 54321  # Preserved
+
+    # Test with overwrite_existing=True (should override existing values)
+    merged = Config._merge_config_values(modified_config, updates, overwrite_existing=True)
+    assert merged["dfn"]["dfn_id"] == "test-id"  # Overwritten
+    assert merged["dfn"]["dfn_broker"] == "test-broker:9092"  # Overwritten
+    assert merged["wazuh"]["max_event_size"] == 32768  # Overwritten
+
+
+def test_layered_configuration_loading():
+    """Test loading configuration in layers with different precedence."""
+    # Create two temporary config files
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as base_file:
+        base_path = base_file.name
+        base_file.write(
+            """
+dfn:
+  dfn_id: base-id
+  dfn_broker: base-broker:9092
+wazuh:
+  max_event_size: 30000
+            """
+        )
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as override_file:
+        override_path = override_file.name
+        override_file.write(
+            """
+dfn:
+  dfn_id: override-id
+wazuh:
+  json_alert_file: /custom/path/alerts.json
+            """
+        )
+
+    try:
+        # Load base config
+        config = Config.from_yaml(base_path)
+        assert config.dfn.dfn_id == "base-id"
+        assert config.dfn.dfn_broker == "base-broker:9092"
+        assert config.wazuh.max_event_size == 30000
+
+        # Load override config on top of base
+        config = Config.from_yaml(override_path, config)
+        assert config.dfn.dfn_id == "override-id"  # Overridden
+        assert config.dfn.dfn_broker == "base-broker:9092"  # Preserved from base
+        assert config.wazuh.max_event_size == 30000  # Preserved from base
+        assert config.wazuh.json_alert_file == "/custom/path/alerts.json"  # From override
+
+        # Now add environment variables (should only override defaults)
+        with patch.dict(
+            "os.environ",
+            {
+                "DFN_BROKER_ADDRESS": "env-broker:9092",  # Should NOT override base config
+                "WAZUH_MAX_EVENT_SIZE": "20000",  # Should NOT override base config
+                "LOG_LEVEL": "DEBUG",  # Should override default
+            },
+        ):
+            Config._load_from_env(config)
+            assert config.dfn.dfn_id == "override-id"  # Still from override
+            assert config.dfn.dfn_broker == "base-broker:9092"  # Still from base
+            assert config.wazuh.max_event_size == 30000  # Still from base
+            assert config.log.level == "DEBUG"  # From env (was default)
+
+        # Finally, add CLI args (should override everything)
+        args = argparse.Namespace()
+        args.dfn_broker_address = "cli-broker:9092"
+        args.wazuh_max_event_size = 10000
+
+        Config._load_from_cli(config, args)
+        assert config.dfn.dfn_id == "override-id"  # Still from override (not changed by CLI)
+        assert config.dfn.dfn_broker == "cli-broker:9092"  # From CLI
+        assert config.wazuh.max_event_size == 10000  # From CLI
+        assert config.log.level == "DEBUG"  # Still from env
+    finally:
+        Path(base_path).unlink()
+        Path(override_path).unlink()

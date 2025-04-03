@@ -2,13 +2,15 @@
 
 import asyncio
 import logging
-import pytest
-import pytest_asyncio
 import shutil
 import tempfile
 from contextlib import suppress
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import pytest_asyncio
+
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService

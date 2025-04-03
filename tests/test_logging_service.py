@@ -3,11 +3,13 @@
 import asyncio
 import contextlib
 import logging
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import psutil
 import pytest
-import time
 from pydantic import ValidationError
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from wazuh_dfn.config import LogConfig
 from wazuh_dfn.services.logging_service import LoggingService
 

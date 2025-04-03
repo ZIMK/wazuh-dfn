@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from wazuh_dfn.services.handlers.windows_handler import WindowsHandler
 
 LOGGER = logging.getLogger(__name__)

@@ -1,9 +1,11 @@
 """Test module for Kafka Service."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from pydantic import BaseModel, Field, ValidationError
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from wazuh_dfn.services.kafka_service import KafkaService
 
 

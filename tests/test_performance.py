@@ -52,13 +52,11 @@ Notes:
     - Windows systems may require elevated privileges for some operations
 """
 
-import aiofiles
 import asyncio
 import gc
 import json
 import logging
 import platform
-import pytest
 import secrets
 import sys
 import time
@@ -67,6 +65,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+
+import aiofiles
+import pytest
+
 from wazuh_dfn.config import MiscConfig, WazuhConfig
 from wazuh_dfn.services import WazuhService
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService

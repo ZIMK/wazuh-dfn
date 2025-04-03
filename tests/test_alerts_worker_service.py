@@ -1,9 +1,11 @@
 """Test module for Alerts Worker Service."""
 
 import asyncio
-import pytest
 import time
 from unittest.mock import patch
+
+import pytest
+
 from wazuh_dfn.exceptions import AlertProcessingError
 from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
 

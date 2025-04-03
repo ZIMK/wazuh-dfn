@@ -1,9 +1,10 @@
 import json
 import logging
-import pytest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 LOGGER = logging.getLogger(__name__)
 

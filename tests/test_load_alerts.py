@@ -1,9 +1,11 @@
 import asyncio
 import json
-import pytest
 import tempfile
 from contextlib import suppress
 from pathlib import Path
+
+import pytest
+
 from wazuh_dfn.services.file_monitor import FileMonitor
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 

@@ -3,8 +3,10 @@
 import asyncio
 import ipaddress
 import logging
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from wazuh_dfn.services.handlers import SyslogHandler
 
 # Configure logging

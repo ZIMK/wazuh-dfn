@@ -6,6 +6,7 @@ This module uses Hypothesis to generate test cases for validation functions in W
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+
 from wazuh_dfn.config import WazuhConfig
 
 # Strategy for valid host strings

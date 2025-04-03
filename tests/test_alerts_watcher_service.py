@@ -10,11 +10,13 @@ This module contains comprehensive tests for the AlertsWatcherService, including
 import asyncio
 import json
 import logging
-import pytest
 import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
+
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
@@ -198,6 +200,7 @@ async def test_alerts_watcher_service_start_stop():
 async def test_alerts_watcher_service_config_validation():
     """Test AlertsWatcherService configuration validation."""
     from pydantic import ValidationError
+
     from wazuh_dfn.config import WazuhConfig
 
     # Use Pydantic's ValidationError instead of ConfigValidationError

@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
-import pytest
 import sys
 from contextlib import suppress
-from pydantic import ValidationError
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from pydantic import ValidationError
+
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.wazuh_service import WazuhErrorMessage, WazuhService
 

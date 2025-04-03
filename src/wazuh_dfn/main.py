@@ -209,7 +209,7 @@ def load_config(args: argparse.Namespace) -> Config:
 
     # Set DFNConfig's skip_path_validation attribute
     config = Config()
-    config.dfn.skip_path_validation = args.skip_path_validation  # Update reference here
+    config.dfn.skip_path_validation = args.skip_path_validation
 
     # Load from file based on format
     if args.config_format == "toml":
@@ -217,10 +217,10 @@ def load_config(args: argparse.Namespace) -> Config:
     else:
         config = Config.from_yaml(args.config, config)
 
-    # Load from environment variables
+    # Load from environment variables - only override values not set in config file
     Config._load_from_env(config)
 
-    # Load from CLI arguments
+    # Load from CLI arguments - always override, highest precedence
     Config._load_from_cli(config, args)
 
     return config

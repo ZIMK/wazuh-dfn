@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
-import pytest
 from contextlib import suppress
-from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
+
+import pytest
+from pydantic import ValidationError
+
 from wazuh_dfn.main import load_config, main, parse_args, setup_directories, setup_logging, setup_service
 
 # Configure logging
@@ -25,7 +27,7 @@ dfn:
 wazuh:
   json_alert_file: "/var/ossec/logs/alerts/alerts.json"
   unix_socket_path: "localhost:1514"
-  max_event_size: 65535
+  max_event_size: 54321  # Changed from default 65535 to test precedence
   json_alert_prefix: '{"timestamp"'
   json_alert_suffix: "}"
   json_alert_file_poll_interval: 1.0
@@ -102,16 +104,24 @@ def test_parse_args_version(capsys):
 
 def test_load_config_with_env_vars(sample_config_path, monkeypatch):
     """Test loading configuration with environment variables."""
-    env_vars = {"DFN_CUSTOMER_ID": "env-test-id", "WAZUH_MAX_EVENT_SIZE": "32768", "LOG_LEVEL": "DEBUG"}
-    for key, value in env_vars.items():
-        monkeypatch.setenv(key, value)
+    # These env vars should NOT override values set in config file
+    monkeypatch.setenv("DFN_CUSTOMER_ID", "env-test-id")
+    monkeypatch.setenv("WAZUH_MAX_EVENT_SIZE", "32768")
+    
+    # This env var SHOULD override default value not set in config file
+    monkeypatch.setenv("KAFKA_TIMEOUT", "120")
 
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         args = parse_args()
         config = load_config(args)
-        assert config.dfn.dfn_id == "env-test-id"
-        assert config.wazuh.max_event_size == 32768
-        assert config.log.level == "DEBUG"
+        # This stays at file value - env var does not override
+        assert config.dfn.dfn_id == "test-id"
+        # This stays at file value - env var does not override
+        assert config.wazuh.max_event_size == 54321  # Changed to match new value in sample config
+        # This is updated by env var - overrides default value
+        assert config.kafka.timeout == 120
+        # This is set from config file
+        assert config.log.level == "INFO"
 
 
 def test_setup_logging_console_only(sample_config_path):
@@ -202,10 +212,10 @@ def test_env_var_loading(sample_config_path, monkeypatch):
 
     # Use the correct environment variable names from config.py
     env_vars = {
-        "DFN_BROKER_ADDRESS": "env-test-broker:9092",  # Corrected from DFN_BROKER
-        "WAZUH_MAX_RETRIES": "10",
-        "MISC_OWN_NETWORK": "10.0.0.0/8",
-        "LOG_KEEP_FILES": "7",
+        "DFN_BROKER_ADDRESS": "env-test-broker:9092",  # Won't override config file
+        "WAZUH_MAX_RETRIES": "10",  # Won't override config file
+        "MISC_OWN_NETWORK": "10.0.0.0/8",  # Will override default (None)
+        "LOG_KEEP_FILES": "7",  # Will override default (5)
     }
 
     for key, value in env_vars.items():
@@ -219,13 +229,17 @@ def test_env_var_loading(sample_config_path, monkeypatch):
         args = parse_args()
         config = load_config(args)
 
-        # Verify environment variables were applied
-        assert config.dfn.dfn_broker == "env-test-broker:9092"
-        assert config.wazuh.max_retries == 10
+        # Verify environment variables were applied correctly
+        # These values come from the config file - env vars don't override
+        assert config.dfn.dfn_broker == "test-broker:443" 
+        assert config.wazuh.max_retries == 5
+        
+        # These values come from env vars - overriding defaults
+        assert config.misc.own_network == "10.0.0.0/8"  # Default was None
+        assert config.log.keep_files == 7  # Default was 5
+        
         # Just verify we have a dictionary
         assert isinstance(config.kafka.producer_config, dict)
-        assert config.misc.own_network == "10.0.0.0/8"
-        assert config.log.keep_files == 7
 
 
 @pytest.fixture

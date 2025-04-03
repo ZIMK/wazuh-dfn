@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 

@@ -2,6 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
+
 from wazuh_dfn.services.alerts_service import AlertsService
 
 
