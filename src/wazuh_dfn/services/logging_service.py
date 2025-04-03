@@ -2,14 +2,17 @@
 
 import asyncio
 import logging
+from contextlib import suppress
+from datetime import datetime
+
 import psutil
+
+from wazuh_dfn.config import LogConfig
+from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+
 from .alerts_watcher_service import AlertsWatcherService
 from .alerts_worker_service import AlertsWorkerService
 from .kafka_service import KafkaService
-from contextlib import suppress
-from datetime import datetime
-from wazuh_dfn.config import LogConfig
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
 

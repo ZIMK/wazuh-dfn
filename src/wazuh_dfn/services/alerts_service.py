@@ -1,11 +1,13 @@
 """Alerts service module for handling alert processing."""
 
 import logging
+from typing import Any
+
+from wazuh_dfn.config import MiscConfig
+
 from .handlers import SyslogHandler, WindowsHandler
 from .kafka_service import KafkaService
 from .wazuh_service import WazuhService
-from typing import Any
-from wazuh_dfn.config import MiscConfig
 
 LOGGER = logging.getLogger(__name__)
 

@@ -141,12 +141,12 @@ max-complexity = 12 # Increased from 10 to be more practical
 convention = "google"
 
 [tool.ruff.lint.isort]
-# Prevent import sorting to preserve carefully ordered imports
-no-sections = true
-force-sort-within-sections = false
 combine-as-imports = false
-split-on-trailing-comma = false
-required-imports = []
+known-first-party = ["wazuh_dfn"]
+force-sort-within-sections = false
+order-by-type = true
+case-sensitive = true
+from-first = false
 
 [tool.black]
 line-length = 120

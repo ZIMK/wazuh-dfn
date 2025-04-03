@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
-from .file_monitor import FileMonitor
 from datetime import datetime
+
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+
+from .file_monitor import FileMonitor
 
 LOGGER = logging.getLogger(__name__)
 

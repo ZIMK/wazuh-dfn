@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 from typing import Any
+
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService

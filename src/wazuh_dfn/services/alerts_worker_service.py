@@ -5,13 +5,15 @@ import json
 import logging
 import secrets
 import tempfile
-from .alerts_service import AlertsService
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+
+from .alerts_service import AlertsService
 
 LOGGER = logging.getLogger(__name__)
 

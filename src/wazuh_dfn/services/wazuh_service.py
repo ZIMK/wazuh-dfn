@@ -7,6 +7,7 @@ import sys
 import time
 from enum import StrEnum
 from typing import Any, TypedDict
+
 from wazuh_dfn.config import WazuhConfig
 
 LOGGER = logging.getLogger(__name__)

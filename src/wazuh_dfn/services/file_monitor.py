@@ -1,4 +1,3 @@
-import aiofiles
 import asyncio
 import json
 import logging
@@ -6,6 +5,9 @@ import secrets
 import time
 from datetime import datetime
 from pathlib import Path
+
+import aiofiles
+
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)

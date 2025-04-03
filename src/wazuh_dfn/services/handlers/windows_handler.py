@@ -4,6 +4,7 @@ import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from typing import Any
+
 from wazuh_dfn.services.kafka_service import KafkaMessage, KafkaService
 from wazuh_dfn.services.wazuh_service import WazuhService
 
@@ -257,7 +258,7 @@ class WindowsHandler:
 
             # Create a task for the async error sending to avoid blocking
             # Using fire-and-forget pattern
-            _task = asyncio.create_task(  # noqa: RUF006
+            asyncio.create_task(  # noqa: RUF006
                 self._send_error_to_wazuh(
                     error_msg=(
                         f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"

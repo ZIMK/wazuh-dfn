@@ -8,6 +8,12 @@ import logging.config
 import logging.handlers
 import signal
 import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Union, get_args, get_origin
+
+from dotenv import load_dotenv
+
 from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
 from .services import (
@@ -19,10 +25,6 @@ from .services import (
     WazuhService,
 )
 from .services.max_size_queue import AsyncMaxSizeQueue
-from dotenv import load_dotenv
-from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
-from typing import Union, get_args, get_origin
 
 # Logging
 LOGGER = logging.getLogger(__name__)

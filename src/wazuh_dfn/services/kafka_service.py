@@ -5,10 +5,12 @@ import json
 import logging
 import ssl
 import time
-from aiokafka import AIOKafkaProducer
-from aiokafka.admin import AIOKafkaAdminClient
 from enum import StrEnum, auto
 from typing import Any, TypedDict
+
+from aiokafka import AIOKafkaProducer
+from aiokafka.admin import AIOKafkaAdminClient
+
 from wazuh_dfn.config import DFNConfig, KafkaConfig
 from wazuh_dfn.services.wazuh_service import WazuhService
 
