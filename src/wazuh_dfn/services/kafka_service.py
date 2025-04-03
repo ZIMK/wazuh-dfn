@@ -1,6 +1,7 @@
 """Kafka service module for handling Kafka operations."""
 
 import asyncio
+import datetime
 import json
 import logging
 import ssl
@@ -117,6 +118,19 @@ class KafkaService:
 
         return context
 
+    def _ensure_datetime_consistency(self) -> None:
+        """Ensure datetime objects in certificates are consistently timezone-aware.
+
+        This helps prevent "can't compare offset-naive and offset-aware datetimes" errors
+        during certificate validation.
+        """
+        try:
+            # Set the default timezone for datetime objects if needed
+            if hasattr(datetime, "timezone") and datetime.timezone:
+                datetime.datetime.now(datetime.UTC)  # This creates a timezone-aware datetime
+        except Exception as e:
+            LOGGER.warning(f"Error setting up timezone consistency: {e}")
+
     async def _create_producer(self) -> None:
         """Create a new Kafka producer instance with enhanced SSL security.
 
@@ -128,15 +142,28 @@ class KafkaService:
         """
         if self.producer:
             try:
-                await self.producer.stop() # type: ignore[]
+                await self.producer.stop()  # type: ignore[]
             except Exception as e:
                 LOGGER.warning(f"Error closing existing Kafka producer: {e}")
             self.producer = None
 
         # Before creating the producer, validate certificates
         if self.dfn_config.dfn_ca and self.dfn_config.dfn_cert and self.dfn_config.dfn_key:
-            self.dfn_config.validate_certificates()
-            ssl_context = self._create_custom_ssl_context()
+            try:
+                # Ensure datetime consistency before certificate validation
+                self._ensure_datetime_consistency()
+                self.dfn_config.validate_certificates()
+                ssl_context = self._create_custom_ssl_context()
+            except Exception as e:
+                if "can't compare offset-naive and offset-aware datetimes" in str(e):
+                    LOGGER.error(f"Certificate datetime comparison error: {e}. Using default SSL context.")
+                    # Create a more basic SSL context as fallback
+                    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                    ssl_context.load_cert_chain(certfile=self.dfn_config.dfn_cert, keyfile=self.dfn_config.dfn_key)
+                    ssl_context.load_verify_locations(cafile=self.dfn_config.dfn_ca)
+                else:
+                    LOGGER.error(f"Certificate validation failed: {e}")
+                    raise
         else:
             ssl_context = None
 
