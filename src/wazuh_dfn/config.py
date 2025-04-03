@@ -697,6 +697,45 @@ class Config(BaseModel):
     misc: MiscConfig = Field(default_factory=MiscConfig)
     config_cache: dict[str, str] = Field(default_factory=dict, exclude=True)  # Renamed from _config_cache
 
+    @staticmethod
+    def _merge_config_values(config: "Config", section_updates: dict, overwrite_existing: bool = True) -> dict:
+        """Merge configuration values with existing config.
+
+        Args:
+            config: Base configuration with default values
+            section_updates: Dictionary with new values to apply
+            overwrite_existing: Whether to overwrite existing non-default values
+
+        Returns:
+            dict: Merged configuration data ready to be used for creating a new Config
+        """
+        # Start with a dictionary containing all defaults
+        config_data = config.model_dump()
+
+        # Create a dictionary of default values to check against
+        default_config = Config().model_dump()
+
+        # Update each section with new values
+        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            if section in section_updates:
+                if section in config_data:
+                    # Process each field in the section
+                    for field, new_value in section_updates[section].items():
+                        current_value = config_data[section].get(field)
+                        default_value = default_config[section].get(field)
+
+                        # Only update if:
+                        # 1. overwrite_existing is True, OR
+                        # 2. Current value is None, OR
+                        # 3. Current value equals the default (meaning it wasn't specifically set)
+                        if overwrite_existing or current_value is None or current_value == default_value:
+                            config_data[section][field] = new_value
+                else:
+                    # Add new section
+                    config_data[section] = section_updates[section]
+
+        return config_data
+
     @classmethod
     def from_yaml(cls, yaml_path: str, config: "Config | None" = None) -> "Config":
         """Create Config instance from YAML file.
@@ -731,13 +770,10 @@ class Config(BaseModel):
         if not isinstance(config_dict, dict):
             raise ConfigValidationError("Invalid configuration format")
 
-        # Load YAML values into config model
-        config_data = {}
-        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
-            if section in config_dict:
-                config_data[section] = config_dict[section]
+        # Merge YAML values with defaults - YAML should always override defaults
+        config_data = cls._merge_config_values(config, config_dict, overwrite_existing=True)
 
-        # Create a new config with the updated values
+        # Create a new config with the merged values
         return Config(**config_data)
 
     @classmethod
@@ -775,13 +811,10 @@ class Config(BaseModel):
         if not isinstance(config_dict, dict):
             raise ConfigValidationError("Invalid configuration format")
 
-        # Load TOML values into config model
-        config_data = {}
-        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
-            if section in config_dict:
-                config_data[section] = config_dict[section]
+        # Merge TOML values with defaults - TOML should always override defaults
+        config_data = cls._merge_config_values(config, config_dict, overwrite_existing=True)
 
-        # Create a new config with the updated values
+        # Create a new config with the merged values
         return Config(**config_data)
 
     @staticmethod
@@ -790,6 +823,7 @@ class Config(BaseModel):
         import json  # Import json for parsing JSON strings in env vars
         import os  # Import os only for environment variables access
 
+        # Collect updates from environment variables
         env_updates = {}
 
         for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
@@ -799,7 +833,6 @@ class Config(BaseModel):
             for field_name, field_info in section_model.model_fields.items():
                 if field_name.startswith("_"):  # Skip private fields
                     continue
-
                 env_var = field_info.json_schema_extra.get("env_var") if field_info.json_schema_extra else None
                 if env_var and env_var in os.environ:
                     value = os.environ[env_var]
@@ -817,17 +850,23 @@ class Config(BaseModel):
                     section_updates[field_name] = value
 
             if section_updates:
-                # Create a new section model with the updates
-                section_cls = type(section_model)
-                env_updates[section_name] = section_cls(**{**section_model.model_dump(), **section_updates})
+                env_updates[section_name] = section_updates
 
-        # Apply all the updates to the config
-        for section_name, updated_section in env_updates.items():
-            setattr(config, section_name, updated_section)
+        # Merge environment values with current config
+        # Environment variables should only override defaults, not YAML/TOML values
+        if env_updates:
+            merged_data = Config._merge_config_values(config, env_updates, overwrite_existing=False)
+
+            # Apply the merged values to the config sections
+            for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+                if section_name in merged_data:
+                    section_cls = type(getattr(config, section_name))
+                    setattr(config, section_name, section_cls(**merged_data[section_name]))
 
     @staticmethod
     def _load_from_cli(config: "Config", args: argparse.Namespace) -> None:
         """Load configuration from command line arguments."""
+        # Collect updates from CLI arguments
         cli_updates = {}
 
         for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
@@ -837,23 +876,26 @@ class Config(BaseModel):
             for field_name, field_info in section_model.model_fields.items():
                 if field_name.startswith("_"):  # Skip private fields
                     continue
-
                 cli_flag = field_info.json_schema_extra.get("cli") if field_info.json_schema_extra else None
                 if cli_flag:
                     arg_name = cli_flag.lstrip("-").replace("-", "_")
                     value = getattr(args, arg_name, None)
-
                     if value is not None:
                         section_updates[field_name] = value
 
             if section_updates:
-                # Create a new section model with the updates
-                section_cls = type(section_model)
-                cli_updates[section_name] = section_cls(**{**section_model.model_dump(), **section_updates})
+                cli_updates[section_name] = section_updates
 
-        # Apply all the updates to the config
-        for section_name, updated_section in cli_updates.items():
-            setattr(config, section_name, updated_section)
+        # Merge CLI values with current config
+        # CLI args should take highest precedence and override everything
+        if cli_updates:
+            merged_data = Config._merge_config_values(config, cli_updates, overwrite_existing=True)
+
+            # Apply the merged values to the config sections
+            for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+                if section_name in merged_data:
+                    section_cls = type(getattr(config, section_name))
+                    setattr(config, section_name, section_cls(**merged_data[section_name]))
 
     def get(self, key: str, default: str | None = None) -> str:
         """Get configuration value.
@@ -887,12 +929,11 @@ class Config(BaseModel):
         """Generate a sample configuration file.
 
         Args:
-            output_path: Path to write the sample configuration to
+            output_path: Path to write the sample configuration to.
             format: Output format ('toml' or 'yaml')
         """
         config = cls()
         sample_dict = cls._build_sample_config_dict(config)
-
         output_path_obj = Path(output_path)
         output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
@@ -900,7 +941,6 @@ class Config(BaseModel):
             content = cls._format_as_toml(config, sample_dict)
         else:
             content = cls._format_as_yaml(config, sample_dict)
-
         output_path_obj.write_text(content)
 
     @classmethod
@@ -914,7 +954,6 @@ class Config(BaseModel):
             dict: Sample configuration dictionary
         """
         sample_dict = {"dfn": {}, "wazuh": {}, "kafka": {}, "log": {}, "misc": {}}
-
         # Extract fields and their defaults from each section
         for section_name, section_dict in sample_dict.items():
             section = getattr(config, section_name)
@@ -922,7 +961,6 @@ class Config(BaseModel):
             for field_name, field_info in section.model_fields.items():
                 if field_name.startswith("_"):  # Skip private fields
                     continue
-
                 # Get the default value
                 section_dict[field_name] = field_info.default
 
@@ -964,7 +1002,6 @@ class Config(BaseModel):
         for section_name in sample_dict:
             section = getattr(config, section_name)
             toml_lines.append(f"\n# {section_name.upper()} Configuration\n[{section_name}]\n")
-
             cls._add_fields_to_toml(toml_lines, section)
 
         return "".join(toml_lines)
@@ -980,9 +1017,6 @@ class Config(BaseModel):
         for field_name, field_info in section.model_fields.items():
             if field_name.startswith("_"):  # Skip private fields
                 continue
-
-            cls._add_field_comments(toml_lines, field_info, "")
-
             # Format the default value properly for TOML
             default_value = field_info.default
             if default_value is None:
@@ -1007,7 +1041,6 @@ class Config(BaseModel):
         for section_name in sample_dict:
             section = getattr(config, section_name)
             yaml_lines.append(f"\n# {section_name.upper()} Configuration\n{section_name}:\n")
-
             cls._add_fields_to_yaml(yaml_lines, section)
 
         return "".join(yaml_lines)
@@ -1023,9 +1056,6 @@ class Config(BaseModel):
         for field_name, field_info in section.model_fields.items():
             if field_name.startswith("_"):  # Skip private fields
                 continue
-
-            cls._add_field_comments(yaml_lines, field_info, "  ")
-
             # Format the default value properly for YAML
             default_value = field_info.default
             if default_value is None:

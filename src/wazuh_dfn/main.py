@@ -249,6 +249,8 @@ def setup_logging(config: Config) -> None:
     # Add file handler if path is specified
     if config.log.file_path:
         log_file_path = Path(config.log.file_path)
+        log_file_path.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
+
         if log_file_path.exists():
             try:
                 file_handler = logging.handlers.TimedRotatingFileHandler(
