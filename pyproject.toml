@@ -1,6 +1,6 @@
 [project]
 name = "wazuh-dfn"
-version = "0.17.0"
+version = "0.17.1"
 authors = [{ name = "Sebastian Wolf", email = "wolf@uni-trier.de" }]
 description = "Wazuh DFN"
 readme = "README.md"
