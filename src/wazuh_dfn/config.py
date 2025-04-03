@@ -300,14 +300,14 @@ class DFNConfig(BaseModel):
             now = datetime.now(UTC)
 
             # More explicit date validation for better tests
-            if ca_cert.not_valid_before > now:
+            if ca_cert.not_valid_before_utc > now:
                 raise ConfigValidationError("CA certificate is not yet valid")
-            if now > ca_cert.not_valid_after:
+            if now > ca_cert.not_valid_after_utc:
                 raise ConfigValidationError("CA certificate is expired")
 
-            if client_cert.not_valid_before > now:
+            if client_cert.not_valid_before_utc > now:
                 raise ConfigValidationError("Client certificate is not yet valid")
-            if now > client_cert.not_valid_after:
+            if now > client_cert.not_valid_after_utc:
                 raise ConfigValidationError("Client certificate is expired")
 
             # Check that client cert matches private key

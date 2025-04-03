@@ -416,13 +416,13 @@ def test_certificate_validation_mock():
             self.valid = valid  # Controls if this date should be considered valid
 
         def __lt__(self, other):
-            # For the check: now < cert.not_valid_before
+            # For the check: now < cert.not_valid_before_utc
             # Return False for valid certificates (not in the future)
             # Return True for invalid certificates (in the future)
             return not self.valid
 
         def __gt__(self, other):
-            # For the check: now > cert.not_valid_after
+            # For the check: now > cert.not_valid_after_utc
             # Return False for valid certificates (not expired)
             # Return True for invalid certificates (expired)
             return not self.valid
@@ -450,11 +450,16 @@ def test_certificate_validation_mock():
         client_cert = MagicMock()
 
         # Use our wrapper class for the validity dates - set both as valid
-        ca_cert.not_valid_before = DatetimeWrapper(datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True)
-        ca_cert.not_valid_after = DatetimeWrapper(datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC), valid=True)
+        # Updated to use the _utc suffix to match the actual implementation
+        ca_cert.not_valid_before_utc = DatetimeWrapper(datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True)
+        ca_cert.not_valid_after_utc = DatetimeWrapper(datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC), valid=True)
 
-        client_cert.not_valid_before = DatetimeWrapper(datetime.datetime(2021, 1, 1, tzinfo=datetime.UTC), valid=True)
-        client_cert.not_valid_after = DatetimeWrapper(datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC), valid=True)
+        client_cert.not_valid_before_utc = DatetimeWrapper(
+            datetime.datetime(2021, 1, 1, tzinfo=datetime.UTC), valid=True
+        )
+        client_cert.not_valid_after_utc = DatetimeWrapper(
+            datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC), valid=True
+        )
 
         # Set up the public key
         client_cert.public_key.return_value = MagicMock()
@@ -493,13 +498,13 @@ def test_certificate_validation_failures():
             self.valid = valid  # Controls if this date should be considered valid
 
         def __lt__(self, other):
-            # For the check: now < cert.not_valid_before
+            # For the check: now < cert.not_valid_before_utc
             # Return False for valid certificates (not in the future)
             # Return True for invalid certificates (in the future)
             return not self.valid
 
         def __gt__(self, other):
-            # For the check: now > cert.not_valid_after
+            # For the check: now > cert.not_valid_after_utc
             # Return False for valid certificates (not expired)
             # Return True for invalid certificates (expired)
             return not self.valid
@@ -526,13 +531,18 @@ def test_certificate_validation_failures():
         client_cert = MagicMock()
 
         # Use our wrapper class for validity dates - mark CA cert as invalid (expired)
-        ca_cert.not_valid_before = DatetimeWrapper(datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True)
-        ca_cert.not_valid_after = DatetimeWrapper(
+        # Updated to use the _utc suffix to match the actual implementation
+        ca_cert.not_valid_before_utc = DatetimeWrapper(datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True)
+        ca_cert.not_valid_after_utc = DatetimeWrapper(
             datetime.datetime(2021, 1, 1, tzinfo=datetime.UTC), valid=False
         )  # Expired
 
-        client_cert.not_valid_before = DatetimeWrapper(datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True)
-        client_cert.not_valid_after = DatetimeWrapper(datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC), valid=True)
+        client_cert.not_valid_before_utc = DatetimeWrapper(
+            datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC), valid=True
+        )
+        client_cert.not_valid_after_utc = DatetimeWrapper(
+            datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC), valid=True
+        )
 
         # Return mock certificates
         mock_load_cert.side_effect = [ca_cert, client_cert]
