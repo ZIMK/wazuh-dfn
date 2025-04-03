@@ -149,11 +149,16 @@ class KafkaService:
 
         # Before creating the producer, validate certificates
         if self.dfn_config.dfn_ca and self.dfn_config.dfn_cert and self.dfn_config.dfn_key:
+            LOGGER.info(
+                f"Validating certificates for {self.dfn_config.dfn_id}. "
+                f"ca: {self.dfn_config.dfn_ca}, cert: {self.dfn_config.dfn_cert}, key: {self.dfn_config.dfn_key}"
+            )
             try:
                 # Ensure datetime consistency before certificate validation
                 self._ensure_datetime_consistency()
                 self.dfn_config.validate_certificates()
                 ssl_context = self._create_custom_ssl_context()
+                LOGGER.info("Certificates validated successfully.")
             except Exception as e:
                 if "can't compare offset-naive and offset-aware datetimes" in str(e):
                     LOGGER.error(f"Certificate datetime comparison error: {e}. Using default SSL context.")
@@ -182,7 +187,12 @@ class KafkaService:
             **producer_config,
         )
 
-        await self.producer.start()
+        try:
+            await self.producer.start()
+        except Exception as e:
+            if "Client certificate not issued by the provided CA" in str(e):
+                LOGGER.error(f"SSL certificate error: {e}")
+            raise
 
     async def _test_connection(self) -> None:
         """Verify that configured topic exists in Kafka cluster asynchronously.
@@ -229,6 +239,11 @@ class KafkaService:
                 LOGGER.error(f"Configured topic '{self.dfn_config.dfn_id}' not found in available topics!")
                 raise Exception(f"Topic '{self.dfn_config.dfn_id}' not found in Kafka cluster")  # NOSONAR
 
+        except Exception as e:
+            if "Client certificate not issued by the provided CA" in str(e):
+                LOGGER.error(f"SSL certificate error: {e}")
+            raise
+
         finally:
             await admin_client.close()
 
@@ -263,17 +278,25 @@ class KafkaService:
             max_retries = self.config.connection_max_retries
 
             while not self.shutdown_event.is_set() and retry_count < max_retries:
+                # First try-catch block for creating the producer
                 try:
                     await self._create_producer()
+                except Exception as e:
+                    retry_count += 1
+                    LOGGER.error(f"Error creating Kafka producer: {e}")
+                    await self._handle_connect_error(e, retry_count, max_retries)
+                    continue
 
+                # Second try-catch block for testing the connection
+                try:
                     # Test the connection by creating an admin client
                     await self._test_connection()
 
                     LOGGER.info("Connected to Kafka successfully.")
                     return
-
                 except Exception as e:
                     retry_count += 1
+                    LOGGER.error(f"Error testing Kafka connection: {e}")
                     await self._handle_connect_error(e, retry_count, max_retries)
 
             if retry_count >= max_retries:
