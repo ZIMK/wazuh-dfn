@@ -239,6 +239,9 @@ class KafkaService:
 
         try:
             await admin_client.start()
+            topics = await admin_client.list_topics()  # This will raise an error if the connection fails
+            LOGGER.info(f"Available topics: {topics}")
+
             cluster_metadata = await admin_client.describe_topics([str(self.dfn_config.dfn_id)])
 
             if not cluster_metadata:
@@ -280,6 +283,8 @@ class KafkaService:
                 "description": f"Kafka broker not available. Attempt {retry_count}/{max_retries}. Retrying...",
             }
         )
+        if self.shutdown_event.is_set():
+            return
 
         await asyncio.sleep(wait_time)
 
