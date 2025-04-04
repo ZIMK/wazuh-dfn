@@ -380,6 +380,11 @@ async def setup_service(config: Config) -> None:
             shutdown_event=shutdown_event,
         )
 
+        # Set up centralized performance logging connections
+        LOGGER.debug("Setting up performance logging connections...")
+        alerts_worker_service.set_logging_service(logging_service)
+        kafka_service.set_logging_service(logging_service)
+
         # Set up signal handlers for clean shutdown
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

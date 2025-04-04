@@ -50,13 +50,13 @@ class AlertsWorkerService:
         self._worker_processed_times = {}
         self._times_lock = asyncio.Lock()
 
-        # Add counters for monitoring queue health
+        # Add counters for monitoring queue health - ensure timestamp is stored as int
         self._queue_stats = {
             "total_processed": 0,
             "last_queue_size": 0,
             "max_queue_size": 0,
             "queue_full_count": 0,
-            "last_queue_check": datetime.now().timestamp(),
+            "last_queue_check": int(datetime.now().timestamp()),  # Convert to int
         }
         self._stats_lock = asyncio.Lock()
 
@@ -65,6 +65,17 @@ class AlertsWorkerService:
 
         # Start queue monitoring task
         self._monitor_task = None
+
+        # Reference to the logging service (will be set later)
+        self._logging_service = None
+
+    def set_logging_service(self, logging_service) -> None:
+        """Set the logging service reference for performance logging.
+
+        Args:
+            logging_service: The logging service instance
+        """
+        self._logging_service = logging_service
 
     @property
     async def worker_processed_times(self) -> dict[str, float]:
@@ -187,6 +198,10 @@ class AlertsWorkerService:
         consecutive_empty = 0
         total_processing_time = 0
 
+        # Initialize variables that might be referenced before assignment
+        last_processing_time = 0
+        last_alert_id = "none"
+
         # Add detailed timing metrics
         timing_stats = {
             "processing_times": [],  # Store recent processing times
@@ -260,6 +275,10 @@ class AlertsWorkerService:
                             alerts_processed += 1
                             total_processing_time += processing_time
 
+                            # Store the processing time and alert ID for metrics
+                            last_processing_time = processing_time
+                            last_alert_id = alert_id
+
                             # Update timing stats
                             self._update_timing_stats(timing_stats, processing_time)
 
@@ -323,26 +342,29 @@ class AlertsWorkerService:
                     recent_times = timing_stats["processing_times"][-10:]
                     recent_avg = sum(recent_times) / len(recent_times) if recent_times else 0
 
-                    # Comprehensive performance report
-                    LOGGER.info(
-                        f"Worker {worker_name} performance: {alerts_processed} alerts processed, "
-                        f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms, "
-                        f"recent avg: {recent_avg*1000:.2f}ms, "
-                        f"min: {timing_stats['min_time']*1000:.2f}ms, max: {timing_stats['max_time']*1000:.2f}ms, "
-                        f"slow alerts: {timing_stats['slow_alerts']}, "
-                        f"extremely slow: {timing_stats['extremely_slow_alerts']}"
-                    )
-
-                    # Check alert processing time for severe issues
-                    if avg_processing > 5.0:
-                        LOGGER.error(
-                            f"CRITICAL: Worker {worker_name} processing time ({avg_processing:.2f}s) "
-                            f"is extremely high. Consider increasing worker count or optimizing alert processing."
+                    # Send performance data to logging service instead of logging directly
+                    if self._logging_service:
+                        await self._logging_service.record_worker_performance(
+                            worker_name,
+                            {
+                                "timestamp": now_time.timestamp(),
+                                "alerts_processed": alerts_processed,
+                                "rate": rate,
+                                "avg_processing": avg_processing,
+                                "recent_avg": recent_avg,
+                                "min_time": timing_stats["min_time"],
+                                "max_time": timing_stats["max_time"],
+                                "slow_alerts": timing_stats["slow_alerts"],
+                                "extremely_slow_alerts": timing_stats["extremely_slow_alerts"],
+                                "last_processing_time": last_processing_time,
+                                "last_alert_id": last_alert_id,
+                            },
                         )
-                    elif avg_processing > 1.0:
-                        LOGGER.warning(
-                            f"Worker {worker_name} processing time ({avg_processing:.2f}s) "
-                            f"is high. Alert processing may need optimization."
+                    else:
+                        # Fallback if logging service isn't set
+                        LOGGER.info(
+                            f"Worker {worker_name} performance: {alerts_processed} alerts processed, "
+                            f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms"
                         )
 
                     last_metrics_dump = now_time
@@ -369,20 +391,15 @@ class AlertsWorkerService:
         LOGGER.info(f"Stopping worker {worker_name}")
 
     def _update_timing_stats(self, stats: dict, processing_time: float) -> None:
-        """Update timing statistics with a new processing time.
-
-        Args:
-            stats: Dictionary of timing statistics to update
-            processing_time: New processing time to add
-        """
+        """Update timing statistics with a new processing time."""
         # Keep last 100 processing times for analysis
-        stats["processing_times"].append(processing_time)
+        stats["processing_times"].append(float(processing_time))  # Ensure it's explicitly a float
         if len(stats["processing_times"]) > 100:
             stats["processing_times"].pop(0)
 
-        # Update min/max times
-        stats["max_time"] = max(stats["max_time"], processing_time)
-        stats["min_time"] = min(stats["min_time"], processing_time)
+        # Update min/max times - ensure they're always stored as floats
+        stats["max_time"] = float(max(stats["max_time"], processing_time))
+        stats["min_time"] = float(min(stats["min_time"], processing_time))
 
         # Count slow alerts
         if processing_time > 5.0:
@@ -400,6 +417,7 @@ class AlertsWorkerService:
         """
         batch = []
         timing_results = []
+        last_alert_id = "batch-none"  # Initialize with default value
 
         # Try to get up to batch_size alerts without blocking
         for _ in range(batch_size):
@@ -423,6 +441,7 @@ class AlertsWorkerService:
             for alert in batch:
                 try:
                     alert_id = alert.get("id", "unknown")
+                    last_alert_id = alert_id  # Keep track of the last processed alert ID
                     LOGGER.debug(f"Worker {worker_name} processing batch alert {alert_id}")
 
                     process_start = datetime.now()
@@ -434,6 +453,12 @@ class AlertsWorkerService:
 
                     process_end = datetime.now()
                     processing_time = (process_end - process_start).total_seconds()
+
+                    # Update last processed information for metrics
+                    if self._logging_service:
+                        # Store the last alert processing info
+                        last_processing_info = {"last_processing_time": processing_time, "last_alert_id": alert_id}
+                        await self._logging_service.update_worker_last_processed(worker_name, last_processing_info)
 
                     # Track times
                     total_processing_time += processing_time
@@ -480,10 +505,8 @@ class AlertsWorkerService:
 
         Creates a temporary file containing the JSON representation of the
         alert that failed processing, for later analysis.
-
         Args:
             alert: The alert data to dump
-
         Returns:
             str | None: Path to the dump file or None if failed
         """
@@ -491,14 +514,11 @@ class AlertsWorkerService:
             alert_id = alert.get("id", "unknown")
             random_suffix = str(secrets.randbelow(999999) + 100000)
             alert_suffix = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{random_suffix}"
-
             # Create a temp file with pathlib
             temp_path = Path(tempfile.gettempdir()) / f"dfn-alert-{alert_id}_{alert_suffix}.json"
-
             # Use async file operations
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._write_file(temp_path, json.dumps(alert, indent=2)))
-
             return str(temp_path)
 
         except Exception as e:
@@ -510,7 +530,6 @@ class AlertsWorkerService:
 
         Uses asyncio's run_in_executor to perform file I/O operations
         without blocking the event loop.
-
         Args:
             path: The path to write to
             content: The content to write
@@ -529,7 +548,6 @@ class AlertsWorkerService:
         This method is called during service shutdown to ensure clean termination.
         """
         LOGGER.info("Shutting down alerts worker service")
-
         # Cancel the queue monitor first
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()

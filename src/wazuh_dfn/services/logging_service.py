@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime
+from typing import Dict, Any, List
 
 import psutil
 
@@ -53,6 +54,18 @@ class LoggingService:
         self.shutdown_event = shutdown_event
         self.process = psutil.Process()
 
+        # Add storage for performance metrics to reduce log flooding
+        self._worker_performance_data = {}
+        self._worker_last_processed = {}  # Store last processed info by worker
+        self._kafka_performance_data = {
+            "slow_operations": 0,
+            "total_operations": 0,
+            "last_slow_operation_time": 0,
+            "max_operation_time": 0,
+            "recent_stage_times": [],
+        }
+        self._perf_lock = asyncio.Lock()
+
     async def start(self) -> None:
         """Start periodic statistics logging and keep running until shutdown asynchronously.
 
@@ -93,6 +106,69 @@ class LoggingService:
             await self._log_stats()
         except Exception as e:
             LOGGER.error(f"Error logging final stats: {e}")
+
+    async def record_worker_performance(self, worker_name: str, performance_data: Dict[str, Any]) -> None:
+        """Record worker performance data for centralized logging.
+
+        Args:
+            worker_name: Name of the worker
+            performance_data: Performance metrics to record
+        """
+        async with self._perf_lock:
+            self._worker_performance_data[worker_name] = performance_data
+
+            # Only log extremely slow operations immediately
+            if (
+                performance_data.get("extremely_slow_alerts", 0) > 0
+                and performance_data.get("last_processing_time", 0) > 5.0
+            ):
+                LOGGER.warning(
+                    f"SLOW WORKER: {worker_name} processed alert in {performance_data['last_processing_time']:.2f}s. "
+                    f"Alert ID: {performance_data.get('last_alert_id', 'unknown')}"
+                )
+
+    async def record_kafka_performance(self, operation_data: Dict[str, Any]) -> None:
+        """Record Kafka operation performance data for centralized logging.
+
+        Args:
+            operation_data: Performance metrics about Kafka operations
+        """
+        async with self._perf_lock:
+            self._kafka_performance_data["total_operations"] += 1
+
+            # Track slow operations
+            total_time = operation_data.get("total_time", 0)
+            if total_time > 1.0:
+                self._kafka_performance_data["slow_operations"] += 1
+                self._kafka_performance_data["last_slow_operation_time"] = total_time
+                self._kafka_performance_data["max_operation_time"] = max(
+                    self._kafka_performance_data["max_operation_time"], total_time
+                )
+
+                # Store the stage times for the latest slow operations (keep last 5)
+                self._kafka_performance_data["recent_stage_times"].append(operation_data.get("stage_times", {}))
+                if len(self._kafka_performance_data["recent_stage_times"]) > 5:
+                    self._kafka_performance_data["recent_stage_times"].pop(0)
+
+                # Only log extremely slow operations immediately
+                if total_time > 5.0:
+                    stage_times = operation_data.get("stage_times", {})
+                    LOGGER.warning(
+                        f"VERY SLOW KAFKA OPERATION: {total_time:.2f}s - "
+                        f"Prep: {stage_times.get('prep', 0):.2f}s, "
+                        f"Encode: {stage_times.get('encode', 0):.2f}s, "
+                        f"Send: {stage_times.get('send', 0):.2f}s"
+                    )
+
+    async def update_worker_last_processed(self, worker_name: str, info: Dict[str, Any]) -> None:
+        """Update the last processed information for a worker.
+
+        Args:
+            worker_name: Name of the worker
+            info: Information about the last processed alert
+        """
+        async with self._perf_lock:
+            self._worker_last_processed[worker_name] = info
 
     async def _log_stats(self) -> None:
         """Log various statistics related to the alert processing system asynchronously."""
@@ -178,9 +254,15 @@ class LoggingService:
             else:
                 LOGGER.info("No alerts have been queued yet")
 
-            # Log per-worker processing times
+            # Log per-worker processing times and performance metrics
             try:
                 worker_times = await self.alerts_worker_service.worker_processed_times
+
+                # Get worker performance data for combined logging
+                async with self._perf_lock:
+                    worker_perf_data = self._worker_performance_data.copy()
+
+                # Log each worker's status
                 for worker_name, timestamp in worker_times.items():
                     worker_last_processed = datetime.fromtimestamp(timestamp)
                     worker_diff = datetime.now() - worker_last_processed
@@ -197,8 +279,49 @@ class LoggingService:
                             f"Worker {worker_name} last processed: {worker_last_processed}, "
                             f"{worker_seconds_ago:.2f} seconds ago"
                         )
+
+                    # Add performance metrics if available
+                    if worker_name in worker_perf_data:
+                        perf = worker_perf_data[worker_name]
+                        LOGGER.info(
+                            f"Worker {worker_name} performance: {perf.get('alerts_processed', 0)} alerts processed, "
+                            f"rate: {perf.get('rate', 0):.2f} alerts/sec, avg: {perf.get('avg_processing', 0)*1000:.2f}ms, "
+                            f"recent avg: {perf.get('recent_avg', 0)*1000:.2f}ms, "
+                            f"slow alerts: {perf.get('slow_alerts', 0)}, "
+                            f"extremely slow: {perf.get('extremely_slow_alerts', 0)}"
+                        )
             except Exception as e:
                 LOGGER.error(f"Error logging worker times: {e}")
+
+            # Log Kafka performance metrics
+            try:
+                async with self._perf_lock:
+                    kafka_perf = self._kafka_performance_data.copy()
+
+                if kafka_perf["total_operations"] > 0:
+                    slow_pct = (
+                        (kafka_perf["slow_operations"] / kafka_perf["total_operations"]) * 100
+                        if kafka_perf["total_operations"] > 0
+                        else 0
+                    )
+
+                    LOGGER.info(
+                        f"Kafka performance: {kafka_perf['total_operations']} operations, "
+                        f"{kafka_perf['slow_operations']} slow ({slow_pct:.1f}%), "
+                        f"max time: {kafka_perf['max_operation_time']:.2f}s"
+                    )
+
+                    # If there were slow operations, log details about them
+                    if kafka_perf["slow_operations"] > 0 and kafka_perf["recent_stage_times"]:
+                        latest = kafka_perf["recent_stage_times"][-1]
+                        LOGGER.info(
+                            f"Latest slow Kafka operation: "
+                            f"Prep: {latest.get('prep', 0):.2f}s, "
+                            f"Encode: {latest.get('encode', 0):.2f}s, "
+                            f"Send: {latest.get('send', 0):.2f}s"
+                        )
+            except Exception as e:
+                LOGGER.error(f"Error logging Kafka performance: {e}")
 
         except Exception as e:
             LOGGER.error(f"Error collecting monitoring stats: {e!s}", exc_info=True)
