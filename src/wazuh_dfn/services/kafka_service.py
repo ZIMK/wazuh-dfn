@@ -104,7 +104,8 @@ class KafkaService:
         # Create a custom SSL context with modern security settings
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(certfile=self.dfn_config.dfn_cert, keyfile=self.dfn_config.dfn_key)
-        context.load_verify_locations(cafile=self.dfn_config.dfn_ca)
+        if self.dfn_config.dfn_ca:
+            context.load_verify_locations(cafile=self.dfn_config.dfn_ca)
 
         # Use only modern TLS versions
         context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -148,7 +149,7 @@ class KafkaService:
             self.producer = None
 
         # Before creating the producer, validate certificates
-        if self.dfn_config.dfn_ca and self.dfn_config.dfn_cert and self.dfn_config.dfn_key:
+        if self.dfn_config.dfn_cert and self.dfn_config.dfn_key:
             LOGGER.info(
                 f"Validating certificates for {self.dfn_config.dfn_id}. "
                 f"ca: {self.dfn_config.dfn_ca}, cert: {self.dfn_config.dfn_cert}, key: {self.dfn_config.dfn_key}"
@@ -205,9 +206,7 @@ class KafkaService:
         """
         # Create SSL context if needed
         ssl_context = (
-            self._create_custom_ssl_context()
-            if (self.dfn_config.dfn_ca and self.dfn_config.dfn_cert and self.dfn_config.dfn_key)
-            else None
+            self._create_custom_ssl_context() if (self.dfn_config.dfn_cert and self.dfn_config.dfn_key) else None
         )
 
         # Get admin client configuration directly from config

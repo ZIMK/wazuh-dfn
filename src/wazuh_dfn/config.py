@@ -231,14 +231,6 @@ class DFNConfig(BaseModel):
             "cli": "--dfn-broker-address",
         },
     )
-    dfn_ca: str = Field(
-        default="/opt/wazuh-dfn/certs/dfn-ca.pem",
-        description="Path to CA certificate for Kafka SSL",
-        json_schema_extra={
-            "env_var": "DFN_CA_PATH",
-            "cli": "--dfn-ca-path",
-        },
-    )
     dfn_cert: str = Field(
         default="/opt/wazuh-dfn/certs/dfn-cert.pem",
         description="Path to client certificate for Kafka SSL",
@@ -253,6 +245,14 @@ class DFNConfig(BaseModel):
         json_schema_extra={
             "env_var": "DFN_KEY_PATH",
             "cli": "--dfn-key-path",
+        },
+    )
+    dfn_ca: str | None = Field(
+        default=None,
+        description="Path to CA certificate for Kafka SSL",
+        json_schema_extra={
+            "env_var": "DFN_CA_PATH",
+            "cli": "--dfn-ca-path",
         },
     )
     dfn_id: str | None = Field(
