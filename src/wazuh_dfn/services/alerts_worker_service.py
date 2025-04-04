@@ -8,7 +8,7 @@ import tempfile
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
@@ -47,16 +47,46 @@ class AlertsWorkerService:
         self.alerts_service = alerts_service
         self.shutdown_event = shutdown_event
         self.worker_tasks = []
-        self._last_processed_time = datetime.now().timestamp()
+        self._worker_processed_times = {}
+        self._times_lock = asyncio.Lock()
+
+        # Add counters for monitoring queue health
+        self._queue_stats = {
+            "total_processed": 0,
+            "last_queue_size": 0,
+            "max_queue_size": 0,
+            "queue_full_count": 0,
+            "last_queue_check": datetime.now().timestamp(),
+        }
+        self._stats_lock = asyncio.Lock()
+
+        # Track if we're in high throughput mode
+        self._high_throughput_mode = False
+
+        # Start queue monitoring task
+        self._monitor_task = None
 
     @property
-    def last_processed_time(self) -> float:
-        """Get the timestamp of the last processed alert.
+    async def worker_processed_times(self) -> dict[str, float]:
+        """Get the timestamp of the last processed alert for each worker.
 
         Returns:
-            float: Timestamp of last processed alert
+            dict[str, float]: Dictionary of worker names to timestamps
         """
-        return self._last_processed_time
+        async with self._times_lock:
+            # Return a copy to prevent external modification
+            return self._worker_processed_times.copy()
+
+    @property
+    async def queue_stats(self) -> dict:
+        """Get current queue statistics.
+
+        Returns:
+            dict: Current queue statistics
+        """
+        async with self._stats_lock:
+            # Return a copy to prevent external modification
+            return self._queue_stats.copy()
 
     async def start(self) -> None:
         """Start worker tasks for processing alerts asynchronously.
@@ -69,6 +99,9 @@ class AlertsWorkerService:
         LOGGER.info(f"Alerts worker service running as task: {task_name}")
 
         try:
+            # Start queue monitoring task first
+            self._monitor_task = asyncio.create_task(self._monitor_queue(), name="QueueMonitor")
+
             # Create and start worker tasks using task groups
             async with asyncio.TaskGroup() as tg:
                 for i in range(self.config.num_workers):
@@ -86,6 +119,57 @@ class AlertsWorkerService:
         finally:
             await self._shutdown()
 
+    async def _monitor_queue(self) -> None:
+        """Monitor queue health and adjust worker behavior accordingly."""
+        LOGGER.info("Starting queue monitor task")
+
+        while not self.shutdown_event.is_set():
+            try:
+                # Check queue size every 2 seconds
+                await asyncio.sleep(2)
+
+                current_size = self.alert_queue.qsize()
+                max_size = self.alert_queue.maxsize
+                fill_percentage = (current_size / max_size) * 100 if max_size > 0 else 0
+
+                async with self._stats_lock:
+                    self._queue_stats["last_queue_size"] = current_size
+                    self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
+
+                    # Check if queue is at risk of overflowing (>80% full)
+                    if fill_percentage > 80:
+                        self._queue_stats["queue_full_count"] += 1
+
+                        # Enable high-throughput mode if not already enabled
+                        if not self._high_throughput_mode:
+                            self._high_throughput_mode = True
+                            LOGGER.warning(
+                                f"Queue at {fill_percentage:.1f}% capacity ({current_size}/{max_size}). "
+                                f"Enabling high-throughput mode."
+                            )
+                    elif fill_percentage < 50 and self._high_throughput_mode:
+                        # Disable high throughput mode when queue is less full
+                        self._high_throughput_mode = False
+                        LOGGER.info(f"Queue at {fill_percentage:.1f}% capacity. Disabling high-throughput mode.")
+
+                # Log warnings at different thresholds
+                if fill_percentage > 90:
+                    LOGGER.error(
+                        f"CRITICAL: Queue nearly full: {fill_percentage:.1f}% ({current_size}/{max_size}). "
+                        f"Events may be discarded!"
+                    )
+                elif fill_percentage > 80:
+                    LOGGER.warning(
+                        f"Queue filling up: {fill_percentage:.1f}% ({current_size}/{max_size}). "
+                        f"Processing may fall behind."
+                    )
+
+            except asyncio.CancelledError:
+                LOGGER.info("Queue monitor task cancelled")
+                break
+            except Exception as e:
+                LOGGER.error(f"Error in queue monitor: {e}", exc_info=True)
+
     async def _process_alerts(self) -> None:
         """Process alerts from the queue asynchronously.
 
@@ -96,43 +180,199 @@ class AlertsWorkerService:
         worker_name = asyncio.current_task().get_name() if asyncio.current_task() else "AlertWorker"
         LOGGER.info(f"Started alert processing worker: {worker_name}")
 
+        # Initialize this worker's timestamp
+        now = datetime.now().timestamp()
+        async with self._times_lock:
+            self._worker_processed_times[worker_name] = now
+
+        # Track worker performance metrics
+        alerts_processed = 0
+        start_time = datetime.now()
+        last_metrics_dump = start_time
+        consecutive_empty = 0
+        total_processing_time = 0
+
+        # Batch size for high-throughput mode
+        batch_size = 5
+
         while not self.shutdown_event.is_set():
             try:
-                # Get alert with timeout
-                try:
-                    alert = await asyncio.wait_for(self.alert_queue.get(), timeout=1.0)
+                # In high-throughput mode, try to process multiple alerts in a batch when queue is filling up
+                is_high_throughput = self._high_throughput_mode
+
+                if is_high_throughput:
+                    # Process multiple alerts in a batch
+                    await self._process_alert_batch(worker_name, batch_size, alerts_processed, total_processing_time)
+                else:
+                    # Process single alerts normally
+                    # Use shorter timeout if queue has been consistently empty
+                    timeout = 0.05 if consecutive_empty > 5 else 0.2
 
                     try:
-                        # Process the alert
-                        await self.alerts_service.process_alert(alert)
-                        self._last_processed_time = datetime.now().timestamp()
-                    except Exception as e:
-                        alert_id = alert.get("id", "unknown")
-                        LOGGER.error(f"Error processing alert {alert_id}: {e}", exc_info=True)
+                        # Get an alert from the queue
+                        alert = await asyncio.wait_for(self.alert_queue.get(), timeout=timeout)
+                        consecutive_empty = 0  # Reset empty counter
 
-                        # Dump failed alert for debugging
-                        debug_path = await self._dump_alert(alert)
-                        if debug_path:
-                            LOGGER.info(f"Dumped failed alert to {debug_path}")
-                    finally:
-                        # Mark the task as done
-                        self.alert_queue.task_done()
+                        try:
+                            # Process the alert with detailed timing
+                            process_start = datetime.now()
+                            await self.alerts_service.process_alert(alert)
+                            process_end = datetime.now()
 
-                except TimeoutError:
-                    # This is expected - just retry
-                    continue
+                            # Update timestamp with minimal locking
+                            now = datetime.now().timestamp()
+                            async with self._times_lock:
+                                self._worker_processed_times[worker_name] = now
+
+                            # Performance tracking
+                            alerts_processed += 1
+                            processing_time = (process_end - process_start).total_seconds()
+                            total_processing_time += processing_time
+
+                            # Update global stats
+                            async with self._stats_lock:
+                                self._queue_stats["total_processed"] += 1
+
+                            if processing_time > 0.5:
+                                LOGGER.warning(
+                                    f"Worker {worker_name} slow alert processing: {processing_time:.2f}s "
+                                    f"for alert {alert.get('id', 'unknown')}"
+                                )
+
+                        except Exception as e:
+                            alert_id = alert.get("id", "unknown")
+                            LOGGER.error(f"Error processing alert {alert_id}: {e}", exc_info=True)
+                            debug_path = await self._dump_alert(alert)
+                            if debug_path:
+                                LOGGER.info(f"Dumped failed alert to {debug_path}")
+                        finally:
+                            # Mark the task as done
+                            self.alert_queue.task_done()
+
+                    except TimeoutError:
+                        consecutive_empty += 1
+                        # Very short sleep when queue is empty
+                        if consecutive_empty > 10:
+                            await asyncio.sleep(0.001)
+                        continue
+
+                # Periodically log performance metrics (every 30 seconds)
+                now_time = datetime.now()
+                if (now_time - last_metrics_dump).total_seconds() > 30:
+                    elapsed = (now_time - start_time).total_seconds()
+                    rate = alerts_processed / elapsed if elapsed > 0 else 0
+                    avg_processing = total_processing_time / alerts_processed if alerts_processed > 0 else 0
+
+                    LOGGER.info(
+                        f"Worker {worker_name} performance: {alerts_processed} alerts processed, "
+                        f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms, "
+                        f"total runtime: {elapsed:.1f}s"
+                    )
+
+                    # Check if this worker is significantly slower than expected
+                    if alerts_processed > 10 and rate < 0.5:
+                        LOGGER.warning(
+                            f"Worker {worker_name} is processing alerts slower than expected ({rate:.2f}/sec). "
+                            f"Average processing time: {avg_processing*1000:.2f}ms"
+                        )
+
+                    last_metrics_dump = now_time
 
             except asyncio.CancelledError:
-                # Exit gracefully on cancellation
                 LOGGER.info(f"Worker {worker_name} task cancelled")
                 break
 
             except Exception as e:
                 LOGGER.error(f"Error in worker {worker_name}: {e}", exc_info=True)
-                # Wait a bit before retrying on unexpected errors
-                await asyncio.sleep(0.1)
+                # Short wait on errors
+                await asyncio.sleep(0.001)
+
+        # Log final stats
+        if alerts_processed > 0:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            rate = alerts_processed / elapsed if elapsed > 0 else 0
+            avg_processing = total_processing_time / alerts_processed
+            LOGGER.info(
+                f"Worker {worker_name} final stats: {alerts_processed} alerts processed, "
+                f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms"
+            )
 
         LOGGER.info(f"Stopping worker {worker_name}")
+
+    async def _process_alert_batch(
+        self, worker_name: str, batch_size: int, alerts_processed: int, total_processing_time: float
+    ) -> tuple[int, float]:
+        """Process multiple alerts in a batch when queue is filling up.
+
+        Args:
+            worker_name: Name of the worker processing the batch
+            batch_size: Maximum number of alerts to process in this batch
+            alerts_processed: Current count of processed alerts to update
+            total_processing_time: Current total processing time to update
+
+        Returns:
+            tuple: Updated (alerts_processed, total_processing_time)
+        """
+        batch = []
+        batch_start = datetime.now()
+
+        # Try to get up to batch_size alerts without blocking
+        for _ in range(batch_size):
+            try:
+                if not self.alert_queue.empty():
+                    alert = self.alert_queue.get_nowait()
+                    batch.append(alert)
+            except asyncio.QueueEmpty:
+                break
+
+        if not batch:
+            # No alerts to process, return unchanged values
+            await asyncio.sleep(0.001)  # Brief pause to prevent CPU spinning
+            return alerts_processed, total_processing_time
+
+        # Process the batch
+        try:
+            batch_start_time = datetime.now()
+
+            # Process each alert in sequence
+            for alert in batch:
+                try:
+                    process_start = datetime.now()
+                    await self.alerts_service.process_alert(alert)
+                    process_end = datetime.now()
+
+                    # Track processing time for individual alert
+                    processing_time = (process_end - process_start).total_seconds()
+                    total_processing_time += processing_time
+                    alerts_processed += 1
+
+                    # Update global stats
+                    async with self._stats_lock:
+                        self._queue_stats["total_processed"] += 1
+
+                except Exception as e:
+                    alert_id = alert.get("id", "unknown")
+                    LOGGER.error(f"Error processing alert {alert_id} in batch: {e}", exc_info=True)
+                finally:
+                    # Mark as done regardless of success or failure
+                    self.alert_queue.task_done()
+
+            # Update the last processed time once for the batch
+            now = datetime.now().timestamp()
+            async with self._times_lock:
+                self._worker_processed_times[worker_name] = now
+
+            # Log batch performance
+            batch_time = (datetime.now() - batch_start_time).total_seconds()
+            LOGGER.debug(
+                f"Worker {worker_name} processed batch of {len(batch)} alerts in {batch_time:.3f}s "
+                f"({batch_time/len(batch):.3f}s per alert)"
+            )
+
+        except Exception as e:
+            LOGGER.error(f"Error processing alert batch: {e}", exc_info=True)
+
+        return alerts_processed, total_processing_time
 
     async def _dump_alert(self, alert: dict[str, Any]) -> str | None:
         """Dump alert to file for debugging asynchronously.
@@ -188,6 +428,12 @@ class AlertsWorkerService:
         This method is called during service shutdown to ensure clean termination.
         """
         LOGGER.info("Shutting down alerts worker service")
+
+        # Cancel the queue monitor first
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._monitor_task
 
         # Wait for all workers to finish
         for worker_task in self.worker_tasks:

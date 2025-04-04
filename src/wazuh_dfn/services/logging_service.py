@@ -95,23 +95,35 @@ class LoggingService:
             LOGGER.error(f"Error logging final stats: {e}")
 
     async def _log_stats(self) -> None:
-        """Log various statistics related to the alert processing system asynchronously.
-
-        Gathers and logs:
-        - Queue statistics
-        - Memory and CPU usage
-        - File monitoring metrics
-        - Service status information
-
-        This provides operational visibility into the running system.
-        """
+        """Log various statistics related to the alert processing system asynchronously."""
         try:
-            # Log queue size
+            # Log queue size and capacity
             queue_size = self.alert_queue.qsize()
-            LOGGER.info(f"Number of objects in alert queue: {queue_size}")
+            queue_maxsize = self.alert_queue.maxsize
+            fill_percentage = (queue_size / queue_maxsize) * 100 if queue_maxsize > 0 else 0
 
+            # Add warning level based on fill percentage
+            if fill_percentage > 90:
+                LOGGER.error(f"CRITICAL: Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})!")
+            elif fill_percentage > 70:
+                LOGGER.warning(f"Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})!")
+            else:
+                LOGGER.info(f"Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})")
+
+            # Get queue statistics from worker service
             try:
-                # Log memory usage
+                queue_stats = await self.alerts_worker_service.queue_stats
+                if queue_stats:
+                    LOGGER.info(
+                        f"Queue stats: {queue_stats['total_processed']} total alerts processed, "
+                        f"max size reached: {queue_stats['max_queue_size']}, "
+                        f"queue full warnings: {queue_stats['queue_full_count']}"
+                    )
+            except Exception as e:
+                LOGGER.error(f"Error getting queue stats: {e}")
+
+            # Log memory usage
+            try:
                 memory_percent = self.process.memory_percent()
                 LOGGER.info(f"Current memory usage: {memory_percent:.2f}%")
             except psutil.Error as e:
@@ -124,8 +136,8 @@ class LoggingService:
             except Exception as e:
                 LOGGER.debug(f"Error getting CPU average: {e}")
 
+            # Log open files
             try:
-                # Log open files
                 open_files = self.process.open_files()
                 LOGGER.info(f"Current open files: {open_files}")
             except psutil.Error as e:
@@ -166,10 +178,27 @@ class LoggingService:
             else:
                 LOGGER.info("No alerts have been queued yet")
 
-            # Log the last processed time from the worker service
-            last_processed = datetime.fromtimestamp(self.alerts_worker_service.last_processed_time)
-            process_diff = datetime.now() - last_processed
-            LOGGER.info(f"Last processed: {last_processed}, {process_diff.total_seconds():.2f} seconds ago")
+            # Log per-worker processing times
+            try:
+                worker_times = await self.alerts_worker_service.worker_processed_times
+                for worker_name, timestamp in worker_times.items():
+                    worker_last_processed = datetime.fromtimestamp(timestamp)
+                    worker_diff = datetime.now() - worker_last_processed
+                    worker_seconds_ago = worker_diff.total_seconds()
+
+                    # Use warning levels for workers that haven't processed alerts recently
+                    if worker_seconds_ago > 60:
+                        LOGGER.warning(
+                            f"Worker {worker_name} last processed: {worker_last_processed}, "
+                            f"{worker_seconds_ago:.2f} seconds ago (STALLED)"
+                        )
+                    else:
+                        LOGGER.info(
+                            f"Worker {worker_name} last processed: {worker_last_processed}, "
+                            f"{worker_seconds_ago:.2f} seconds ago"
+                        )
+            except Exception as e:
+                LOGGER.error(f"Error logging worker times: {e}")
 
         except Exception as e:
             LOGGER.error(f"Error collecting monitoring stats: {e!s}", exc_info=True)
