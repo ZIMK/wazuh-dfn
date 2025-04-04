@@ -240,17 +240,13 @@ class KafkaService:
         try:
             await admin_client.start()
             topics = await admin_client.list_topics()  # This will raise an error if the connection fails
-            LOGGER.info(f"Available topics: {topics}")
 
-            cluster_metadata = await admin_client.describe_topics([str(self.dfn_config.dfn_id)])
+            if not topics:
+                raise Exception("Failed to retrieve available topics")  # NOSONAR
 
-            if not cluster_metadata:
-                raise Exception("Failed to retrieve cluster metadata")  # NOSONAR
+            LOGGER.info(f"Topic info for {self.dfn_config.dfn_id}: {topics}")
 
-            # Log available topics to help debug
-            LOGGER.info(f"Topic info for {self.dfn_config.dfn_id}: {cluster_metadata}")
-
-            if self.dfn_config.dfn_id not in cluster_metadata:
+            if self.dfn_config.dfn_id not in topics:
                 LOGGER.error(f"Configured topic '{self.dfn_config.dfn_id}' not found in available topics!")
                 raise Exception(f"Topic '{self.dfn_config.dfn_id}' not found in Kafka cluster")  # NOSONAR
 
