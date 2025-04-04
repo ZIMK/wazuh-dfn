@@ -189,11 +189,6 @@ class AlertsWorkerService:
         """
         LOGGER.info("Shutting down alerts worker service")
 
-        # Wait for remaining items in queue
-        if not self.alert_queue.empty():
-            LOGGER.info("Waiting for remaining alerts to be processed")
-            await self.alert_queue.join()
-
         # Wait for all workers to finish
         for worker_task in self.worker_tasks:
             if not worker_task.done():
