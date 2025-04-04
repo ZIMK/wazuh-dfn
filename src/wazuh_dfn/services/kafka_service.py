@@ -115,7 +115,7 @@ class KafkaService:
 
         # More strict security options
         context.check_hostname = True
-        context.verify_mode = ssl.CERT_REQUIRED
+        # context.verify_mode = ssl.CERT_REQUIRED
 
         return context
 
@@ -180,6 +180,13 @@ class KafkaService:
         bootstrap_servers = producer_config.pop("bootstrap_servers", self.dfn_config.dfn_broker)
         security_protocol = producer_config.pop("security_protocol", "SSL" if ssl_context else None)
 
+        LOGGER.info(
+            f"Creating Kafka producer for {self.dfn_config.dfn_id} with bootstrap servers: {bootstrap_servers}"
+            f" and security protocol: {security_protocol}"
+        )
+        LOGGER.debug(f"Producer config: {producer_config}")
+        LOGGER.debug(f"SSL context: {ssl_context}")
+        LOGGER.debug(f"Security protocol: {security_protocol}")
         # Create aiokafka producer
         self.producer = AIOKafkaProducer(
             bootstrap_servers=bootstrap_servers,
@@ -331,7 +338,7 @@ class KafkaService:
         """Clean up Kafka producer safely asynchronously."""
         if self.producer:
             try:
-                await self.producer.stop()
+                await self.producer.stop() # type: ignore[]
             except Exception as close_error:
                 LOGGER.warning(f"Error closing Kafka producer: {close_error}")
             self.producer = None
