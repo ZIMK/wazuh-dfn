@@ -484,7 +484,7 @@ class KafkaConfig(BaseModel):
         """
         return {
             "bootstrap_servers": dfn_config.dfn_broker,
-            "security_protocol": "SSL" if (dfn_config.dfn_ca and dfn_config.dfn_cert and dfn_config.dfn_key) else None,
+            "security_protocol": "SSL" if (dfn_config.dfn_cert and dfn_config.dfn_key) else None,
             # Common timeouts and retries
             "request_timeout_ms": self.timeout * 1000,
             "retry_backoff_ms": self.retry_interval * 1000,

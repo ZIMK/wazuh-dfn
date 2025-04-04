@@ -338,7 +338,7 @@ class KafkaService:
         """Clean up Kafka producer safely asynchronously."""
         if self.producer:
             try:
-                await self.producer.stop() # type: ignore[]
+                await self.producer.stop()  # type: ignore[]
             except Exception as close_error:
                 LOGGER.warning(f"Error closing Kafka producer: {close_error}")
             self.producer = None
@@ -438,13 +438,14 @@ class KafkaService:
                 await asyncio.sleep(self.config.service_retry_interval)  # Wait before retry
 
         # Cleanup on shutdown
+        LOGGER.info("Shutting down Kafka service...")
         await self.stop()
 
     async def stop(self) -> None:
         """Stop the Kafka service and cleanup resources."""
         try:
             if self.producer:
-                await self.producer.stop()
+                await self.producer.stop()  # type: ignore[]
                 self.producer = None
                 LOGGER.info("Kafka producer stopped successfully")
         except Exception as e:
