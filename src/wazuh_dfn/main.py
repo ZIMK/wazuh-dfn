@@ -53,7 +53,7 @@ def get_argparse_type(field_type):
         args = get_args(field_type)
         # Find the first non-None type in the Union
         for arg in args:
-            if arg is not type(None):  # Check if it's not NoneType
+            if arg is not type(None):  # type: ignore[] # Check if it's not NoneType
                 return arg
 
     # If the type is bool, use a custom parser to handle string values correctly
