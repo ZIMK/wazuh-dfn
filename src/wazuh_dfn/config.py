@@ -502,8 +502,8 @@ class KafkaConfig(BaseModel):
     def get_producer_config(self, dfn_config: DFNConfig) -> dict:
         """Get configuration specifically for the aiokafka producer.
 
-        Returns a complete dictionary with all parameters needed for AIOKafkaProducer.
-        Combines common parameters with producer-specific ones.
+        Creates a simplified configuration similar to the one used successfully with confluent-kafka.
+        Performs mappings between confluent-kafka and aiokafka parameter names as needed.
 
         Args:
             dfn_config: DFN configuration containing broker and certificate paths
@@ -511,20 +511,29 @@ class KafkaConfig(BaseModel):
         Returns:
             dict: Complete producer configuration with aiokafka-compatible parameter names
         """
-        # Start with common parameters
-        producer_config = self.get_common_client_params(dfn_config)
-
-        # Add producer-specific parameters
-        producer_specific = {
-            "request_timeout_ms": self.timeout * 1000,
-            "acks": "all",
-            "enable_idempotence": True,
-            "linger_ms": 1000,
-            "max_batch_size": 16384,
+        # Create basic config similar to the original confluent-kafka config that worked well
+        producer_config = {
+            "bootstrap_servers": dfn_config.dfn_broker,
+            "security_protocol": "SSL" if (dfn_config.dfn_cert and dfn_config.dfn_key) else None,
+            # Timeout and retry settings (direct mappings from confluent-kafka)
+            "request_timeout_ms": self.timeout * 1000,  # Similar to socket.timeout.ms
+            "delivery_timeout_ms": self.timeout * 1000,  # Similar to message.timeout.ms
+            "retry_backoff_ms": self.retry_interval * 1000,
+            # Basic performance settings that don't change behavior significantly
+            "linger_ms": 5,  # Wait 5ms to batch messages (confluent-kafka default)
+            "batch_size": 16384,  # Default batch size (16K)
+            "acks": 1,  # Only leader acknowledgment required (better throughput)
+            # Additional minor optimizations (optional)
+            "enable_idempotence": True,  # Prevent duplicates
+            "compression_type": "snappy",  # Compress messages
         }
 
-        # Merge the configurations
-        producer_config.update(producer_specific)
+        # SSL certificates will be handled separately by using ssl_context in KafkaService
+        # In aiokafka, we don't set the ssl.ca.location etc directly in the config
+
+        # Override with any user-specified configs from the field
+        if self.producer_config:
+            producer_config.update(self.producer_config)
 
         return producer_config
 

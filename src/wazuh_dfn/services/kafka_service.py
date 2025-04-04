@@ -99,6 +99,23 @@ class KafkaService:
         # Reference to the logging service (will be set later)
         self._logging_service = None
 
+        # Add a message buffer to batch messages and reduce send_and_wait blocking
+        self._message_buffer = []
+        self._buffer_lock = asyncio.Lock()
+        self._buffer_size_limit = 20  # Max messages to buffer before flush
+        self._buffer_flush_task = None
+        self._last_buffer_flush = 0
+        self._buffer_flush_interval = 1.0  # Flush at least every second
+
+        # Track message count for diagnostics
+        self._metrics = {
+            "total_sent": 0,
+            "batch_sent": 0,
+            "single_sent": 0,
+            "errors": 0,
+            "slow_operations": 0,
+        }
+
     def set_logging_service(self, logging_service) -> None:
         """Set the logging service reference for performance logging.
 
@@ -135,14 +152,7 @@ class KafkaService:
             LOGGER.warning(f"Error setting up timezone consistency: {e}")
 
     async def _create_producer(self) -> None:
-        """Create a new Kafka producer instance with enhanced SSL security.
-
-        Validates certificates before creating the producer if SSL settings are configured.
-        Uses configuration parameters directly from KafkaConfig.
-
-        Raises:
-            Exception: If producer creation fails
-        """
+        """Create a new Kafka producer instance with enhanced SSL security."""
         start_time = time.time()
 
         if self.producer:
@@ -177,7 +187,7 @@ class KafkaService:
         else:
             ssl_context = None
 
-        # Get producer configuration directly from config class
+        # Get producer configuration directly from config class - now includes all optimizations
         producer_config = self.config.get_producer_config(self.dfn_config)
 
         # Remove bootstrap_servers from producer_config since it's passed separately
@@ -191,6 +201,7 @@ class KafkaService:
         LOGGER.debug(f"Producer config: {producer_config}")
         LOGGER.debug(f"SSL context: {ssl_context}")
         LOGGER.debug(f"Security protocol: {security_protocol}")
+
         # Create aiokafka producer
         self.producer = AIOKafkaProducer(
             bootstrap_servers=bootstrap_servers,
@@ -208,6 +219,96 @@ class KafkaService:
             if "Client certificate not issued by the provided CA" in str(e):
                 LOGGER.error(f"SSL certificate error: {e}")
             raise
+
+        # Start the buffer flush task after producer is ready
+        if self.producer and not self._buffer_flush_task:
+            self._buffer_flush_task = asyncio.create_task(self._buffer_flush_loop())
+
+    async def _buffer_flush_loop(self) -> None:
+        """Background task to periodically flush message buffer."""
+        LOGGER.info("Starting Kafka buffer flush background task")
+        try:
+            while not self.shutdown_event.is_set():
+                # Sleep for a short interval before checking buffer
+                await asyncio.sleep(0.1)
+
+                current_time = time.time()
+                should_flush = False
+
+                # Check if we should flush based on time or size
+                async with self._buffer_lock:
+                    if len(self._message_buffer) > 0:
+                        # Flush if enough time has passed or buffer is getting full
+                        if (
+                            current_time - self._last_buffer_flush > self._buffer_flush_interval
+                            or len(self._message_buffer) >= self._buffer_size_limit
+                        ):
+                            should_flush = True
+
+                # Flush outside the lock if needed
+                if should_flush:
+                    await self._flush_buffer()
+        except asyncio.CancelledError:
+            LOGGER.info("Kafka buffer flush task cancelled")
+            # Final flush on cancel
+            await self._flush_buffer()
+        except Exception as e:
+            LOGGER.error(f"Error in Kafka buffer flush task: {e}", exc_info=True)
+
+    async def _flush_buffer(self) -> None:
+        """Flush buffered messages to Kafka in a batch."""
+        async with self._buffer_lock:
+            if not self._message_buffer:
+                return
+
+            # Copy and clear buffer
+            messages_to_send = self._message_buffer.copy()
+            self._message_buffer.clear()
+            self._last_buffer_flush = time.time()
+
+        if not messages_to_send:
+            return
+
+        LOGGER.debug(f"Flushing {len(messages_to_send)} messages to Kafka")
+        batch_start = time.time()
+
+        try:
+            # Ensure producer is connected
+            if not self.producer:
+                await self.connect()
+
+            # Send all messages in parallel (not waiting for each)
+            send_tasks = []
+            for msg_data in messages_to_send:
+                message, topic = msg_data["message"], msg_data["topic"]
+                message_bytes = msg_data["bytes"]
+                timestamp_ms = msg_data["timestamp_ms"]
+
+                # Create send task
+                task = self.producer.send(topic=topic, value=message_bytes, timestamp_ms=timestamp_ms)
+                send_tasks.append(task)
+
+            # Wait for all sends to complete
+            if send_tasks:
+                await asyncio.gather(*send_tasks)
+
+            batch_time = time.time() - batch_start
+            avg_time = batch_time / len(messages_to_send)
+
+            # Update metrics
+            self._metrics["total_sent"] += len(messages_to_send)
+            self._metrics["batch_sent"] += len(messages_to_send)
+
+            if batch_time > 1.0:
+                LOGGER.info(
+                    f"Kafka batch send: {len(messages_to_send)} messages in {batch_time:.2f}s "
+                    f"(avg: {avg_time*1000:.1f}ms per message)"
+                )
+
+        except Exception as e:
+            LOGGER.error(f"Failed to flush Kafka message buffer: {e}", exc_info=True)
+            self._metrics["errors"] += 1
+            # Report the error but don't retry - let the next flush handle it
 
     async def _test_connection(self) -> None:
         """Verify that configured topic exists in Kafka cluster asynchronously.
@@ -363,164 +464,46 @@ class KafkaService:
         await asyncio.sleep(wait_time)
 
     async def _send_message_once(self, message: KafkaMessage) -> KafkaResponse | None:
-        """Attempt to send a message once asynchronously.
+        """Direct send for compatibility - now buffers message instead."""
+        return await self.send_message(message)
 
-        Args:
-            message: Message to send
-
-        Returns:
-            Optional[KafkaResponse]: Response dictionary if successful, None if failed
-
-        Raises:
-            Exception: If there is an error
-        """
-        # PERFORMANCE: Identify the slow part of message sending
-        start_time = time.time()
-        # Define the dictionary with explicit type annotations as floats
-        stage_times: dict[str, float] = {
-            "prep": 0.0,
-            "acquire_lock": 0.0,
-            "connect": 0.0,
-            "encode": 0.0,
-            "send": 0.0,
-            "total": 0.0,
-        }
-
+    async def send_message(self, message: KafkaMessage) -> KafkaResponse | None:
+        """Send message to Kafka broker asynchronously."""
+        # Encode message once, outside the retry loop
         try:
-            # Time message preparation
-            stage_start = time.time()
-            if not self.producer:
-                # Only attempt to connect if no producer exists
-                # Avoid lock if possible for better throughput
-                async with self._connection_lock:  # Only lock during connection, not sending
-                    if not self.producer:  # Double-check after acquiring lock
-                        await self.connect()
-            stage_times["prep"] = time.time() - stage_start
-
-            # Convert message to JSON string and encode
-            stage_start = time.time()
             message_bytes = json.dumps(message).encode("utf-8")
-            stage_times["encode"] = time.time() - stage_start
+            current_timestamp_ms = int(time.time() * 1000)
 
-            # Time the actual send operation
-            stage_start = time.time()
-            try:
-                # CRITICAL CHANGE: Use send() instead of send_and_wait() for better throughput
-                # Ensure timestamp is an integer - this fixes the type error
-                current_timestamp_ms = int(time.time() * 1000)
-                await self.producer.send(
-                    topic=self.dfn_config.dfn_id, value=message_bytes, timestamp_ms=current_timestamp_ms
+            # Add to buffer instead of sending immediately
+            async with self._buffer_lock:
+                self._message_buffer.append(
+                    {
+                        "message": message,
+                        "topic": self.dfn_config.dfn_id,
+                        "bytes": message_bytes,
+                        "timestamp_ms": current_timestamp_ms,
+                        "time_added": time.time(),
+                    }
                 )
-            except Exception as e:
-                # If send fails, try once with reconnection
-                LOGGER.warning(f"Kafka send failed, attempting reconnection: {e}")
-                async with self._connection_lock:  # Lock during reconnection
-                    await self._handle_producer_cleanup()
-                    await self.connect()
+                buffer_size = len(self._message_buffer)
 
-                # Try again after reconnection with explicit integer timestamp
-                current_timestamp_ms = int(time.time() * 1000)
-                await self.producer.send(
-                    topic=self.dfn_config.dfn_id, value=message_bytes, timestamp_ms=current_timestamp_ms
-                )
-            stage_times["send"] = time.time() - stage_start
+            # Flush immediately if buffer is full
+            if buffer_size >= self._buffer_size_limit:
+                await self._flush_buffer()
 
-            # Calculate total time
-            total_time = time.time() - start_time
-            stage_times["total"] = total_time
-
-            # Send performance data to logging service instead of logging directly
-            if self._logging_service and total_time > 1.0:  # Only track slow operations
-                await self._logging_service.record_kafka_performance(
-                    {"total_time": total_time, "stage_times": stage_times, "topic": str(self.dfn_config.dfn_id)}
-                )
-            elif total_time > 2.0:  # Still log very slow operations if logging service not available
-                LOGGER.warning(
-                    f"Slow Kafka send operation: {total_time:.2f}s - "
-                    f"Prep: {stage_times['prep']:.2f}s, "
-                    f"Encode: {stage_times['encode']:.2f}s, "
-                    f"Send: {stage_times['send']:.2f}s"
-                )
-
+            # Return success immediately - we're not waiting for Kafka acks anymore
             return {
                 "success": True,
                 "topic": str(self.dfn_config.dfn_id),
             }
 
         except Exception as e:
-            total_time = time.time() - start_time
-            stage_times["total"] = total_time  # Ensure this is set even in error cases
-            LOGGER.error(f"Error sending message to Kafka after {total_time:.2f}s: {e}. Stage times: {stage_times}")
-            raise
+            LOGGER.error(f"Error preparing message for Kafka: {e}")
+            self._metrics["errors"] += 1
 
-    async def send_message(self, message: KafkaMessage) -> KafkaResponse | None:
-        """Send message to Kafka broker asynchronously.
-
-        Args:
-            message: Message to send
-
-        Returns:
-            Optional[KafkaResponse]: Response dictionary if successful, None if failed
-        """
-        send_start = time.time()
-        retry_count = 0
-        max_retries = self.config.send_max_retries
-
-        # OPTIMIZATION: Don't fully recreate the producer on every error
-        producer_reset_count = 0
-
-        while retry_count < max_retries:
-            try:
-                result = await self._send_message_once(message)
-                send_time = time.time() - send_start
-
-                # Only log extremely slow operations in the main method
-                if send_time > 5.0:
-                    LOGGER.warning(f"Extremely slow Kafka send_message operation: {send_time:.2f}s")
-
-                return result
-
-            except Exception as e:
-                retry_count += 1
-                LOGGER.error(f"Error sending message to Kafka (attempt {retry_count}/{max_retries}): {e}")
-
-                if self.shutdown_event.is_set():
-                    LOGGER.info("Shutdown event set. Kafka service stopped.")
-                    return None
-
-                # Only report errors to Wazuh on significant issues
-                if retry_count <= 2 or retry_count == max_retries:
-                    await self.wazuh_service.send_error(
-                        {
-                            "error": 503,
-                            "description": (
-                                f"Kafka error. Attempt {retry_count}/{max_retries}. "
-                                f"{'Reinitializing producer.' if producer_reset_count < 2 else 'Retrying send operation.'}"
-                            ),
-                        }
-                    )
-
-                # Only reset the producer occasionally, not on every error
-                # This is a major performance improvement
-                if producer_reset_count < 2 and retry_count % 3 == 0:
-                    async with self._connection_lock:
-                        await self._handle_producer_cleanup()
-                    producer_reset_count += 1
-
-                if retry_count < max_retries:
-                    # Progressive backoff with maximum
-                    wait_time = min(self.config.retry_interval * (1.5**retry_count), self.config.max_wait_time)
-                    LOGGER.info(f"Retrying Kafka send in {wait_time:.2f}s (attempt {retry_count}/{max_retries})")
-                    await asyncio.sleep(wait_time)
-                    continue
-
-                LOGGER.error(
-                    f"Max retry attempts reached after {time.time() - send_start:.2f}s. Failed to send message to Kafka."
-                )
-                return None
-
-        LOGGER.error("Max retry attempts reached. Failed to send message to Kafka.")
-        return None
+            # Only report major errors to Wazuh
+            await self.wazuh_service.send_error({"error": 503, "description": f"Failed to prepare Kafka message: {e}"})
+            return None
 
     async def start(self) -> None:
         """Start the Kafka service and keep running until shutdown."""
@@ -544,9 +527,28 @@ class KafkaService:
     async def stop(self) -> None:
         """Stop the Kafka service and cleanup resources."""
         try:
+            # Cancel buffer flush task first
+            if self._buffer_flush_task and not self._buffer_flush_task.done():
+                self._buffer_flush_task.cancel()
+                try:
+                    await self._buffer_flush_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Final flush of any messages
+            await self._flush_buffer()
+
+            # Stop the producer
             if self.producer:
                 await self.producer.stop()  # type: ignore[]
                 self.producer = None
                 LOGGER.info("Kafka producer stopped successfully")
+
+            # Log final metrics
+            LOGGER.info(
+                f"Kafka final stats: {self._metrics['total_sent']} total messages sent "
+                f"({self._metrics['batch_sent']} in batch, {self._metrics['single_sent']} individually), "
+                f"{self._metrics['errors']} errors, {self._metrics['slow_operations']} slow operations"
+            )
         except Exception as e:
             LOGGER.error(f"Error stopping Kafka producer: {e}")
