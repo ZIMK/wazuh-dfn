@@ -6,6 +6,7 @@ import json
 import logging
 import ssl
 import time
+from contextlib import suppress
 from enum import StrEnum, auto
 from typing import Any, TypedDict
 
@@ -205,7 +206,7 @@ class KafkaService:
         # Create aiokafka producer
         self.producer = AIOKafkaProducer(
             bootstrap_servers=bootstrap_servers,
-            security_protocol=security_protocol,
+            security_protocol=security_protocol if security_protocol else "PLAINTEXT",
             ssl_context=ssl_context,
             **producer_config,
         )
@@ -280,7 +281,7 @@ class KafkaService:
             # Send all messages in parallel (not waiting for each)
             send_tasks = []
             for msg_data in messages_to_send:
-                message, topic = msg_data["message"], msg_data["topic"]
+                _message, topic = msg_data["message"], msg_data["topic"]
                 message_bytes = msg_data["bytes"]
                 timestamp_ms = msg_data["timestamp_ms"]
 
@@ -530,10 +531,8 @@ class KafkaService:
             # Cancel buffer flush task first
             if self._buffer_flush_task and not self._buffer_flush_task.done():
                 self._buffer_flush_task.cancel()
-                try:
+                with suppress(asyncio.CancelledError):
                     await self._buffer_flush_task
-                except asyncio.CancelledError:
-                    pass
 
             # Final flush of any messages
             await self._flush_buffer()

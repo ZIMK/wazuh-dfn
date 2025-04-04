@@ -522,7 +522,6 @@ class KafkaConfig(BaseModel):
             "linger_ms": 5,  # Valid parameter
             "max_batch_size": 16384,  # Valid parameter (max_batch_size not batch_size)
             "acks": 1,  # Valid parameter
-            # "compression_type": "snappy",  # Valid parameter
             # Additional valid parameters
             "max_request_size": 1048576,  # 1MB
         }

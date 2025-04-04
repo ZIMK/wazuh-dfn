@@ -130,6 +130,65 @@ def test_kafka_config_validation():
         )
 
 
+def test_kafka_config_get_producer_config():
+    """Test KafkaConfig.get_producer_config function with parameter filtering."""
+    # Create a basic kafka config
+    kafka_config = KafkaConfig()
+    dfn_config = DFNConfig(dfn_broker="test-broker:9092")
+
+    # Get producer config with default settings
+    producer_config = kafka_config.get_producer_config(dfn_config)
+
+    # Verify the correct parameters exist
+    assert producer_config["bootstrap_servers"] == "test-broker:9092"
+    assert producer_config["max_batch_size"] == 16384
+    assert "request_timeout_ms" in producer_config
+
+    # Verify invalid parameters do not exist
+    assert "delivery_timeout_ms" not in producer_config
+    assert "buffer_memory" not in producer_config
+    assert "batch_size" not in producer_config
+
+    # Test with custom settings including invalid parameters
+    kafka_config.producer_config = {
+        "max_batch_size": 32768,
+        "linger_ms": 100,
+        "delivery_timeout_ms": 30000,  # Invalid for aiokafka
+        "buffer_memory": 65536,  # Invalid for aiokafka
+        "custom_invalid_option": "value",  # Invalid parameter
+    }
+
+    # Get filtered config
+    filtered_config = kafka_config.get_producer_config(dfn_config)
+
+    # Valid parameters should be included
+    assert filtered_config["max_batch_size"] == 32768
+    assert filtered_config["linger_ms"] == 100
+
+    # Invalid parameters should be excluded
+    assert "delivery_timeout_ms" not in filtered_config
+    assert "buffer_memory" not in filtered_config
+    assert "custom_invalid_option" not in filtered_config
+
+
+def test_admin_config_parameters():
+    """Test that admin client configuration is generated correctly."""
+    kafka_config = KafkaConfig()
+    dfn_config = DFNConfig(dfn_broker="admin-broker:9092")
+
+    # Get admin config
+    admin_config = kafka_config.get_admin_config(dfn_config)
+
+    # Verify basic parameters
+    assert admin_config["bootstrap_servers"] == "admin-broker:9092"
+    assert admin_config["client_id"] == "wazuh-dfn"
+    assert admin_config["request_timeout_ms"] == kafka_config.admin_timeout * 1000
+
+    # Admin config should use common parameters but not producer-specific ones
+    assert "retry_backoff_ms" in admin_config
+    assert "max_batch_size" not in admin_config
+
+
 def test_log_config_validation():
     """Test LogConfig validation."""
     # Test valid config

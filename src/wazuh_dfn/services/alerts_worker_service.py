@@ -8,7 +8,7 @@ import tempfile
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
@@ -181,7 +181,7 @@ class AlertsWorkerService:
             except Exception as e:
                 LOGGER.error(f"Error in queue monitor: {e}", exc_info=True)
 
-    async def _process_alerts(self) -> None:
+    async def _process_alerts(self) -> None:  # noqa: PLR0912 NOSONAR
         """Process alerts from the queue asynchronously."""
         worker_name = asyncio.current_task().get_name() if asyncio.current_task() else "AlertWorker"
         LOGGER.info(f"Started alert processing worker: {worker_name}")
@@ -256,7 +256,7 @@ class AlertsWorkerService:
                                 # Use a timeout to prevent extremely long-running processes
                                 # Default to 30 seconds max processing time per alert
                                 await asyncio.wait_for(self.alerts_service.process_alert(alert), timeout=30.0)
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 LOGGER.error(
                                     f"CRITICAL: Processing of alert {alert_id} timed out after 30 seconds! "
                                     f"This indicates a severe performance issue."
@@ -417,7 +417,7 @@ class AlertsWorkerService:
         """
         batch = []
         timing_results = []
-        last_alert_id = "batch-none"  # Initialize with default value
+        _last_alert_id = "batch-none"  # Initialize with default value
 
         # Try to get up to batch_size alerts without blocking
         for _ in range(batch_size):
@@ -441,14 +441,14 @@ class AlertsWorkerService:
             for alert in batch:
                 try:
                     alert_id = alert.get("id", "unknown")
-                    last_alert_id = alert_id  # Keep track of the last processed alert ID
+                    _last_alert_id = alert_id  # Keep track of the last processed alert ID
                     LOGGER.debug(f"Worker {worker_name} processing batch alert {alert_id}")
 
                     process_start = datetime.now()
                     try:
                         # Use timeout to prevent hanging
                         await asyncio.wait_for(self.alerts_service.process_alert(alert), timeout=30.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         LOGGER.error(f"CRITICAL: Processing of batch alert {alert_id} timed out after 30 seconds!")
 
                     process_end = datetime.now()
@@ -505,6 +505,7 @@ class AlertsWorkerService:
 
         Creates a temporary file containing the JSON representation of the
         alert that failed processing, for later analysis.
+
         Args:
             alert: The alert data to dump
         Returns:
@@ -530,6 +531,7 @@ class AlertsWorkerService:
 
         Uses asyncio's run_in_executor to perform file I/O operations
         without blocking the event loop.
+
         Args:
             path: The path to write to
             content: The content to write

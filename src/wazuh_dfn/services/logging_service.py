@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Any
 
 import psutil
 
@@ -107,7 +107,7 @@ class LoggingService:
         except Exception as e:
             LOGGER.error(f"Error logging final stats: {e}")
 
-    async def record_worker_performance(self, worker_name: str, performance_data: Dict[str, Any]) -> None:
+    async def record_worker_performance(self, worker_name: str, performance_data: dict[str, Any]) -> None:
         """Record worker performance data for centralized logging.
 
         Args:
@@ -127,7 +127,7 @@ class LoggingService:
                     f"Alert ID: {performance_data.get('last_alert_id', 'unknown')}"
                 )
 
-    async def record_kafka_performance(self, operation_data: Dict[str, Any]) -> None:
+    async def record_kafka_performance(self, operation_data: dict[str, Any]) -> None:
         """Record Kafka operation performance data for centralized logging.
 
         Args:
@@ -160,7 +160,7 @@ class LoggingService:
                         f"Send: {stage_times.get('send', 0):.2f}s"
                     )
 
-    async def update_worker_last_processed(self, worker_name: str, info: Dict[str, Any]) -> None:
+    async def update_worker_last_processed(self, worker_name: str, info: dict[str, Any]) -> None:
         """Update the last processed information for a worker.
 
         Args:
@@ -170,7 +170,7 @@ class LoggingService:
         async with self._perf_lock:
             self._worker_last_processed[worker_name] = info
 
-    async def _log_stats(self) -> None:
+    async def _log_stats(self) -> None:  # noqa: PLR0912 NOSONAR
         """Log various statistics related to the alert processing system asynchronously."""
         try:
             # Log queue size and capacity
@@ -285,7 +285,8 @@ class LoggingService:
                         perf = worker_perf_data[worker_name]
                         LOGGER.info(
                             f"Worker {worker_name} performance: {perf.get('alerts_processed', 0)} alerts processed, "
-                            f"rate: {perf.get('rate', 0):.2f} alerts/sec, avg: {perf.get('avg_processing', 0)*1000:.2f}ms, "
+                            f"rate: {perf.get('rate', 0):.2f} alerts/sec, "
+                            f"avg: {perf.get('avg_processing', 0)*1000:.2f}ms, "
                             f"recent avg: {perf.get('recent_avg', 0)*1000:.2f}ms, "
                             f"slow alerts: {perf.get('slow_alerts', 0)}, "
                             f"extremely slow: {perf.get('extremely_slow_alerts', 0)}"
