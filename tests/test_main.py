@@ -107,7 +107,7 @@ def test_load_config_with_env_vars(sample_config_path, monkeypatch):
     # These env vars should NOT override values set in config file
     monkeypatch.setenv("DFN_CUSTOMER_ID", "env-test-id")
     monkeypatch.setenv("WAZUH_MAX_EVENT_SIZE", "32768")
-    
+
     # This env var SHOULD override default value not set in config file
     monkeypatch.setenv("KAFKA_TIMEOUT", "120")
 
@@ -231,13 +231,13 @@ def test_env_var_loading(sample_config_path, monkeypatch):
 
         # Verify environment variables were applied correctly
         # These values come from the config file - env vars don't override
-        assert config.dfn.dfn_broker == "test-broker:443" 
+        assert config.dfn.dfn_broker == "test-broker:443"
         assert config.wazuh.max_retries == 5
-        
+
         # These values come from env vars - overriding defaults
         assert config.misc.own_network == "10.0.0.0/8"  # Default was None
         assert config.log.keep_files == 7  # Default was 5
-        
+
         # Just verify we have a dictionary
         assert isinstance(config.kafka.producer_config, dict)
 

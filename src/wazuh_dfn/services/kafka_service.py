@@ -102,26 +102,11 @@ class KafkaService:
         Returns:
             ssl.SSLContext: Configured SSL context
         """
-        # # Create a custom SSL context with modern security settings
-        # context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        # context.load_cert_chain(certfile=self.dfn_config.dfn_cert, keyfile=self.dfn_config.dfn_key)
-        # if self.dfn_config.dfn_ca:
-        #     context.load_verify_locations(cafile=self.dfn_config.dfn_ca)
-
-        # # Use only modern TLS versions
-        # context.minimum_version = ssl.TLSVersion.TLSv1_2
-
-        # # Set modern cipher suites
-        # context.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20")
-
-        # # More strict security options
-        # context.check_hostname = True
-        # # context.verify_mode = ssl.CERT_REQUIRED
-
         context = create_ssl_context(
             certfile=self.dfn_config.dfn_cert,  # Signed certificate
             keyfile=self.dfn_config.dfn_key,  # Private Key file of `certfile` certificate
         )
+        LOGGER.info(f"Created custom SSL context for {self.dfn_config.dfn_id}: {context}")
 
         return context
 

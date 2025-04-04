@@ -15,7 +15,7 @@ from wazuh_dfn.services.wazuh_service import WazuhErrorMessage, WazuhService
 
 # Use AF_UNIX for Unix systems, fallback to AF_INET for Windows
 try:
-    from socket import AF_UNIX, SOCK_DGRAM
+    from socket import AF_UNIX, SOCK_DGRAM  # type: ignore
 except ImportError:
     # Define these for testing purposes on Windows
     AF_UNIX = 1
@@ -65,6 +65,8 @@ def mock_reader_writer():
     # Coroutine methods use AsyncMock
     mock_writer.drain = AsyncMock()
     mock_writer.wait_closed = AsyncMock()
+    # Add feed_data method to reader for testing response handling
+    mock_reader.feed_data = MagicMock()
     return (mock_reader, mock_writer)
 
 
@@ -75,6 +77,8 @@ def mock_dgram_socket():
     mock_sock.setblocking = MagicMock()
     mock_sock.connect = MagicMock()
     mock_sock.close = MagicMock()
+    # Add sendall method to better test the sock_sendall usage in implementation
+    mock_sock.sendall = MagicMock()
     return mock_sock
 
 
@@ -84,7 +88,10 @@ def mock_socket_module():
     mock = MagicMock()
     mock.AF_UNIX = AF_UNIX
     mock.SOCK_DGRAM = SOCK_DGRAM
+    mock.SOCK_STREAM = socket.SOCK_STREAM  # Add SOCK_STREAM for completeness
     mock.socket.return_value = MagicMock(spec=socket.socket)
+    # Add error constants that might be used in error handling
+    mock.error = socket.error
     return mock
 
 
@@ -252,7 +259,7 @@ async def test_wazuh_service_auto_connect_sends_using_preferred_socket(wazuh_con
 
         # Manually set up the connection to avoid the actual connect method
         # which might have more complex logic that's hard to mock
-        service._dgram_sock = mock_sock
+        service._dgram_sock = mock_sock  # type: ignore
         service._is_dgram = True
 
         # Now send the event
@@ -728,7 +735,7 @@ async def test_wazuh_service_connect_socket_close_error(wazuh_config, mock_reade
         reconnection,
         patch.object(Path, "exists", return_value=True),
         patch.object(service, "close", side_effect=close_error),
+        pytest.raises(OSError, match="Close failed"),
     ):
         # The connect method should propagate the close error
-        with pytest.raises(OSError, match="Close failed"):
-            await service.connect()
+        await service.connect()

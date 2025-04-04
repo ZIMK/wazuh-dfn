@@ -446,20 +446,27 @@ async def test_kafka_service_start_stop(kafka_service, mock_producer, shutdown_e
 @pytest.mark.asyncio
 async def test_kafka_service_topic_creation_failure(kafka_service):
     """Test KafkaService topic creation failure handling."""
-    # We need to patch at a deeper level to avoid connection errors
-    # Patch the client bootstrap method to avoid connection errors
-    with patch("aiokafka.admin.client.AIOKafkaAdminClient.describe_topics") as mock_describe_topics:
-        # Return a non-empty dict but one that doesn't contain our topic
-        # This will pass the "if not cluster_metadata" check but fail on the topic existence check
-        mock_describe_topics.return_value = {"some_other_topic": {}}  # Dictionary with other topics but not ours
+    # We need to mock the entire _test_connection method to avoid actual network calls
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaAdminClient") as mock_admin_class:
+        # Only mock what's needed for the test
+        admin_mock = AsyncMock()
+        mock_admin_class.return_value = admin_mock
 
-        # Also patch start and close to avoid actual connection attempts
-        with (
-            patch("aiokafka.admin.client.AIOKafkaAdminClient.start", new=AsyncMock()),
-            patch("aiokafka.admin.client.AIOKafkaAdminClient.close", new=AsyncMock()),
-            pytest.raises(Exception, match=f"Topic '{kafka_service.dfn_config.dfn_id}' not found"),
-        ):
+        # Mock the list_topics method to return a dictionary without our topic
+        admin_mock.list_topics = AsyncMock(return_value={"some_other_topic": {}})
+
+        # Set up start and close methods to return immediately
+        admin_mock.start = AsyncMock()
+        admin_mock.close = AsyncMock()
+
+        # Now test for the expected exception
+        with pytest.raises(Exception, match=f"Topic '{kafka_service.dfn_config.dfn_id}' not found"):
             await kafka_service._test_connection()
+
+        # Verify our mocked methods were called
+        admin_mock.start.assert_called_once()
+        admin_mock.list_topics.assert_called_once()
+        admin_mock.close.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -662,12 +669,12 @@ async def test_create_producer_datetime_error_handling(kafka_service, mock_ssl_c
                 # Ensure datetime consistency before certificate validation
                 kafka_service._ensure_datetime_consistency()
                 # This will raise our mocked exception
-                raise Exception(error_msg)
+                raise Exception(error_msg)  # NOSONAR
             except Exception as e:
                 if "can't compare offset-naive and offset-aware datetimes" in str(e):
                     LOGGER.error(f"Certificate datetime comparison error: {e}. Using default SSL context.")
                     # We should call create_default_context here
-                    ssl_context = ssl.create_default_context()
+                    _ssl_context = ssl.create_default_context()
                 else:
                     LOGGER.error(f"Certificate validation failed: {e}")
                     raise
@@ -675,7 +682,6 @@ async def test_create_producer_datetime_error_handling(kafka_service, mock_ssl_c
         # Set our mock producer
         kafka_service.producer = producer_mock
         # No need to really start it
-        return None
 
     # Replace the entire method
     original_method = kafka_service._create_producer
@@ -715,10 +721,10 @@ async def test_create_producer_other_validation_error(kafka_service):
         # Simulate a different certificate validation error
         if kafka_service.dfn_config.dfn_ca and kafka_service.dfn_config.dfn_cert and kafka_service.dfn_config.dfn_key:
             # This will raise our mocked exception - it's not the datetime error
-            raise Exception(error_msg)
+            raise Exception(error_msg)  # NOSONAR
 
         # We should never reach this point in this test
-        assert False, "Should have raised an exception"
+        assert False, "Should have raised an exception"  # noqa: B011
 
     # Replace the entire method
     original_method = kafka_service._create_producer
@@ -736,3 +742,206 @@ async def test_create_producer_other_validation_error(kafka_service):
     finally:
         # Restore the original method
         kafka_service._create_producer = original_method
+
+
+@pytest.mark.asyncio
+async def test_create_producer_logs_configs(kafka_service, caplog):
+    """Test that producer creation properly logs configuration details."""
+    # Configure logger capture
+    caplog.set_level(logging.DEBUG)
+
+    # Create a producer mock with a mock start method that won't try to connect
+    producer_mock = AsyncMock()
+
+    # Make sure start() doesn't try to connect to a real broker
+    producer_mock.start = AsyncMock()
+
+    # Mock the producer creation and SSL context
+    with (
+        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
+        patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
+        patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
+    ):
+        # Set bootstrap servers for testing
+        bootstrap_servers = "test-server:9092"
+
+        # Configure kafka_service for the test
+        kafka_service.dfn_config.dfn_broker = bootstrap_servers
+        kafka_service.dfn_config.dfn_cert = "cert.pem"
+        kafka_service.dfn_config.dfn_key = "key.pem"
+
+        # Call the method
+        await kafka_service._create_producer()
+
+        # Check that configuration details were logged at appropriate levels
+        assert (
+            f"Creating Kafka producer for {kafka_service.dfn_config.dfn_id} "
+            f"with bootstrap servers: {bootstrap_servers}" in caplog.text
+        )
+        assert "and security protocol: SSL" in caplog.text
+
+        # Verify the producer was created and started
+        producer_mock.start.assert_called_once()
+
+        # Verify security protocol was set correctly
+        assert mock_producer_class.call_args.kwargs["security_protocol"] == "SSL"
+
+
+@pytest.mark.asyncio
+async def test_producer_start_ssl_certificate_error(kafka_service):
+    """Test that SSL certificate errors during producer start are properly handled and logged."""
+    # Create a producer mock that raises an SSL error on start
+    producer_mock = AsyncMock()
+    ssl_error_msg = "Client certificate not issued by the provided CA"
+
+    # Configure the start method to raise our target exception
+    producer_mock.start.side_effect = Exception(ssl_error_msg)
+
+    with (
+        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock),
+        patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
+        patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
+        patch("logging.Logger.error") as mock_log_error,
+    ):
+        # Configure kafka service for SSL
+        kafka_service.dfn_config.dfn_cert = "cert.pem"
+        kafka_service.dfn_config.dfn_key = "key.pem"
+
+        # Call the method which should raise the exception after logging
+        with pytest.raises(Exception, match=ssl_error_msg):
+            await kafka_service._create_producer()
+
+        # Verify the producer was created and start was called
+        producer_mock.start.assert_called_once()
+
+        # Verify the SSL error was logged with correct message
+        mock_log_error.assert_called()
+        assert any(ssl_error_msg in call[0][0] for call in mock_log_error.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_producer_create_with_security_protocol_selection(kafka_service):
+    """Test that the producer is created with the correct security protocol based on SSL context."""
+    # Test case 1: With SSL context
+    producer_mock = AsyncMock()
+    producer_mock.start = AsyncMock()  # Prevent real connection attempts
+
+    with (
+        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
+        patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
+        patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
+    ):
+        # Set SSL config to trigger SSL protocol
+        kafka_service.dfn_config.dfn_cert = "cert.pem"
+        kafka_service.dfn_config.dfn_key = "key.pem"
+
+        await kafka_service._create_producer()
+
+        # Verify security protocol was SSL
+        assert mock_producer_class.call_args.kwargs["security_protocol"] == "SSL"
+
+    # Test case 2: Without SSL context
+    producer_mock = AsyncMock()
+    producer_mock.start = AsyncMock()  # Prevent real connection attempts
+
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class:
+        # Reset SSL config to avoid triggering SSL protocol
+        kafka_service.dfn_config.dfn_cert = None
+        kafka_service.dfn_config.dfn_key = None
+
+        # Also patch _create_custom_ssl_context to return None
+        with patch.object(kafka_service, "_create_custom_ssl_context", return_value=None):
+            await kafka_service._create_producer()
+
+            # Verify security protocol was None (or PLAINTEXT as fallback)
+            security_protocol = mock_producer_class.call_args.kwargs.get("security_protocol")
+            assert security_protocol is None or security_protocol == "PLAINTEXT"
+
+
+@pytest.mark.asyncio
+async def test_producer_with_config_parameters(kafka_service):
+    """Test that producer gets all required configuration parameters."""
+    # Create a test config dictionary
+    test_config = {
+        "bootstrap_servers": "test:9092",
+        "security_protocol": "PLAINTEXT",
+        "request_timeout_ms": 30000,
+        "retry_backoff_ms": 500,
+        "custom_option": "value",
+    }
+
+    # Create an instance of the producer with mock start method
+    producer_mock = AsyncMock()
+    producer_mock.start = AsyncMock()  # Prevent real connection attempts
+
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class:
+        # Override config attributes directly
+        kafka_service.dfn_config.dfn_broker = test_config["bootstrap_servers"]
+
+        # Call the method
+        await kafka_service._create_producer()
+
+        # Verify bootstrap_servers was passed
+        call_kwargs = mock_producer_class.call_args.kwargs
+        assert call_kwargs["bootstrap_servers"] == test_config["bootstrap_servers"]
+
+
+@pytest.mark.asyncio
+async def test_producer_cleanup_before_creation(kafka_service):
+    """Test that any existing producer is properly stopped before creating a new one."""
+    # Create a mock of an existing producer
+    existing_producer = AsyncMock()
+
+    # Set it as the current producer
+    kafka_service.producer = existing_producer
+
+    # Create a new producer mock
+    new_producer = AsyncMock()
+    new_producer.start = AsyncMock()  # Prevent real connection attempts
+
+    # Mock the new producer creation
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=new_producer):
+        # Call the method to create a new producer
+        await kafka_service._create_producer()
+
+        # Verify the existing producer was stopped
+        existing_producer.stop.assert_called_once()
+
+        # Verify the new producer was started
+        new_producer.start.assert_called_once()
+
+        # Verify the producer reference was updated
+        assert kafka_service.producer is new_producer
+
+
+@pytest.mark.asyncio
+async def test_producer_cleanup_error_handling(kafka_service):
+    """Test that errors during existing producer cleanup are properly handled."""
+    # Create a mock of an existing producer that raises an error on stop
+    existing_producer = AsyncMock()
+    existing_producer.stop.side_effect = Exception("Error stopping producer")
+
+    # Set it as the current producer
+    kafka_service.producer = existing_producer
+
+    # Create a new producer mock
+    new_producer = AsyncMock()
+    new_producer.start = AsyncMock()  # Prevent real connection attempts
+
+    # Mock the logger to verify warning is logged
+    with (
+        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=new_producer),
+        patch("logging.Logger.warning") as mock_log_warning,
+    ):
+        # Call the method
+        await kafka_service._create_producer()
+
+        # Verify warning was logged about the error
+        mock_log_warning.assert_called_once()
+        assert "Error closing existing Kafka producer" in mock_log_warning.call_args[0][0]
+
+        # Verify the new producer was started
+        new_producer.start.assert_called_once()
+
+        # Verify the producer reference was updated
+        assert kafka_service.producer is new_producer
