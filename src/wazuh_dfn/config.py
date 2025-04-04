@@ -520,12 +520,11 @@ class KafkaConfig(BaseModel):
             "retry_backoff_ms": self.retry_interval * 1000,  # Valid parameter
             # Basic performance settings valid in aiokafka
             "linger_ms": 5,  # Valid parameter
-            "batch_size": 16384,  # Valid parameter (batch_size not max_batch_size)
+            "max_batch_size": 16384,  # Valid parameter (max_batch_size not batch_size)
             "acks": 1,  # Valid parameter
             "compression_type": "snappy",  # Valid parameter
             # Additional valid parameters
             "max_request_size": 1048576,  # 1MB
-            "buffer_memory": 33554432,  # 32MB
         }
 
         # Remove any potential invalid parameters from user config
@@ -540,10 +539,10 @@ class KafkaConfig(BaseModel):
             "key_serializer",
             "value_serializer",
             "compression_type",
-            "batch_size",
+            "max_batch_size",  # Use max_batch_size instead of batch_size
             "linger_ms",
             "partitioner",
-            "buffer_memory",
+            # Removed buffer_memory from valid params
             "max_request_size",
             "retry_backoff_ms",
             "security_protocol",
