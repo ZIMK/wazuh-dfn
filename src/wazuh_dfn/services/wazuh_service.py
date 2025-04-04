@@ -89,10 +89,10 @@ class WazuhService:
 
             # Verify connection by sending a test message
             test_msg = {
-                "integration": "dfn",
+                "integration": f"{self.config.integration_name}",
                 "description": "Wazuh service started at {}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
             }
-            await self._send_event(f"1:dfn:{json.dumps(test_msg)}")
+            await self._send_event(f"1:{self.config.integration_name}:{json.dumps(test_msg)}")
             LOGGER.info("Successfully started Wazuh service and verified connection")
         except Exception as e:
             LOGGER.error(f"Failed to start Wazuh service: {e}")
@@ -203,7 +203,7 @@ class WazuhService:
                     await self.connect()
 
                 msg: WazuhEventMessage = {
-                    "integration": "dfn",
+                    "integration": self.config.integration_name,
                     "alert_id": str(alert_id),
                     "agent_name": str(agent_name),
                     "dfn": {
@@ -271,11 +271,11 @@ class WazuhService:
             ConnectionError: If sending message fails
         """
         if not agent_id or not agent_name:
-            event = f"1:dfn:{json.dumps(msg)}"
+            event = f"1:{self.config.integration_name}:{json.dumps(msg)}"
         else:
             location = f"[{agent_id}] ({agent_name}) {agent_ip}"
             location = location.replace("|", "||").replace(":", "|:")
-            event = f"1:{location}->dfn:{json.dumps(msg)}"
+            event = f"1:{location}->{self.config.integration_name}:{json.dumps(msg)}"
         await self._send_event(event)
 
     async def send_error(self, msg: WazuhErrorMessage) -> None:
@@ -288,8 +288,8 @@ class WazuhService:
             ConnectionError: If sending error message fails
         """
         if "integration" not in msg:
-            msg["integration"] = "dfn"
-        await self._send_event(f"1:dfn:{json.dumps(msg)}")
+            msg["integration"] = self.config.integration_name
+        await self._send_event(f"1:{self.config.integration_name}:{json.dumps(msg)}")
 
     async def _handle_socket_error(self, e: Exception, attempt: int, max_attempts: int) -> bool:
         """Handle socket errors during event sending asynchronously.

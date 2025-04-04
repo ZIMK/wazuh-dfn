@@ -140,6 +140,14 @@ class WazuhConfig(BaseModel):
         },
         gt=0,
     )
+    integration_name: str = Field(
+        default="dfn",
+        description="Integration name for the Wazuh API",
+        json_schema_extra={
+            "env_var": "WAZUH_INTEGRATION_NAME",
+            "cli": "--wazuh-integration-name",
+        },
+    )
 
     # Add model validator to validate required fields
     @model_validator(mode="after")
