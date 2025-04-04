@@ -171,12 +171,7 @@ class AlertsWorkerService:
                 LOGGER.error(f"Error in queue monitor: {e}", exc_info=True)
 
     async def _process_alerts(self) -> None:
-        """Process alerts from the queue asynchronously.
-
-        Continuously retrieves alerts from the queue and processes them
-        through the alerts_service until shutdown is signaled.
-        Handles errors and timeouts gracefully.
-        """
+        """Process alerts from the queue asynchronously."""
         worker_name = asyncio.current_task().get_name() if asyncio.current_task() else "AlertWorker"
         LOGGER.info(f"Started alert processing worker: {worker_name}")
 
@@ -192,6 +187,15 @@ class AlertsWorkerService:
         consecutive_empty = 0
         total_processing_time = 0
 
+        # Add detailed timing metrics
+        timing_stats = {
+            "processing_times": [],  # Store recent processing times
+            "slow_alerts": 0,  # Count of alerts taking > 2 seconds
+            "extremely_slow_alerts": 0,  # Count of alerts taking > 5 seconds
+            "max_time": 0,  # Maximum processing time
+            "min_time": float("inf"),  # Minimum processing time
+        }
+
         # Batch size for high-throughput mode
         batch_size = 5
 
@@ -202,10 +206,20 @@ class AlertsWorkerService:
 
                 if is_high_throughput:
                     # Process multiple alerts in a batch
-                    await self._process_alert_batch(worker_name, batch_size, alerts_processed, total_processing_time)
+                    new_alerts_processed, new_total_time, timing_results = await self._process_alert_batch(
+                        worker_name, batch_size, alerts_processed, total_processing_time
+                    )
+
+                    # Update counters
+                    alerts_processed = new_alerts_processed
+                    total_processing_time = new_total_time
+
+                    # Update timing stats
+                    if timing_results:
+                        for t in timing_results:
+                            self._update_timing_stats(timing_stats, t)
                 else:
-                    # Process single alerts normally
-                    # Use shorter timeout if queue has been consistently empty
+                    # Process single alerts normally with detailed timing
                     timeout = 0.05 if consecutive_empty > 5 else 0.2
 
                     try:
@@ -213,30 +227,70 @@ class AlertsWorkerService:
                         alert = await asyncio.wait_for(self.alert_queue.get(), timeout=timeout)
                         consecutive_empty = 0  # Reset empty counter
 
+                        # CRITICAL: Detailed timing breakdown for processing
                         try:
-                            # Process the alert with detailed timing
+                            # Record overall processing time
                             process_start = datetime.now()
-                            await self.alerts_service.process_alert(alert)
-                            process_end = datetime.now()
 
-                            # Update timestamp with minimal locking
+                            # Track internal timing of the process_alert method
+                            alert_id = alert.get("id", "unknown")
+                            LOGGER.debug(f"Worker {worker_name} starting to process alert {alert_id}")
+
+                            # Process with timeouts to catch hangs
+                            try:
+                                # Use a timeout to prevent extremely long-running processes
+                                # Default to 30 seconds max processing time per alert
+                                await asyncio.wait_for(self.alerts_service.process_alert(alert), timeout=30.0)
+                            except asyncio.TimeoutError:
+                                LOGGER.error(
+                                    f"CRITICAL: Processing of alert {alert_id} timed out after 30 seconds! "
+                                    f"This indicates a severe performance issue."
+                                )
+                                # Continue processing other alerts
+
+                            process_end = datetime.now()
+                            processing_time = (process_end - process_start).total_seconds()
+
+                            # Update the last processed time for monitoring
                             now = datetime.now().timestamp()
                             async with self._times_lock:
                                 self._worker_processed_times[worker_name] = now
 
-                            # Performance tracking
+                            # Update performance tracking
                             alerts_processed += 1
-                            processing_time = (process_end - process_start).total_seconds()
                             total_processing_time += processing_time
+
+                            # Update timing stats
+                            self._update_timing_stats(timing_stats, processing_time)
 
                             # Update global stats
                             async with self._stats_lock:
                                 self._queue_stats["total_processed"] += 1
 
-                            if processing_time > 0.5:
+                            # Log based on processing time thresholds
+                            if processing_time > 10.0:
+                                LOGGER.error(
+                                    f"CRITICAL: Worker {worker_name} extremely slow alert processing: "
+                                    f"{processing_time:.2f}s for alert {alert_id}. "
+                                    f"This indicates a severe performance issue!"
+                                )
+                                # Dump slow alert for analysis
+                                debug_path = await self._dump_alert(alert)
+                                if debug_path:
+                                    LOGGER.info(f"Dumped extremely slow alert to {debug_path}")
+                            elif processing_time > 5.0:
+                                LOGGER.warning(
+                                    f"Worker {worker_name} very slow alert processing: {processing_time:.2f}s "
+                                    f"for alert {alert_id}"
+                                )
+                            elif processing_time > 1.0:
                                 LOGGER.warning(
                                     f"Worker {worker_name} slow alert processing: {processing_time:.2f}s "
-                                    f"for alert {alert.get('id', 'unknown')}"
+                                    f"for alert {alert_id}"
+                                )
+                            else:
+                                LOGGER.debug(
+                                    f"Worker {worker_name} processed alert {alert_id} in {processing_time:.2f}s"
                                 )
 
                         except Exception as e:
@@ -256,24 +310,39 @@ class AlertsWorkerService:
                             await asyncio.sleep(0.001)
                         continue
 
-                # Periodically log performance metrics (every 30 seconds)
+                # Log detailed performance metrics more frequently when things are slow
                 now_time = datetime.now()
-                if (now_time - last_metrics_dump).total_seconds() > 30:
+                log_interval = 15 if timing_stats["extremely_slow_alerts"] > 0 else 30
+
+                if (now_time - last_metrics_dump).total_seconds() > log_interval:
                     elapsed = (now_time - start_time).total_seconds()
                     rate = alerts_processed / elapsed if elapsed > 0 else 0
                     avg_processing = total_processing_time / alerts_processed if alerts_processed > 0 else 0
 
+                    # Calculate recent average from last 10 alerts or fewer
+                    recent_times = timing_stats["processing_times"][-10:]
+                    recent_avg = sum(recent_times) / len(recent_times) if recent_times else 0
+
+                    # Comprehensive performance report
                     LOGGER.info(
                         f"Worker {worker_name} performance: {alerts_processed} alerts processed, "
                         f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms, "
-                        f"total runtime: {elapsed:.1f}s"
+                        f"recent avg: {recent_avg*1000:.2f}ms, "
+                        f"min: {timing_stats['min_time']*1000:.2f}ms, max: {timing_stats['max_time']*1000:.2f}ms, "
+                        f"slow alerts: {timing_stats['slow_alerts']}, "
+                        f"extremely slow: {timing_stats['extremely_slow_alerts']}"
                     )
 
-                    # Check if this worker is significantly slower than expected
-                    if alerts_processed > 10 and rate < 0.5:
+                    # Check alert processing time for severe issues
+                    if avg_processing > 5.0:
+                        LOGGER.error(
+                            f"CRITICAL: Worker {worker_name} processing time ({avg_processing:.2f}s) "
+                            f"is extremely high. Consider increasing worker count or optimizing alert processing."
+                        )
+                    elif avg_processing > 1.0:
                         LOGGER.warning(
-                            f"Worker {worker_name} is processing alerts slower than expected ({rate:.2f}/sec). "
-                            f"Average processing time: {avg_processing*1000:.2f}ms"
+                            f"Worker {worker_name} processing time ({avg_processing:.2f}s) "
+                            f"is high. Alert processing may need optimization."
                         )
 
                     last_metrics_dump = now_time
@@ -299,22 +368,38 @@ class AlertsWorkerService:
 
         LOGGER.info(f"Stopping worker {worker_name}")
 
-    async def _process_alert_batch(
-        self, worker_name: str, batch_size: int, alerts_processed: int, total_processing_time: float
-    ) -> tuple[int, float]:
-        """Process multiple alerts in a batch when queue is filling up.
+    def _update_timing_stats(self, stats: dict, processing_time: float) -> None:
+        """Update timing statistics with a new processing time.
 
         Args:
-            worker_name: Name of the worker processing the batch
-            batch_size: Maximum number of alerts to process in this batch
-            alerts_processed: Current count of processed alerts to update
-            total_processing_time: Current total processing time to update
+            stats: Dictionary of timing statistics to update
+            processing_time: New processing time to add
+        """
+        # Keep last 100 processing times for analysis
+        stats["processing_times"].append(processing_time)
+        if len(stats["processing_times"]) > 100:
+            stats["processing_times"].pop(0)
+
+        # Update min/max times
+        stats["max_time"] = max(stats["max_time"], processing_time)
+        stats["min_time"] = min(stats["min_time"], processing_time)
+
+        # Count slow alerts
+        if processing_time > 5.0:
+            stats["extremely_slow_alerts"] += 1
+        elif processing_time > 2.0:
+            stats["slow_alerts"] += 1
+
+    async def _process_alert_batch(
+        self, worker_name: str, batch_size: int, alerts_processed: int, total_processing_time: float
+    ) -> tuple[int, float, list[float]]:
+        """Process multiple alerts in a batch when queue is filling up.
 
         Returns:
-            tuple: Updated (alerts_processed, total_processing_time)
+            tuple: (alerts_processed, total_processing_time, processing_times)
         """
         batch = []
-        batch_start = datetime.now()
+        timing_results = []
 
         # Try to get up to batch_size alerts without blocking
         for _ in range(batch_size):
@@ -328,23 +413,39 @@ class AlertsWorkerService:
         if not batch:
             # No alerts to process, return unchanged values
             await asyncio.sleep(0.001)  # Brief pause to prevent CPU spinning
-            return alerts_processed, total_processing_time
+            return alerts_processed, total_processing_time, timing_results
 
         # Process the batch
         try:
             batch_start_time = datetime.now()
 
-            # Process each alert in sequence
+            # Process each alert in sequence with detailed timing
             for alert in batch:
                 try:
-                    process_start = datetime.now()
-                    await self.alerts_service.process_alert(alert)
-                    process_end = datetime.now()
+                    alert_id = alert.get("id", "unknown")
+                    LOGGER.debug(f"Worker {worker_name} processing batch alert {alert_id}")
 
-                    # Track processing time for individual alert
+                    process_start = datetime.now()
+                    try:
+                        # Use timeout to prevent hanging
+                        await asyncio.wait_for(self.alerts_service.process_alert(alert), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        LOGGER.error(f"CRITICAL: Processing of batch alert {alert_id} timed out after 30 seconds!")
+
+                    process_end = datetime.now()
                     processing_time = (process_end - process_start).total_seconds()
+
+                    # Track times
                     total_processing_time += processing_time
+                    timing_results.append(processing_time)
                     alerts_processed += 1
+
+                    # Log slow processing
+                    if processing_time > 5.0:
+                        LOGGER.warning(
+                            f"Worker {worker_name} very slow batch alert processing: {processing_time:.2f}s "
+                            f"for alert {alert_id}"
+                        )
 
                     # Update global stats
                     async with self._stats_lock:
@@ -352,7 +453,7 @@ class AlertsWorkerService:
 
                 except Exception as e:
                     alert_id = alert.get("id", "unknown")
-                    LOGGER.error(f"Error processing alert {alert_id} in batch: {e}", exc_info=True)
+                    LOGGER.error(f"Error processing batch alert {alert_id}: {e}", exc_info=True)
                 finally:
                     # Mark as done regardless of success or failure
                     self.alert_queue.task_done()
@@ -364,7 +465,7 @@ class AlertsWorkerService:
 
             # Log batch performance
             batch_time = (datetime.now() - batch_start_time).total_seconds()
-            LOGGER.debug(
+            LOGGER.info(
                 f"Worker {worker_name} processed batch of {len(batch)} alerts in {batch_time:.3f}s "
                 f"({batch_time/len(batch):.3f}s per alert)"
             )
@@ -372,7 +473,7 @@ class AlertsWorkerService:
         except Exception as e:
             LOGGER.error(f"Error processing alert batch: {e}", exc_info=True)
 
-        return alerts_processed, total_processing_time
+        return alerts_processed, total_processing_time, timing_results
 
     async def _dump_alert(self, alert: dict[str, Any]) -> str | None:
         """Dump alert to file for debugging asynchronously.
