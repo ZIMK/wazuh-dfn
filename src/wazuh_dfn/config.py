@@ -502,8 +502,8 @@ class KafkaConfig(BaseModel):
     def get_producer_config(self, dfn_config: DFNConfig) -> dict:
         """Get configuration specifically for the aiokafka producer.
 
-        Creates a simplified configuration similar to the one used successfully with confluent-kafka.
-        Performs mappings between confluent-kafka and aiokafka parameter names as needed.
+        Creates a configuration compatible with aiokafka's parameters.
+        Note: aiokafka has different parameter names than confluent-kafka.
 
         Args:
             dfn_config: DFN configuration containing broker and certificate paths
@@ -511,29 +511,51 @@ class KafkaConfig(BaseModel):
         Returns:
             dict: Complete producer configuration with aiokafka-compatible parameter names
         """
-        # Create basic config similar to the original confluent-kafka config that worked well
+        # Create basic config with only aiokafka-compatible parameters
         producer_config = {
             "bootstrap_servers": dfn_config.dfn_broker,
             "security_protocol": "SSL" if (dfn_config.dfn_cert and dfn_config.dfn_key) else None,
-            # Timeout and retry settings (direct mappings from confluent-kafka)
-            "request_timeout_ms": self.timeout * 1000,  # Similar to socket.timeout.ms
-            "delivery_timeout_ms": self.timeout * 1000,  # Similar to message.timeout.ms
-            "retry_backoff_ms": self.retry_interval * 1000,
-            # Basic performance settings that don't change behavior significantly
-            "linger_ms": 5,  # Wait 5ms to batch messages (confluent-kafka default)
-            "batch_size": 16384,  # Default batch size (16K)
-            "acks": 1,  # Only leader acknowledgment required (better throughput)
-            # Additional minor optimizations (optional)
-            "enable_idempotence": True,  # Prevent duplicates
-            "compression_type": "snappy",  # Compress messages
+            # Timeout and retry settings that are valid for aiokafka
+            "request_timeout_ms": self.timeout * 1000,  # Valid parameter
+            "retry_backoff_ms": self.retry_interval * 1000,  # Valid parameter
+            # Basic performance settings valid in aiokafka
+            "linger_ms": 5,  # Valid parameter
+            "batch_size": 16384,  # Valid parameter (batch_size not max_batch_size)
+            "acks": 1,  # Valid parameter
+            "compression_type": "snappy",  # Valid parameter
+            # Additional valid parameters
+            "max_request_size": 1048576,  # 1MB
+            "buffer_memory": 33554432,  # 32MB
         }
 
-        # SSL certificates will be handled separately by using ssl_context in KafkaService
-        # In aiokafka, we don't set the ssl.ca.location etc directly in the config
+        # Remove any potential invalid parameters from user config
+        # and only keep known valid aiokafka parameters
+        valid_params = {
+            "bootstrap_servers",
+            "client_id",
+            "metadata_max_age_ms",
+            "request_timeout_ms",
+            "api_version",
+            "acks",
+            "key_serializer",
+            "value_serializer",
+            "compression_type",
+            "batch_size",
+            "linger_ms",
+            "partitioner",
+            "buffer_memory",
+            "max_request_size",
+            "retry_backoff_ms",
+            "security_protocol",
+            "ssl_context",
+            "connections_max_idle_ms",
+            "max_in_flight_requests_per_connection",
+        }
 
-        # Override with any user-specified configs from the field
+        # Update with user-specified configs, filtering out invalid parameters
         if self.producer_config:
-            producer_config.update(self.producer_config)
+            filtered_config = {k: v for k, v in self.producer_config.items() if k in valid_params}
+            producer_config.update(filtered_config)
 
         return producer_config
 
