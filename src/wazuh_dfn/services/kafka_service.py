@@ -408,6 +408,10 @@ class KafkaService:
 
             except Exception as e:
                 LOGGER.error(f"Error sending message to Kafka: {e}")
+                if self.shutdown_event.is_set():
+                    LOGGER.info("Shutdown event set. Kafka service stopped.")
+                    return None
+
                 await self.wazuh_service.send_error(
                     {
                         "error": 503,
