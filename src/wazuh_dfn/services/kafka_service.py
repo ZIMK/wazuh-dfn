@@ -408,6 +408,10 @@ class KafkaService:
 
         while retry_count < max_retries:
             try:
+                if "context_alert" in message:
+                    # Remove context_alert from the message to avoid sending it
+                    del message["context_alert"]
+
                 return await self._send_message_once(message)
 
             except Exception as e:
