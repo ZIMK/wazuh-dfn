@@ -13,9 +13,12 @@ from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 from .alerts_watcher_service import AlertsWatcherService
 from .alerts_worker_service import AlertsWorkerService
-from .kafka_service import KafkaService
+from .kafka_service import KafkaPerformanceData, KafkaService
 
 LOGGER = logging.getLogger(__name__)
+
+SLOW_OPERATIONS_THRESHOLD = 1.0  # seconds
+EXTREMELY_SLOW_OPERATIONS_THRESHOLD = 5.0  # seconds
 
 
 class LoggingService:
@@ -127,7 +130,7 @@ class LoggingService:
                     f"Alert ID: {performance_data.get('last_alert_id', 'unknown')}"
                 )
 
-    async def record_kafka_performance(self, operation_data: dict[str, Any]) -> None:
+    async def record_kafka_performance(self, operation_data: KafkaPerformanceData) -> None:
         """Record Kafka operation performance data for centralized logging.
 
         Args:
@@ -138,7 +141,7 @@ class LoggingService:
 
             # Track slow operations
             total_time = operation_data.get("total_time", 0)
-            if total_time > 1.0:
+            if total_time > SLOW_OPERATIONS_THRESHOLD:
                 self._kafka_performance_data["slow_operations"] += 1
                 self._kafka_performance_data["last_slow_operation_time"] = total_time
                 self._kafka_performance_data["max_operation_time"] = max(
@@ -151,7 +154,7 @@ class LoggingService:
                     self._kafka_performance_data["recent_stage_times"].pop(0)
 
                 # Only log extremely slow operations immediately
-                if total_time > 5.0:
+                if total_time > EXTREMELY_SLOW_OPERATIONS_THRESHOLD:
                     stage_times = operation_data.get("stage_times", {})
                     LOGGER.warning(
                         f"VERY SLOW KAFKA OPERATION: {total_time:.2f}s - "
@@ -180,11 +183,11 @@ class LoggingService:
 
             # Add warning level based on fill percentage
             if fill_percentage > 90:
-                LOGGER.error(f"CRITICAL: Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})!")
+                LOGGER.error(f"CRITICAL: Queue is {fill_percentage:.1f}%% full ({queue_size}/{queue_maxsize})!")
             elif fill_percentage > 70:
-                LOGGER.warning(f"Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})!")
+                LOGGER.warning(f"Queue is {fill_percentage:.1f}%% full ({queue_size}/{queue_maxsize})!")
             else:
-                LOGGER.info(f"Queue is {fill_percentage:.1f}% full ({queue_size}/{queue_maxsize})")
+                LOGGER.info(f"Queue is {fill_percentage:.1f}%% full ({queue_size}/{queue_maxsize})")
 
             # Get queue statistics from worker service
             try:

@@ -61,6 +61,18 @@ class KafkaResponse(TypedDict):
     topic: str
 
 
+class KafkaPerformanceData(TypedDict, total=False):
+    """Type definition for Kafka performance data."""
+
+    # Required fields
+    total_time: float
+
+    # Optional fields
+    stage_times: dict[str, float]  # Keys include 'prep', 'encode', 'send', 'connect'
+    message_size: int
+    topic: str
+
+
 class KafkaService:
     """Service for handling Kafka operations.
 
@@ -376,23 +388,46 @@ class KafkaService:
             Exception: If there is an error
         """
         async with self._lock:  # Ensure thread-safe access to producer
+            start_time = time.time()
+            stage_times = {}
+
             if not self.producer:
+                connect_start = time.time()
                 await self.connect()
+                stage_times["connect"] = time.time() - connect_start
 
             # Create copy of message and remove context_alert
+            prep_start = time.time()
             message_sent = message.copy()
             if "context_alert" in message_sent:
                 del message_sent["context_alert"]
+            stage_times["prep"] = time.time() - prep_start
 
             # Convert message to JSON string and encode
+            encode_start = time.time()
             message_bytes = json.dumps(message_sent).encode("utf-8")
+            stage_times["encode"] = time.time() - encode_start
 
             # Send message asynchronously
+            send_start = time.time()
             await self.producer.send_and_wait(
                 topic=self.dfn_config.dfn_id, value=message_bytes, timestamp_ms=int(time.time() * 1000)
             )
+            stage_times["send"] = time.time() - send_start
 
+            total_time = time.time() - start_time
             self._metrics["total_sent"] += 1
+
+            # Record performance data
+            performance_data: KafkaPerformanceData = {
+                "total_time": total_time,
+                "stage_times": stage_times,
+                "message_size": len(message_bytes),
+                "topic": str(self.dfn_config.dfn_id),
+            }
+
+            if self._logging_service:
+                await self._logging_service.record_kafka_performance(performance_data)
 
             return {
                 "success": True,
