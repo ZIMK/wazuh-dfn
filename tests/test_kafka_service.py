@@ -45,7 +45,6 @@ def fast_retry_config(monkeypatch):
     return apply_fast_config
 
 
-# Modify the mock_producer fixture in the test file to properly handle retries
 @pytest.fixture
 def mock_producer_with_retries():
     """Create a mock Kafka producer that properly supports retry testing."""
@@ -94,29 +93,25 @@ async def test_kafka_service_ssl_config(kafka_service):
 @pytest.mark.asyncio
 async def test_kafka_service_send_message(kafka_service, mock_producer):
     """Test sending messages through KafkaService."""
-    # Setup mock producer - now for the buffer approach
+    # Setup mock producer
     producer_instance = mock_producer.return_value
 
     # Set producer directly to avoid connection attempt
     kafka_service.producer = producer_instance
 
-    # Mock the _buffer_flush_loop to avoid background task issues
-    with (
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task to prevent background tasks:
-    ):
-        message = {"test": "data"}
-        result = await kafka_service.send_message(message)
+    # Call the send_message method
+    message = {"test": "data"}
+    result = await kafka_service.send_message(message)
 
-        # Check the result format
-        assert result is not None
-        assert result["success"] is True
-        assert result["topic"] == kafka_service.dfn_config.dfn_id
+    # Check the result format
+    assert result is not None
+    assert result["success"] is True
+    assert result["topic"] == kafka_service.dfn_config.dfn_id
 
-        # Verify message was added to buffer
-        assert len(kafka_service._message_buffer) == 1
-        assert kafka_service._message_buffer[0]["message"] == message
-        assert kafka_service._message_buffer[0]["topic"] == kafka_service.dfn_config.dfn_id
+    # Verify send_and_wait was called with correct arguments
+    producer_instance.send_and_wait.assert_called_once()
+    # Check that the topic was correct
+    assert producer_instance.send_and_wait.call_args[1]["topic"] == kafka_service.dfn_config.dfn_id
 
 
 @pytest.mark.asyncio
@@ -163,51 +158,156 @@ async def test_kafka_service_send_message_kafka_error(kafka_service, mock_produc
 
 @pytest.mark.asyncio
 async def test_kafka_service_send_message_max_retries(kafka_service, mock_producer):
-    """Test KafkaService message sending with error handling."""
-    # Mock the internal json.dumps to simulate an error condition
-    with (
-        patch("json.dumps", side_effect=Exception("Test serialization error")),
-        patch("wazuh_dfn.services.wazuh_service.WazuhService.send_error", new=AsyncMock()),
-    ):
+    """Test KafkaService message sending with max retries exceeded."""
+    # Setup mocks
+    producer_instance = mock_producer.return_value
 
-        # Test sending message
-        result = await kafka_service.send_message({"test": "data"})
+    # Patch the _send_message_once method directly to control the behavior
+    original_send_once = kafka_service._send_message_once
 
-        # The call should fail and return None
+    # Create a counter to track calls
+    call_count = 0
+
+    async def mock_send_once(message):
+        nonlocal call_count
+        call_count += 1
+        # Always fail to test max retries
+        raise Exception("Test Kafka error")  # NOSONAR
+
+    # Replace the method for this test
+    kafka_service._send_message_once = mock_send_once
+
+    # Set producer directly to avoid connection attempts
+    kafka_service.producer = producer_instance
+
+    # Store original retry settings
+    original_retries = kafka_service.config.send_max_retries
+    original_retry_interval = kafka_service.config.retry_interval
+    original_max_wait = kafka_service.config.max_wait_time
+
+    try:
+        # Configure for quick testing
+        kafka_service.config.send_max_retries = 2
+        kafka_service.config.retry_interval = 0.01
+        kafka_service.config.max_wait_time = 0.1
+
+        message = {"test": "data"}
+        # Skip actual sleeping
+        with patch("asyncio.sleep", new=AsyncMock()):
+            result = await kafka_service.send_message(message)
+
         assert result is None
+
+        # Verify calls count matches max retries
+        assert call_count == 2
+    finally:
+        # Restore original method and settings
+        kafka_service._send_message_once = original_send_once
+        kafka_service.config.send_max_retries = original_retries
+        kafka_service.config.retry_interval = original_retry_interval
+        kafka_service.config.max_wait_time = original_max_wait
 
 
 @pytest.mark.asyncio
 async def test_kafka_service_send_message_general_error(kafka_service, mock_producer, shutdown_event):
     """Test KafkaService message sending with general exception."""
-    # Mock json.dumps to raise a RuntimeError
-    with (
-        patch("json.dumps", side_effect=RuntimeError("Test general error")),
-        patch("wazuh_dfn.services.wazuh_service.WazuhService.send_error", new=AsyncMock()),
-    ):
+    # Setup mocks
+    producer_instance = mock_producer.return_value
 
-        # Test sending message
-        result = await kafka_service.send_message({"test": "data"})
+    # Patch the _send_message_once method directly to control the behavior
+    original_send_once = kafka_service._send_message_once
 
-        # The call should fail and return None
+    # Create a counter to track calls
+    call_count = 0
+
+    async def mock_send_once(message):
+        nonlocal call_count
+        call_count += 1
+        # Raise a RuntimeError to test general error handling
+        raise RuntimeError("Test general error")
+
+    # Replace the method for this test
+    kafka_service._send_message_once = mock_send_once
+
+    # Set producer directly to avoid connection attempts
+    kafka_service.producer = producer_instance
+
+    # Store original retry settings
+    original_retries = kafka_service.config.send_max_retries
+    original_retry_interval = kafka_service.config.retry_interval
+    original_max_wait = kafka_service.config.max_wait_time
+
+    try:
+        # Configure for quick testing
+        kafka_service.config.send_max_retries = 2
+        kafka_service.config.retry_interval = 0.01
+        kafka_service.config.max_wait_time = 0.05
+
+        message = {"test": "data"}
+
+        # Skip actual sleeping
+        with patch("asyncio.sleep", new=AsyncMock()):
+            result = await kafka_service.send_message(message)
+
         assert result is None
+
+        # Verify calls - should match our retry count + initial attempt
+        assert call_count == 2
+    finally:
+        # Restore original method and settings
+        kafka_service._send_message_once = original_send_once
+        kafka_service.config.send_max_retries = original_retries
+        kafka_service.config.retry_interval = original_retry_interval
+        kafka_service.config.max_wait_time = original_max_wait
 
 
 @pytest.mark.asyncio
 async def test_kafka_service_error_handling(kafka_service, mock_producer, shutdown_event):
     """Test KafkaService error handling."""
-    # Mock json.dumps to raise a RuntimeError
-    with (
-        patch("json.dumps", side_effect=RuntimeError("Test general error")),
-        patch("wazuh_dfn.services.wazuh_service.WazuhService.send_error", new=AsyncMock()),
-    ):
+    # Setup mocks
+    producer_instance = mock_producer.return_value
 
-        # Test sending message
+    # Patch the _send_message_once method directly to control the behavior
+    original_send_once = kafka_service._send_message_once
+
+    # Create a counter to track calls
+    call_count = 0
+
+    async def mock_send_once(message):
+        nonlocal call_count
+        call_count += 1
+        # Always raise a RuntimeError
+        raise RuntimeError("Test general error")
+
+    # Replace the method for this test
+    kafka_service._send_message_once = mock_send_once
+
+    # Set producer directly to avoid connection attempts
+    kafka_service.producer = producer_instance
+
+    # Store original retry settings
+    original_retries = kafka_service.config.send_max_retries
+    original_retry_interval = kafka_service.config.retry_interval
+    original_max_wait = kafka_service.config.max_wait_time
+
+    try:
+        # Configure for quick testing
+        kafka_service.config.send_max_retries = 2
+        kafka_service.config.retry_interval = 0.1
+        kafka_service.config.max_wait_time = 0.2
+
         message = {"test": "data"}
         result = await kafka_service.send_message(message)
-
-        # The call should fail and return None
         assert result is None
+
+        # Verify calls - should match our retry count
+        assert call_count == 2
+    finally:
+        # Restore original method and settings
+        kafka_service._send_message_once = original_send_once
+        kafka_service.config.send_max_retries = original_retries
+        kafka_service.config.retry_interval = original_retry_interval
+        kafka_service.config.max_wait_time = original_max_wait
 
 
 @pytest.mark.asyncio
@@ -661,8 +761,6 @@ async def test_create_producer_logs_configs(kafka_service, caplog):
         patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
         patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
         patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),
-        patch("asyncio.create_task", return_value=MagicMock()),
     ):
         # Set bootstrap servers for testing
         bootstrap_servers = "test-server:9092"
@@ -707,8 +805,6 @@ async def test_producer_start_ssl_certificate_error(kafka_service, caplog):
         patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock),
         patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
         patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task to prevent background tasks
     ):
         # Configure kafka service for SSL
         kafka_service.dfn_config.dfn_cert = "cert.pem"
@@ -747,8 +843,6 @@ async def test_producer_create_with_ssl_security_protocol(kafka_service):
         patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
         patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
         patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task to prevent background tasks
     ):
         # Set SSL config to trigger SSL protocol
         kafka_service.dfn_config.dfn_cert = "cert.pem"
@@ -765,7 +859,6 @@ async def test_producer_create_with_ssl_security_protocol(kafka_service):
 @pytest.mark.asyncio
 async def test_producer_create_with_plaintext_security_protocol(kafka_service, caplog):
     """Test that the producer uses PLAINTEXT/None security protocol when SSL is not configured."""
-    """Test that the producer is created with SSL security protocol when SSL context is available."""
     # Create a producer mock with regular method for start
     producer_mock = MagicMock()
 
@@ -783,8 +876,6 @@ async def test_producer_create_with_plaintext_security_protocol(kafka_service, c
         patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
         patch.object(kafka_service, "_create_custom_ssl_context", return_value=MagicMock()),
         patch.object(kafka_service, "_ensure_datetime_consistency", return_value=None),
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task to prevent background tasks
     ):
         # Set SSL config to trigger SSL protocol
         kafka_service.dfn_config.dfn_cert = None
@@ -822,11 +913,7 @@ async def test_producer_with_config_parameters(kafka_service):
     # Set the method directly
     producer_mock.start = mock_start
 
-    with (
-        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class,
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),
-        patch("asyncio.create_task", return_value=MagicMock()),
-    ):
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=producer_mock) as mock_producer_class:
         # Override config attributes directly
         kafka_service.dfn_config.dfn_broker = test_config["bootstrap_servers"]
 
@@ -852,11 +939,7 @@ async def test_producer_cleanup_before_creation(kafka_service):
     new_producer.start = AsyncMock()  # Prevent real connection attempts
 
     # Mock the new producer creation
-    with (
-        patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=new_producer),
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task
-    ):
+    with patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=new_producer):
         # Call the method to create a new producer
         await kafka_service._create_producer()
 
@@ -895,8 +978,6 @@ async def test_producer_cleanup_error_handling(kafka_service):
     with (
         patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer", return_value=new_producer),
         patch("logging.Logger.warning") as mock_log_warning,
-        patch.object(kafka_service, "_buffer_flush_loop", return_value=None),  # Prevent background task
-        patch("asyncio.create_task", return_value=MagicMock()),  # Mock create_task
     ):
         # Call the method
         await kafka_service._create_producer()
