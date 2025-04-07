@@ -1,15 +1,20 @@
 """Test module for Alerts Worker Service."""
 
 import asyncio
+import datetime
+import json
 import logging
 import time
-from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from wazuh_dfn.exceptions import AlertProcessingError
 from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
+
+# Define epsilon for floating point comparisons
+EPSILON = 1e-6
 
 
 # Helper functions for tests
@@ -401,30 +406,27 @@ async def test_update_timing_stats(mocker):
         "extremely_slow_alerts": 0,
     }
 
-    # Define epsilon for floating point comparisons
-    epsilon = 1e-6
-
     # Test normal processing time
     worker_service._update_timing_stats(stats, 0.5)
     assert stats["processing_times"] == [0.1, 0.2, 0.5]
-    assert abs(stats["max_time"] - 0.5) < epsilon
-    assert abs(stats["min_time"] - 0.1) < epsilon
+    assert abs(stats["max_time"] - 0.5) < EPSILON
+    assert abs(stats["min_time"] - 0.1) < EPSILON
     assert stats["slow_alerts"] == 0
     assert stats["extremely_slow_alerts"] == 0
 
     # Test slow alert (>2.0s)
     worker_service._update_timing_stats(stats, 3.0)
     assert stats["processing_times"] == [0.1, 0.2, 0.5, 3.0]
-    assert abs(stats["max_time"] - 3.0) < epsilon
-    assert abs(stats["min_time"] - 0.1) < epsilon
+    assert abs(stats["max_time"] - 3.0) < EPSILON
+    assert abs(stats["min_time"] - 0.1) < EPSILON
     assert stats["slow_alerts"] == 1
     assert stats["extremely_slow_alerts"] == 0
 
     # Test extremely slow alert (>5.0s)
     worker_service._update_timing_stats(stats, 6.0)
     assert stats["processing_times"] == [0.1, 0.2, 0.5, 3.0, 6.0]
-    assert abs(stats["max_time"] - 6.0) < epsilon
-    assert abs(stats["min_time"] - 0.1) < epsilon
+    assert abs(stats["max_time"] - 6.0) < EPSILON
+    assert abs(stats["min_time"] - 0.1) < EPSILON
     assert stats["slow_alerts"] == 1
     assert stats["extremely_slow_alerts"] == 1
 
@@ -432,7 +434,7 @@ async def test_update_timing_stats(mocker):
     stats["processing_times"] = [0.1] * 99
     worker_service._update_timing_stats(stats, 0.2)
     assert len(stats["processing_times"]) == 100
-    assert abs(stats["processing_times"][99] - 0.2) < epsilon
+    assert abs(stats["processing_times"][99] - 0.2) < EPSILON
 
 
 @pytest.mark.asyncio
@@ -461,8 +463,8 @@ async def test_process_alert_batch(mocker, caplog):
 
     # Mock datetime for timing calculations
     mock_now = mocker.patch("wazuh_dfn.services.alerts_worker_service.datetime")
-    start_time = datetime(2023, 1, 1, 12, 0, 0)
-    end_time = datetime(2023, 1, 1, 12, 0, 1)  # 1 second later
+    start_time = datetime.datetime(2023, 1, 1, 12, 0, 0)
+    end_time = datetime.datetime(2023, 1, 1, 12, 0, 1)  # 1 second later
     mock_now.now.side_effect = [start_time, end_time, end_time, end_time, end_time]
 
     # Initial values
@@ -570,3 +572,282 @@ async def test_monitor_queue(mocker):
 
     # Verify sleep was called
     assert mock_sleep.called
+
+
+@pytest.mark.asyncio
+async def test_alerts_worker_service_update_timing_stats_edge_cases():
+    """Test edge cases for _update_timing_stats method."""
+    # Create a service instance directly
+    service = AlertsWorkerService(
+        config=MagicMock(), alert_queue=MagicMock(), alerts_service=MagicMock(), shutdown_event=MagicMock()
+    )
+
+    # Test updating empty stats
+    stats = {
+        "processing_times": [],
+        "max_time": 0.0,
+        "min_time": float("inf"),
+        "slow_alerts": 0,
+        "extremely_slow_alerts": 0,
+    }
+
+    service._update_timing_stats(stats, 0.25)
+    assert stats["processing_times"] == [0.25]
+    assert abs(stats["max_time"] - 0.25) < EPSILON
+    assert abs(stats["min_time"] - 0.25) < EPSILON
+    assert stats["slow_alerts"] == 0
+    assert stats["extremely_slow_alerts"] == 0
+
+    # Test negative time (shouldn't happen but should be handled)
+    service._update_timing_stats(stats, -0.1)
+    assert stats["min_time"] == -0.1
+    assert abs(stats["max_time"] - 0.25) < EPSILON
+
+    # Test large list trimming
+    stats["processing_times"] = [0.1] * 100
+    service._update_timing_stats(stats, 0.3)
+    assert len(stats["processing_times"]) == 100
+    assert abs(stats["processing_times"][-1] - 0.3) < EPSILON
+    assert abs(stats["processing_times"][0] - 0.1) < EPSILON
+
+
+@pytest.mark.asyncio
+async def test_process_alert_batch_empty_queue(mocker):
+    """Test processing alert batch with empty queue."""
+    # Setup mocks
+    mock_queue = mocker.MagicMock()
+    mock_queue.empty.return_value = True  # Queue is empty
+
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(),
+        alert_queue=mock_queue,
+        alerts_service=mocker.MagicMock(),
+        shutdown_event=mocker.MagicMock(),
+    )
+
+    # Mock sleep to avoid waiting
+    mock_sleep = mocker.patch("asyncio.sleep", new=mocker.AsyncMock())
+
+    # Initial values
+    alerts_processed = 10
+    total_processing_time = 5.0
+
+    # Call method
+    new_alerts_processed, new_total_time, timing_results = await worker_service._process_alert_batch(
+        "worker-1", 5, alerts_processed, total_processing_time
+    )
+
+    # Verify no changes when queue is empty
+    assert abs(new_alerts_processed - alerts_processed) < EPSILON
+    assert abs(new_total_time - total_processing_time) < EPSILON
+    assert timing_results == []
+    assert mock_sleep.called
+
+
+@pytest.mark.asyncio
+async def test_dump_alert_with_file_operations(mocker, tmp_path):
+    """Test the _dump_alert method with real file operations."""
+    # Setup mocks
+    mock_alerts_service = mocker.MagicMock()
+    mock_queue = mocker.MagicMock()
+    mock_event = mocker.MagicMock()
+
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(), alert_queue=mock_queue, alerts_service=mock_alerts_service, shutdown_event=mock_event
+    )
+
+    # Create a test alert
+    test_alert = {
+        "id": "dump-test-123",
+        "rule": {"id": "12345", "level": 5},
+        "data": {"srcip": "192.168.1.100", "complex": {"nested": "value"}},
+    }
+
+    # Mock datetime to control filename
+    mock_datetime = mocker.patch("wazuh_dfn.services.alerts_worker_service.datetime")
+    mock_now = mocker.MagicMock()
+    mock_now.strftime.return_value = "20240101_120000"
+    mock_datetime.now.return_value = mock_now
+
+    # Mock random suffix to make test deterministic
+    mocker.patch("secrets.randbelow", return_value=123456)
+
+    # Mock tempfile directory to use pytest's tmp_path
+    mocker.patch("tempfile.gettempdir", return_value=str(tmp_path))
+
+    # Call the method
+    result = await worker_service._dump_alert(test_alert)
+
+    # Verify result
+    assert result is not None
+    assert "dfn-alert-dump-test-123_20240101_120000_223456.json" in result
+
+    # Verify file was created with correct content
+    dump_path = Path(result)
+    assert dump_path.exists()
+
+    # Read content and verify
+    content = json.loads(dump_path.read_text())
+    assert content["id"] == "dump-test-123"
+    assert content["rule"]["id"] == "12345"
+
+
+@pytest.mark.asyncio
+async def test_write_file_method(mocker, tmp_path):
+    """Test the _write_file method."""
+    # Setup
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(),
+        alert_queue=mocker.MagicMock(),
+        alerts_service=mocker.MagicMock(),
+        shutdown_event=mocker.MagicMock(),
+    )
+
+    # Create a test file path and content
+    test_path = tmp_path / "test_write.txt"
+    test_content = "Test content for file write"
+
+    # Call method
+    await worker_service._write_file(test_path, test_content)
+
+    # Verify file was written
+    assert test_path.exists()
+    assert test_path.read_text() == test_content
+
+
+@pytest.mark.asyncio
+async def test_monitor_queue_high_throughput_mode(mocker):
+    """Test the _monitor_queue method with different fill levels."""
+    # Setup mocks
+    mock_alerts_service = mocker.MagicMock()
+    mock_queue = mocker.MagicMock()
+    mock_queue.maxsize = 100
+    mock_event = mocker.MagicMock()
+    mock_event.is_set.side_effect = [False, False, False, True]  # Run 3 iterations then exit
+
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(), alert_queue=mock_queue, alerts_service=mock_alerts_service, shutdown_event=mock_event
+    )
+
+    # Mock asyncio.sleep
+    mock_sleep = mocker.patch("asyncio.sleep", new=AsyncMock())
+
+    # Mock logger
+    mock_logger = mocker.patch("wazuh_dfn.services.alerts_worker_service.LOGGER")
+
+    # Setup different queue sizes for each iteration
+    mock_queue.qsize.side_effect = [20, 85, 95]  # 20%, 85%, 95% full
+
+    # Run the method
+    await worker_service._monitor_queue()
+
+    # Verify logging and high-throughput mode transitions
+    assert mock_sleep.call_count == 3
+
+    # Should enable high-throughput at 85%
+    assert mock_logger.warning.called
+    assert mock_logger.error.called
+
+    # Verify high-throughput transitions
+    assert worker_service._high_throughput_mode is True
+
+
+@pytest.mark.asyncio
+async def test_process_alerts_method(mocker, caplog):
+    """Test the _process_alerts method with detailed timing and error handling."""
+    caplog.set_level(logging.DEBUG)
+
+    # Setup mocks
+    mock_alerts_service = mocker.MagicMock()
+    # Make process_alert an AsyncMock for asynchronous awaiting
+    mock_alerts_service.process_alert = mocker.AsyncMock()
+
+    mock_queue = mocker.AsyncMock()
+    mock_event = mocker.MagicMock()
+    mock_event.is_set.side_effect = [False, False, True]  # Run 2 iterations then exit
+
+    worker_service = AlertsWorkerService(
+        config=mocker.MagicMock(), alert_queue=mock_queue, alerts_service=mock_alerts_service, shutdown_event=mock_event
+    )
+
+    # Mock asyncio.current_task to return a task with a name
+    mock_task = mocker.MagicMock()
+    mock_task.get_name.return_value = "TestWorker"
+    mocker.patch("asyncio.current_task", return_value=mock_task)
+
+    # Mock queue.get to return test alerts
+    test_alerts = [{"id": "normal-alert", "rule": {"id": "1001"}}, {"id": "slow-alert", "rule": {"id": "1002"}}]
+
+    mock_queue.get = mocker.AsyncMock(side_effect=test_alerts)
+    mock_queue.task_done = mocker.MagicMock()
+
+    # Mock process_alert with different timings
+    # First call normal, second call slow
+    original_datetime = datetime.datetime
+
+    class MockDatetime(original_datetime):
+        mock_times = [
+            # First alert - normal timing (0.5s)
+            original_datetime(2023, 1, 1, 12, 0, 0),
+            original_datetime(2023, 1, 1, 12, 0, 0, 500000),
+            # Second alert - slow timing (2.5s)
+            original_datetime(2023, 1, 1, 12, 0, 1),
+            original_datetime(2023, 1, 1, 12, 0, 3, 500000),
+            # Add extra timestamp for metrics logging
+            original_datetime(2023, 1, 1, 12, 0, 40),  # Force metrics logging
+        ]
+        mock_index = 0
+
+        @classmethod
+        def now(cls, *args, **kwargs):  # type: ignore[override]
+            result = cls.mock_times[cls.mock_index]
+            cls.mock_index = (cls.mock_index + 1) % len(cls.mock_times)
+            return result
+
+    # Patch datetime.now for controlled timing
+    mocker.patch("wazuh_dfn.services.alerts_worker_service.datetime", MockDatetime)
+
+    # Mock asyncio.wait_for to avoid actual timeout behavior
+    # mock_wait_for = mocker.patch("asyncio.wait_for", new=mocker.AsyncMock(return_value=None))
+    # Create a proper implementation for mock_wait_for that passes through the result
+    async def mock_wait_for_impl(coro, timeout):
+        return await coro
+
+    # Patch asyncio.wait_for to actually await and return the result
+    mocker.patch("asyncio.wait_for", side_effect=mock_wait_for_impl)
+
+    # Create a mock logging service and configure AsyncMock correctly
+    mock_logging_service = mocker.MagicMock()
+    mock_logging_service.record_worker_performance = mocker.AsyncMock()
+    worker_service.set_logging_service(mock_logging_service)
+
+    # Run the method
+    await worker_service._process_alerts()
+
+    # Verify queue.get and task_done were called for each alert
+    assert mock_queue.get.call_count == 2
+    assert mock_queue.task_done.call_count == 2
+
+    # Verify performance metrics were recorded
+    assert mock_logging_service.record_worker_performance.called
+
+    # Check logging of slow alert
+    assert "slow alert processing" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_set_logging_service():
+    """Test setting the logging service reference."""
+    # Create a service instance
+    service = AlertsWorkerService(
+        config=MagicMock(), alert_queue=MagicMock(), alerts_service=MagicMock(), shutdown_event=MagicMock()
+    )
+
+    # Create a mock logging service
+    mock_logging_service = MagicMock()
+
+    # Set the logging service
+    service.set_logging_service(mock_logging_service)
+
+    # Verify it was set
+    assert service._logging_service is mock_logging_service

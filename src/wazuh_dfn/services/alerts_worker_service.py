@@ -155,13 +155,13 @@ class AlertsWorkerService:
                         if not self._high_throughput_mode:
                             self._high_throughput_mode = True
                             LOGGER.warning(
-                                f"Queue at {fill_percentage:.1f}% capacity ({current_size}/{max_size}). "
+                                f"Queue at {fill_percentage:.1f}%% capacity ({current_size}/{max_size}). "
                                 f"Enabling high-throughput mode."
                             )
                     elif fill_percentage < 50 and self._high_throughput_mode:
                         # Disable high throughput mode when queue is less full
                         self._high_throughput_mode = False
-                        LOGGER.info(f"Queue at {fill_percentage:.1f}% capacity. Disabling high-throughput mode.")
+                        LOGGER.info(f"Queue at {fill_percentage:.1f}%% capacity. Disabling high-throughput mode.")
 
                 # Log warnings at different thresholds
                 if fill_percentage > 90:
@@ -240,6 +240,8 @@ class AlertsWorkerService:
                     try:
                         # Get an alert from the queue
                         alert = await asyncio.wait_for(self.alert_queue.get(), timeout=timeout)
+                        LOGGER.debug(f"Worker {worker_name} got alert {alert}")
+
                         consecutive_empty = 0  # Reset empty counter
 
                         # CRITICAL: Detailed timing breakdown for processing
@@ -552,13 +554,16 @@ class AlertsWorkerService:
         LOGGER.info("Shutting down alerts worker service")
         # Cancel the queue monitor first
         if self._monitor_task and not self._monitor_task.done():
+            LOGGER.info("Cancelling queue monitor task")
             self._monitor_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._monitor_task
 
         # Wait for all workers to finish
         for worker_task in self.worker_tasks:
+            LOGGER.info(f"Waiting for worker task {worker_task.get_name()} to finish. done: {worker_task.done()}")
             if not worker_task.done():
+                LOGGER.info(f"Cancelling worker task {worker_task.get_name()}")
                 worker_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await worker_task
