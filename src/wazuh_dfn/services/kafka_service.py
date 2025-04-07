@@ -379,8 +379,13 @@ class KafkaService:
             if not self.producer:
                 await self.connect()
 
+            # Create copy of message and remove context_alert
+            message_sent = message.copy()
+            if "context_alert" in message_sent:
+                del message_sent["context_alert"]
+
             # Convert message to JSON string and encode
-            message_bytes = json.dumps(message).encode("utf-8")
+            message_bytes = json.dumps(message_sent).encode("utf-8")
 
             # Send message asynchronously
             await self.producer.send_and_wait(
@@ -408,10 +413,6 @@ class KafkaService:
 
         while retry_count < max_retries:
             try:
-                if "context_alert" in message:
-                    # Remove context_alert from the message to avoid sending it
-                    del message["context_alert"]
-
                 return await self._send_message_once(message)
 
             except Exception as e:
