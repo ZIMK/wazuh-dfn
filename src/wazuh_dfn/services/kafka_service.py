@@ -388,7 +388,6 @@ class KafkaService:
             )
 
             self._metrics["total_sent"] += 1
-            self._metrics["single_sent"] += 1
 
             return {
                 "success": True,
