@@ -459,17 +459,20 @@ class KafkaConfig(BaseModel):
         },
         gt=0,
     )
+    compression_type: str = Field(
+        default="gzip",
+        description="Compression type for Kafka messages",
+        json_schema_extra={
+            "env_var": "KAFKA_COMPRESSION_TYPE",
+            "cli": "--kafka-compression-type",
+        },
+    )
     producer_config: dict[str, Any] = Field(
         default_factory=lambda: {
-            "request.timeout.ms": 60000,
-            "connections.max.idle.ms": 540000,  # 9 minutes
-            "linger.ms": 1000,  # Controls how long to wait before sending a batch
-            "batch.size": 16384,  # Maximum size of a batch in bytes
-            "batch.num.messages": 100,  # Maximum number of messages in a batch
-            "enable.idempotence": True,  # Ensure exactly-once delivery
-            "acks": "all",  # Wait for all replicas
-            "statistics.interval.ms": 0,  # Disable stats for better performance
-            "log_level": 0,  # Only log errors
+            "linger_ms": 5,
+            "max_batch_size": 16384,
+            "acks": 1,
+            "max_request_size": 1048576,
         },
         description="Kafka producer configuration",
         json_schema_extra={
@@ -516,14 +519,15 @@ class KafkaConfig(BaseModel):
             "bootstrap_servers": dfn_config.dfn_broker,
             "security_protocol": "SSL" if (dfn_config.dfn_cert and dfn_config.dfn_key) else None,
             # Timeout and retry settings that are valid for aiokafka
-            "request_timeout_ms": self.timeout * 1000,  # Valid parameter
-            "retry_backoff_ms": self.retry_interval * 1000,  # Valid parameter
+            "request_timeout_ms": self.timeout * 1000,
+            "retry_backoff_ms": self.retry_interval * 1000,
             # Basic performance settings valid in aiokafka
-            "linger_ms": 5,  # Valid parameter
-            "max_batch_size": 16384,  # Valid parameter (max_batch_size not batch_size)
-            "acks": 1,  # Valid parameter
+            "linger_ms": 5,
+            "max_batch_size": 16384,
+            "acks": 1,
             # Additional valid parameters
             "max_request_size": 1048576,  # 1MB
+            "compression_type": self.compression_type,
         }
 
         # Remove any potential invalid parameters from user config
@@ -538,10 +542,9 @@ class KafkaConfig(BaseModel):
             "key_serializer",
             "value_serializer",
             "compression_type",
-            "max_batch_size",  # Use max_batch_size instead of batch_size
+            "max_batch_size",
             "linger_ms",
             "partitioner",
-            # Removed buffer_memory from valid params
             "max_request_size",
             "retry_backoff_ms",
             "security_protocol",
