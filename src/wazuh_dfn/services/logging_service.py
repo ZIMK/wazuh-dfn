@@ -259,11 +259,14 @@ class LoggingService:
 
             # Log per-worker processing times and performance metrics
             try:
+                LOGGER.debug("Logging worker processing times and performance metrics")
                 worker_times = await self.alerts_worker_service.worker_processed_times
+                LOGGER.debug(f"Worker processed times: {worker_times}")
 
                 # Get worker performance data for combined logging
                 async with self._perf_lock:
                     worker_perf_data = self._worker_performance_data.copy()
+                    LOGGER.debug(f"Worker performance data: {worker_perf_data}")
 
                 # Log each worker's status
                 for worker_name, timestamp in worker_times.items():

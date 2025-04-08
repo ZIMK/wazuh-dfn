@@ -5,7 +5,6 @@ import logging
 import shutil
 import tempfile
 from contextlib import suppress
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -247,9 +246,6 @@ async def alerts_worker_service(sample_config, alert_queue, alerts_service, shut
 async def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
     """Create an AlertsWatcherService instance for testing."""
     from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
-
-    # Create the alerts directory if it doesn't exist
-    Path(sample_config.wazuh.alerts_directory).mkdir(parents=True, exist_ok=True)
 
     # Create the service
     service = AlertsWatcherService(sample_config.wazuh, alert_queue, shutdown_event)
