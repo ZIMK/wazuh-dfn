@@ -679,7 +679,7 @@ class MiscConfig(BaseModel):
 
     num_workers: int = Field(
         default=10,
-        description="Number of worker threads",
+        description="Number of async worker tasks",
         json_schema_extra={
             "env_var": "MISC_NUM_WORKERS",
             "cli": "--misc-num-workers",
