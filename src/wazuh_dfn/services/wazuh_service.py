@@ -6,13 +6,22 @@ import logging
 import socket
 import sys
 import time
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, TypedDict
 
 from wazuh_dfn.config import WazuhConfig
 
 LOGGER = logging.getLogger(__name__)
+
+
+class ConnectionState(Enum):
+    """Connection state management for atomic state tracking."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    ERROR = "error"
 
 
 class RecoverableSocketError(StrEnum):
@@ -71,8 +80,21 @@ class WazuhService:
         self._dgram_sock = None
         self._is_dgram = False
 
+        # Connection state management (Fix #1: Atomic connection state)
+        self._connection_state = ConnectionState.DISCONNECTED
+        self._state_lock = asyncio.Lock()
+
         self._lock = asyncio.Lock()
         self._is_reconnecting = False
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if currently connected to Wazuh server.
+
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        return self._connection_state == ConnectionState.CONNECTED
 
     async def start(self) -> None:
         """Start the Wazuh service and verify connection asynchronously.
@@ -108,71 +130,82 @@ class WazuhService:
             ConnectionError: If connection to socket fails
             Exception: For other connection-related errors
         """
-        try:
-            # Close any existing connection
-            await self.close()
+        async with self._state_lock:
+            try:
+                # Set connecting state
+                self._connection_state = ConnectionState.CONNECTING
+                
+                # Close any existing connection without additional locking
+                await self._close_internal()
 
-            if sys.platform == "win32":
-                # For Windows, parse host:port from unix_socket_path
-                if isinstance(self.config.unix_socket_path, tuple):
-                    host, port = self.config.unix_socket_path
-                else:
-                    host, port_str = self.config.unix_socket_path.split(":")
-                    port = int(port_str)
+                if sys.platform == "win32":
+                    # For Windows, parse host:port from unix_socket_path
+                    if isinstance(self.config.unix_socket_path, tuple):
+                        host, port = self.config.unix_socket_path
+                    else:
+                        host, port_str = self.config.unix_socket_path.split(":")
+                        port = int(port_str)
 
-                LOGGER.info(f"Connecting to Wazuh server via TCP socket - host: {host}, port: {port}")
-                self._reader, self._writer = await asyncio.open_connection(host, port)
-                self._is_dgram = False
-            else:
-                # For Unix systems
-                socket_path = Path(self.config.unix_socket_path)
-                LOGGER.info(f"Connecting to Wazuh server via Unix socket - path: {socket_path}")
-
-                # Check if socket file exists
-                if not socket_path.exists():
-                    LOGGER.error(f"Unix socket path does not exist: {socket_path}")
-                    raise FileNotFoundError(f"Unix socket path not found: {socket_path}")
-
-                # Log socket file permissions and details
-                try:
-                    socket_stat = socket_path.stat()
-                    LOGGER.debug(f"Socket file details - mode: {oct(socket_stat.st_mode)}, size: {socket_stat.st_size}")
-                except Exception as stat_error:
-                    LOGGER.warning(f"Could not get socket file details: {stat_error}")
-
-                # Try datagram socket first (as it was before switching to asyncio)
-                try:
-                    LOGGER.debug("Attempting to connect with datagram socket...")
-                    self._is_dgram = True
-                    # Create a Unix domain datagram socket
-                    self._dgram_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-                    self._dgram_sock.setblocking(False)
-                    self._dgram_sock.connect(str(socket_path))
-                    LOGGER.info("Connected to Wazuh server using datagram socket")
-                except OSError as dgram_error:
-                    LOGGER.debug(f"Datagram socket failed: {dgram_error}, trying with stream socket...")
+                    LOGGER.info(f"Connecting to Wazuh server via TCP socket - host: {host}, port: {port}")
+                    self._reader, self._writer = await asyncio.open_connection(host, port)
                     self._is_dgram = False
-                    if self._dgram_sock:
-                        self._dgram_sock.close()
-                        self._dgram_sock = None
+                else:
+                    # For Unix systems
+                    socket_path = Path(self.config.unix_socket_path)
+                    LOGGER.info(f"Connecting to Wazuh server via Unix socket - path: {socket_path}")
 
-                    # Fall back to stream socket
+                    # Check if socket file exists
+                    if not socket_path.exists():
+                        LOGGER.error(f"Unix socket path does not exist: {socket_path}")
+                        raise FileNotFoundError(f"Unix socket path not found: {socket_path}")
+
+                    # Log socket file permissions and details
                     try:
-                        self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))
-                        LOGGER.info("Connected to Wazuh server using stream socket")
-                    except Exception as stream_error:
-                        LOGGER.error(f"Failed to connect with stream socket: {stream_error}")
-                        raise
+                        socket_stat = socket_path.stat()
+                        LOGGER.debug(
+                            f"Socket file details - mode: {oct(socket_stat.st_mode)}, "
+                            f"size: {socket_stat.st_size}"
+                        )
+                    except Exception as stat_error:
+                        LOGGER.warning(f"Could not get socket file details: {stat_error}")
 
-            LOGGER.info("Connected to Wazuh server")
-            self._is_reconnecting = False
-        except Exception as e:
-            LOGGER.error(f"Failed to connect to Wazuh server: {e}")
-            await self.close()
-            if "Connection refused" in str(e):
-                LOGGER.error("Wazuh is not running")
-                sys.exit(6)
-            raise
+                    # Try datagram socket first (as it was before switching to asyncio)
+                    try:
+                        LOGGER.debug("Attempting to connect with datagram socket...")
+                        self._is_dgram = True
+                        # Create a Unix domain datagram socket
+                        self._dgram_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+                        self._dgram_sock.setblocking(False)
+                        self._dgram_sock.connect(str(socket_path))
+                        LOGGER.info("Connected to Wazuh server using datagram socket")
+                    except OSError as dgram_error:
+                        LOGGER.debug(f"Datagram socket failed: {dgram_error}, trying with stream socket...")
+                        self._is_dgram = False
+                        if self._dgram_sock:
+                            self._dgram_sock.close()
+                            self._dgram_sock = None
+
+                        # Fall back to stream socket
+                        try:
+                            self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))
+                            LOGGER.info("Connected to Wazuh server using stream socket")
+                        except Exception as stream_error:
+                            LOGGER.error(f"Failed to connect with stream socket: {stream_error}")
+                            raise
+
+                # Set connected state atomically
+                self._connection_state = ConnectionState.CONNECTED
+                LOGGER.info("Connected to Wazuh server")
+                self._is_reconnecting = False
+            except Exception as e:
+                # Set error state atomically
+                self._connection_state = ConnectionState.ERROR
+                LOGGER.error(f"Failed to connect to Wazuh server: {e}")
+                await self._close_internal()
+                if "Connection refused" in str(e):
+                    LOGGER.error("Wazuh is not running")
+                    sys.exit(6)
+                raise
 
     async def send_event(
         self,
@@ -199,7 +232,8 @@ class WazuhService:
 
         while retry_count < self.config.max_retries:
             try:
-                if not self._writer and not self._dgram_sock:
+                # Use the new atomic connection state check
+                if not self.is_connected:
                     await self.connect()
 
                 msg: WazuhEventMessage = {
@@ -235,19 +269,35 @@ class WazuhService:
     async def _try_reconnect(self) -> None:
         """Attempt to reestablish connection to Wazuh server asynchronously."""
         async with self._lock:
+            # Check if we're in a valid state to reconnect
+            if self._connection_state == ConnectionState.CONNECTING:
+                # Another task is already connecting, just wait
+                while self._connection_state == ConnectionState.CONNECTING:
+                    await asyncio.sleep(0.1)
+                return
+
             if self._is_reconnecting:
                 # If another task is already reconnecting, just wait and return
                 return
 
+            # Validate current state before attempting reconnection
+            if self._connection_state not in [ConnectionState.DISCONNECTED, ConnectionState.ERROR]:
+                LOGGER.warning(f"Unexpected state during reconnect attempt: {self._connection_state}")
+
             self._is_reconnecting = True
             try:
-                await self.close()
+                # Use internal close to avoid lock conflicts
+                async with self._state_lock:
+                    await self._close_internal()
 
                 # Add small delay to prevent reconnect storm
                 await asyncio.sleep(0.1)
                 await self.connect()
             except Exception as e:
                 LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
+                # Ensure we're in error state if connection failed
+                async with self._state_lock:
+                    self._connection_state = ConnectionState.ERROR
                 raise
             finally:
                 self._is_reconnecting = False
@@ -303,6 +353,9 @@ class WazuhService:
         # Check if error code is in recoverable errors
         if str(error_code) not in RecoverableSocketError.__members__.values():
             LOGGER.error(f"Unrecoverable socket error: {e}")
+            # Set connection state to ERROR for unrecoverable errors
+            async with self._state_lock:
+                self._connection_state = ConnectionState.ERROR
             raise e
 
         if attempt >= max_attempts:
@@ -327,9 +380,10 @@ class WazuhService:
         Returns:
             bool: True if connection is ready, False if should retry
         """
-        if not self._writer and not self._dgram_sock:
+        # Use the new atomic connection state check
+        if not self.is_connected:
             await self._try_reconnect()
-            if not self._writer and not self._dgram_sock:
+            if not self.is_connected:
                 await asyncio.sleep(1)
                 return False
         return True
@@ -364,27 +418,61 @@ class WazuhService:
 
         raise ConnectionError(f"Failed to send event after {max_attempts} attempts")
 
+    async def _close_internal(self) -> None:
+        """Internal close method without state locking."""
+        try:
+            # Only log if we actually have connections to close
+            closing_connections = []
+            if not self._is_dgram and self._writer:
+                closing_connections.append("stream")
+            if self._is_dgram and self._dgram_sock:
+                closing_connections.append("datagram")
+            
+            if closing_connections:
+                LOGGER.debug(f"Closing {', '.join(closing_connections)} connection(s) to Wazuh server")
+            
+            # Close stream connection
+            if not self._is_dgram and self._writer:
+                try:
+                    self._writer.close()
+                    await self._writer.wait_closed()
+                    LOGGER.debug("Closed stream connection to Wazuh server")
+                except Exception as e:
+                    LOGGER.error(f"Error closing Wazuh stream connection: {e}")
+                finally:
+                    self._reader, self._writer = None, None
+
+            # Close datagram connection
+            if self._is_dgram and self._dgram_sock:
+                try:
+                    self._dgram_sock.close()
+                    LOGGER.debug("Closed datagram connection to Wazuh server")
+                except Exception as e:
+                    LOGGER.error(f"Error closing Wazuh datagram connection: {e}")
+                finally:
+                    self._dgram_sock = None
+
+            # Reset connection state
+            self._is_dgram = False
+            self._connection_state = ConnectionState.DISCONNECTED
+            
+            if closing_connections:
+                LOGGER.debug("Connection to Wazuh server closed")
+                
+        except Exception as e:
+            LOGGER.error(f"Error closing connection to Wazuh server: {e}")
+            # Ensure state is reset even if there are errors
+            self._reader = None
+            self._writer = None
+            self._dgram_sock = None
+            self._is_dgram = False
+            self._connection_state = ConnectionState.ERROR
+
     async def close(self) -> None:
         """Close the connection to Wazuh server asynchronously.
 
         Ensures the socket connection is properly closed and resources
         are released. Safe to call multiple times.
         """
-        if not self._is_dgram and self._writer:
-            try:
-                self._writer.close()
-                await self._writer.wait_closed()
-                LOGGER.info("Closed stream connection to Wazuh server")
-            except Exception as e:
-                LOGGER.error(f"Error closing Wazuh stream connection: {e}")
-            finally:
-                self._reader, self._writer = None, None
-
-        if self._is_dgram and self._dgram_sock:
-            try:
-                self._dgram_sock.close()
-                LOGGER.info("Closed datagram connection to Wazuh server")
-            except Exception as e:
-                LOGGER.error(f"Error closing Wazuh datagram connection: {e}")
-            finally:
-                self._dgram_sock = None
+        async with self._state_lock:
+            await self._close_internal()

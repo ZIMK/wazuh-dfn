@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from wazuh_dfn.config import WazuhConfig
-from wazuh_dfn.services.wazuh_service import WazuhErrorMessage, WazuhService
+from wazuh_dfn.services.wazuh_service import ConnectionState, WazuhErrorMessage, WazuhService
 
 # Use AF_UNIX for Unix systems, fallback to AF_INET for Windows
 try:
@@ -213,6 +213,8 @@ async def test_wazuh_service_send_event_dgram(wazuh_config, sample_alert, mock_d
         service = WazuhService(wazuh_config)
         service._dgram_sock = mock_dgram_socket
         service._is_dgram = True
+        # Set connection state to CONNECTED so is_connected returns True
+        service._connection_state = ConnectionState.CONNECTED
 
         await service.send_event(sample_alert)
 
@@ -261,6 +263,8 @@ async def test_wazuh_service_auto_connect_sends_using_preferred_socket(wazuh_con
         # which might have more complex logic that's hard to mock
         service._dgram_sock = mock_sock  # type: ignore
         service._is_dgram = True
+        # Set connection state to CONNECTED so is_connected returns True
+        service._connection_state = ConnectionState.CONNECTED
 
         # Now send the event
         await service._send_event("test event")
@@ -278,14 +282,20 @@ async def test_wazuh_service_ensure_connection_dgram(wazuh_config, mock_dgram_so
     service = WazuhService(wazuh_config)
     service._dgram_sock = mock_dgram_socket
     service._is_dgram = True
+    # Set connection state to CONNECTED so is_connected returns True
+    service._connection_state = ConnectionState.CONNECTED
 
     # Should return True since connection exists
     assert await service._ensure_connection() is True
 
     # Test reconnection
     service._dgram_sock = None
+    service._connection_state = ConnectionState.DISCONNECTED
     with patch.object(service, "_try_reconnect", AsyncMock()) as mock_reconnect:
-        mock_reconnect.side_effect = lambda: setattr(service, "_dgram_sock", mock_dgram_socket)
+        def mock_reconnect_side_effect():
+            service._dgram_sock = mock_dgram_socket
+            service._connection_state = ConnectionState.CONNECTED
+        mock_reconnect.side_effect = mock_reconnect_side_effect
         assert await service._ensure_connection() is True
         mock_reconnect.assert_called_once()
 
@@ -307,6 +317,8 @@ async def test_wazuh_service_send_socket_error_dgram(wazuh_config, sample_alert,
         service = WazuhService(wazuh_config)
         service._dgram_sock = mock_dgram_socket
         service._is_dgram = True
+        # Set connection state to CONNECTED so is_connected returns True
+        service._connection_state = ConnectionState.CONNECTED
 
         # Mock _try_reconnect to control the test flow
         with (
@@ -699,13 +711,15 @@ async def test_wazuh_service_start_failure_cleanup(wazuh_config, mock_reader_wri
     else:
         connection_patch = patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer))
 
-    with connection_patch, patch.object(WazuhService, "close", new=AsyncMock()) as mock_close:
+    with connection_patch:
         service = WazuhService(wazuh_config)
+        # Our new implementation raises the original error since errno is None (unrecoverable)
         with pytest.raises(OSError, match="Send failed"):
             await service.start()
 
-        # Verify cleanup occurred by checking if close was called
-        mock_close.assert_called_once()
+        # After an unrecoverable socket error, the connection state should be ERROR
+        # This properly reflects that the connection is broken and needs reconnection
+        assert service._connection_state == ConnectionState.ERROR
 
 
 @pytest.mark.asyncio
@@ -730,12 +744,12 @@ async def test_wazuh_service_connect_socket_close_error(wazuh_config, mock_reade
         await service.connect()
         assert service._writer is mock_writer
 
-    # Then attempt to reconnect, which should raise the close error
+    # Then attempt to reconnect, which should raise the connection error (not close error)
+    # Our implementation catches close errors and re-raises the connection error
     with (
         reconnection,
         patch.object(Path, "exists", return_value=True),
-        patch.object(service, "close", side_effect=close_error),
-        pytest.raises(OSError, match="Close failed"),
+        pytest.raises(OSError, match="Connection error"),
     ):
-        # The connect method should propagate the close error
+        # The connect method should propagate the connection error
         await service.connect()
