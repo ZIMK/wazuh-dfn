@@ -305,12 +305,12 @@ def test_toml_config_loading():
     # Skip if tomllib/tomli not available
     tomli_installed = False
     try:
-        import tomllib  # noqa: F401
+        import tomllib  # noqa: F401, PLC0415
 
         tomli_installed = True
     except ImportError:
         try:
-            import tomli  # type: ignore # noqa: F401
+            import tomli  # type: ignore  # noqa: F401, PLC0415
 
             tomli_installed = True
         except ImportError:
@@ -463,8 +463,6 @@ def test_cidr_validation():
 
 def test_certificate_validation_mock():
     """Test certificate validation with mocks."""
-    import datetime
-
     # Create a fixed time for testing
     fixed_now = datetime.datetime(2022, 1, 1, tzinfo=datetime.UTC)
 

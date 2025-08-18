@@ -179,8 +179,6 @@ async def test_process_integration_files(alerts_service, caplog) -> None:  # noq
             event_id = "1102"  # Just use a valid ID
 
             # Create simplified Windows event XML
-            import xml.etree.ElementTree as ET
-
             win_event_xml = ET.Element("Event")
 
             # Create message data for Kafka

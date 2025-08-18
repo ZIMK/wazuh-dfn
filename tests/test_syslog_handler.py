@@ -37,7 +37,7 @@ async def test_syslog_handler_process_alert(mock_ipaddress, syslog_handler):
     mock_ip = MagicMock()
     mock_ip.is_global = True
     mock_ip.is_private = False
-    mock_ip.__str__.return_value = "192.168.1.100"
+    mock_ip.__str__ = MagicMock(return_value="192.168.1.100")
     mock_ipaddress.ip_address.return_value = mock_ip
     mock_ipaddress.IPv4Address = type(mock_ip)
 
@@ -129,7 +129,7 @@ async def test_syslog_handler_kafka_error(mock_ipaddress, syslog_handler):
     mock_ip = MagicMock()
     mock_ip.is_global = True
     mock_ip.is_private = False
-    mock_ip.__str__.return_value = "192.168.1.100"
+    mock_ip.__str__ = MagicMock(return_value="192.168.1.100")
     mock_ipaddress.ip_address.return_value = mock_ip
     mock_ipaddress.IPv4Address = type(mock_ip)
 
@@ -168,7 +168,7 @@ async def test_syslog_handler_logging(mock_ipaddress, mock_logger, syslog_handle
     mock_ip = MagicMock()
     mock_ip.is_global = True
     mock_ip.is_private = False
-    mock_ip.__str__.return_value = "192.168.1.100"
+    mock_ip.__str__ = MagicMock(return_value="192.168.1.100")
     mock_ipaddress.ip_address.return_value = mock_ip
     mock_ipaddress.IPv4Address = type(mock_ip)
 
@@ -199,7 +199,7 @@ async def test_syslog_handler_wazuh_integration(mock_ipaddress, syslog_handler):
     mock_ip = MagicMock()
     mock_ip.is_global = True
     mock_ip.is_private = False
-    mock_ip.__str__.return_value = "192.168.1.100"
+    mock_ip.__str__ = MagicMock(return_value="192.168.1.100")
     mock_ipaddress.ip_address.return_value = mock_ip
     mock_ipaddress.IPv4Address = type(mock_ip)
 

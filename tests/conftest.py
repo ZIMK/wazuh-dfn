@@ -11,6 +11,10 @@ import pytest
 import pytest_asyncio
 
 from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from wazuh_dfn.services.alerts_service import AlertsService
+from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
+from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
+from wazuh_dfn.services.kafka_service import KafkaService
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
@@ -209,7 +213,6 @@ async def wazuh_service(sample_config):
 @pytest_asyncio.fixture
 async def kafka_service(sample_config, mock_producer, wazuh_service, shutdown_event):
     """Create a KafkaService instance with mocked dependencies."""
-    from wazuh_dfn.services.kafka_service import KafkaService
 
     service = KafkaService(
         config=sample_config.kafka,
@@ -223,7 +226,6 @@ async def kafka_service(sample_config, mock_producer, wazuh_service, shutdown_ev
 @pytest_asyncio.fixture
 async def alerts_service(sample_config, kafka_service, wazuh_service):
     """Create an AlertsService instance with mocked dependencies."""
-    from wazuh_dfn.services.alerts_service import AlertsService
 
     return AlertsService(sample_config.misc, kafka_service, wazuh_service)
 
@@ -237,7 +239,6 @@ def alert_queue():
 @pytest_asyncio.fixture
 async def alerts_worker_service(sample_config, alert_queue, alerts_service, shutdown_event):
     """Create an AlertsWorkerService instance with mocked dependencies."""
-    from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
 
     return AlertsWorkerService(sample_config.misc, alert_queue, alerts_service, shutdown_event)
 
@@ -245,8 +246,6 @@ async def alerts_worker_service(sample_config, alert_queue, alerts_service, shut
 @pytest_asyncio.fixture
 async def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
     """Create an AlertsWatcherService instance for testing."""
-    from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
-
     # Create the service
     service = AlertsWatcherService(sample_config.wazuh, alert_queue, shutdown_event)
     yield service

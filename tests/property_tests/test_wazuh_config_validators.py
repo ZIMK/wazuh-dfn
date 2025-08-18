@@ -43,55 +43,53 @@ socket_path_formats = st.one_of(
 )
 
 
-class TestWazuhConfigValidators:
-    """Property-based tests for WazuhConfig validators."""
+@given(valid_hosts, valid_ports)
+def test_validate_socket_path_with_valid_tuple_string(host, port):
+    """Test that valid (host, port) string tuples are parsed correctly."""
+    socket_path = f"({host}, {port})"
+    result = WazuhConfig.validate_socket_path(socket_path)
 
-    @given(valid_hosts, valid_ports)
-    def test_validate_socket_path_with_valid_tuple_string(self, host, port):
-        """Test that valid (host, port) string tuples are parsed correctly."""
-        socket_path = f"({host}, {port})"
-        result = WazuhConfig.validate_socket_path(socket_path)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    # The validate_socket_path method strips whitespace and quotes from host values
+    # Account for the fact that all special characters and whitespace are stripped
+    # from the host value during validation
+    expected_host = host.strip().strip("'\"")
+    assert result[0] == expected_host.strip()
+    assert result[1] == port
 
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        # The validate_socket_path method strips whitespace and quotes from host values
-        # Account for the fact that all special characters and whitespace are stripped
-        # from the host value during validation
-        expected_host = host.strip().strip("'\"")
-        assert result[0] == expected_host.strip()
-        assert result[1] == port
 
-    @given(st.text(min_size=1))
-    def test_validate_socket_path_with_plain_string(self, path):
-        """Test that plain strings without tuple syntax are returned unchanged."""
-        # Skip strings that look like tuples
-        if path.startswith("(") and path.endswith(")") and "," in path:
-            return
+@given(st.text(min_size=1).filter(lambda x: x != "()"))  # Exclude empty tuple strings
+def test_validate_socket_path_with_plain_string(path):
+    """Test that plain strings without tuple syntax are returned unchanged."""
+    # Skip strings that look like tuples with comma
+    if path.startswith("(") and path.endswith(")") and "," in path:
+        return
 
-        result = WazuhConfig.validate_socket_path(path)
-        assert result == path
+    result = WazuhConfig.validate_socket_path(path)
+    assert result == path
 
-    @given(st.builds(lambda host, port: f"({host} {port})", host=valid_hosts, port=valid_ports))  # Missing comma
-    def test_validate_socket_path_with_invalid_format(self, socket_path):
-        """Test that invalid tuple formats raise appropriate errors."""
-        try:
-            WazuhConfig.validate_socket_path(socket_path)
-            # If we get here without an error, the string wasn't actually recognized as a tuple
-            assert not (socket_path.startswith("(") and socket_path.endswith(")") and "," in socket_path)
-        except ValueError as e:
-            # Validation should have failed
-            assert "Invalid host/port format" in str(e)
 
-    @given(
-        st.builds(
-            lambda host, port: f"({host}, {port})",
-            host=valid_hosts,
-            port=st.text(
-                min_size=1, alphabet=st.characters(whitelist_categories=("Ll", "Lu"))
-            ),  # Letters only, no digits
-        )
+@given(st.builds(lambda host, port: f"({host} {port})", host=valid_hosts, port=valid_ports))  # Missing comma
+def test_validate_socket_path_with_invalid_format(socket_path):
+    """Test that invalid tuple formats raise appropriate errors."""
+    try:
+        WazuhConfig.validate_socket_path(socket_path)
+        # If we get here without an error, the string wasn't actually recognized as a tuple
+        assert not (socket_path.startswith("(") and socket_path.endswith(")") and "," in socket_path)
+    except ValueError as e:
+        # Validation should have failed
+        assert "Invalid host/port format" in str(e)
+
+
+@given(
+    st.builds(
+        lambda host, port: f"({host}, {port})",
+        host=valid_hosts,
+        port=st.text(min_size=1, alphabet=st.characters(whitelist_categories=("Ll", "Lu"))),  # Letters only, no digits
     )
-    def test_validate_socket_path_with_non_numeric_port(self, socket_path):
-        """Test that non-numeric ports in tuple format raise appropriate errors."""
-        with pytest.raises(ValueError):
-            WazuhConfig.validate_socket_path(socket_path)
+)
+def test_validate_socket_path_with_non_numeric_port(socket_path):
+    """Test that non-numeric ports in tuple format raise appropriate errors."""
+    with pytest.raises(ValueError):
+        WazuhConfig.validate_socket_path(socket_path)

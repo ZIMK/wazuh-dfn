@@ -1,12 +1,14 @@
 """Test module for main functionality."""
 
 import asyncio
+import json
 import logging
+import runpy
 from contextlib import suppress
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from wazuh_dfn.main import load_config, main, parse_args, setup_directories, setup_logging, setup_service
 
@@ -192,7 +194,6 @@ def test_main_config_validation_error(sample_config_path):
     """Test main function with config validation error."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path]), patch("wazuh_dfn.main.load_config") as mock_load:
         try:
-            from pydantic import BaseModel, Field
 
             class TestModel(BaseModel):
                 field: str = Field(min_length=10)
@@ -208,8 +209,6 @@ def test_main_config_validation_error(sample_config_path):
 
 def test_env_var_loading(sample_config_path, monkeypatch):
     """Test loading configuration with complex environment variables."""
-    import json
-
     # Use the correct environment variable names from config.py
     env_vars = {
         "DFN_BROKER_ADDRESS": "env-test-broker:9092",  # Won't override config file
@@ -537,7 +536,6 @@ def test_parse_args_cli_values():
 def test_main_execution(mocker):
     """Test main execution."""
     main_mock = mocker.patch("wazuh_dfn.main.main")
-    import runpy
 
     runpy.run_module("wazuh_dfn.__main__", run_name="__main__")
     main_mock.assert_called_once()

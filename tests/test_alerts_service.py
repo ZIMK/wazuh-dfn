@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.alerts_service import AlertsService
 
 
@@ -34,8 +35,6 @@ async def test_alerts_service_config_validation(sample_config, kafka_service, wa
     """Test AlertsService configuration validation."""
     # Update to use Pydantic's ValidationError
     with pytest.raises(ValidationError):
-        from wazuh_dfn.config import MiscConfig
-
         # Invalid number of workers should trigger ValidationError
         invalid_config = MiscConfig(num_workers=-1)
         AlertsService(invalid_config, kafka_service, wazuh_service)
