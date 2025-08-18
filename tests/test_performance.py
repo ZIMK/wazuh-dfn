@@ -464,6 +464,7 @@ async def test_mixed_alerts_performance(caplog):  # noqa: PLR0912 NOSONAR
             wazuh_service = MagicMock(spec=WazuhService)
             wazuh_service.send_event = AsyncMock(return_value=True)
             wazuh_service.send_error = AsyncMock(return_value=True)
+            wazuh_service.is_connected = True  # Mock connected state for performance testing
 
             windows_handler = WindowsHandler(kafka_service, wazuh_service)
             syslog_handler = SyslogHandler(MiscConfig(), kafka_service, wazuh_service)
@@ -490,7 +491,7 @@ async def test_mixed_alerts_performance(caplog):  # noqa: PLR0912 NOSONAR
             config.json_alert_file = str(alert_file)
 
             watcher_shutdown = asyncio.Event()
-            watcher = AlertsWatcherService(config, alert_queue, watcher_shutdown)
+            watcher = AlertsWatcherService(config, alert_queue, wazuh_service, watcher_shutdown)
             watcher_task = asyncio.create_task(watcher.start())
 
             LOGGER.info("Starting alert processing")

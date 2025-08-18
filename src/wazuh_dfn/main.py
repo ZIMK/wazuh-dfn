@@ -366,6 +366,7 @@ async def setup_service(config: Config) -> None:
         alerts_watcher_service = AlertsWatcherService(
             config=config.wazuh,
             alert_queue=alert_queue,
+            wazuh_service=wazuh_service,
             shutdown_event=shutdown_event,
         )
 

@@ -244,10 +244,10 @@ async def alerts_worker_service(sample_config, alert_queue, alerts_service, shut
 
 
 @pytest_asyncio.fixture
-async def alerts_watcher_service(sample_config, alert_queue, shutdown_event):
+async def alerts_watcher_service(sample_config, alert_queue, wazuh_service, shutdown_event):
     """Create an AlertsWatcherService instance for testing."""
     # Create the service
-    service = AlertsWatcherService(sample_config.wazuh, alert_queue, shutdown_event)
+    service = AlertsWatcherService(sample_config.wazuh, alert_queue, wazuh_service, shutdown_event)
     yield service
 
     # Cleanup

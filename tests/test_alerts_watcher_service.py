@@ -14,7 +14,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import aiofiles
 import pytest
@@ -24,9 +24,19 @@ from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.services.wazuh_service import WazuhService
 
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def mock_wazuh_service():
+    """Create a mock WazuhService for testing."""
+    mock_service = Mock(spec=WazuhService)
+    # Default to connected state for most tests
+    mock_service.is_connected = True
+    return mock_service
 
 
 async def async_write_text(file_path: str | Path, content: str) -> None:
@@ -86,7 +96,7 @@ async def safe_cleanup(reader: FileMonitor | None, file_path: str | Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_alerts_watcher_service_init():
+async def test_alerts_watcher_service_init(mock_wazuh_service):
     """Test AlertsWatcherService initialization."""
     config = WazuhConfig()
     config.json_alert_file = "/test/path/alerts.json"
@@ -97,7 +107,7 @@ async def test_alerts_watcher_service_init():
     alert_queue = AsyncMaxSizeQueue()
     shutdown_event = asyncio.Event()
 
-    observer = AlertsWatcherService(config, alert_queue, shutdown_event)
+    observer = AlertsWatcherService(config, alert_queue, mock_wazuh_service, shutdown_event)
 
     assert observer.file_path == "/test/path/alerts.json"
     assert observer.config.json_alert_file_poll_interval == pytest.approx(1.0)
@@ -180,7 +190,7 @@ async def test_file_monitor_inode_change(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_alerts_watcher_service_start_stop():
+async def test_alerts_watcher_service_start_stop(mock_wazuh_service):
     """Test AlertsWatcherService start and stop."""
     config = WazuhConfig()
     temp_path = create_temp_file()
@@ -191,7 +201,7 @@ async def test_alerts_watcher_service_start_stop():
     shutdown_event = asyncio.Event()
 
     # Create the service
-    service = AlertsWatcherService(config, alert_queue, shutdown_event)
+    service = AlertsWatcherService(config, alert_queue, mock_wazuh_service, shutdown_event)
 
     try:
         # Start the service
@@ -226,12 +236,77 @@ async def test_alerts_watcher_service_start_stop():
 
 
 @pytest.mark.asyncio
-async def test_alerts_watcher_service_config_validation():
+async def test_alerts_watcher_service_config_validation(mock_wazuh_service):
     """Test AlertsWatcherService configuration validation."""
     # Use Pydantic's ValidationError instead of ConfigValidationError
     with pytest.raises(ValidationError):
         invalid_config = WazuhConfig(json_alert_file="")  # Invalid empty path
-        AlertsWatcherService(invalid_config, AsyncMaxSizeQueue(), asyncio.Event())
+        AlertsWatcherService(invalid_config, AsyncMaxSizeQueue(), mock_wazuh_service, asyncio.Event())
+
+
+@pytest.mark.asyncio
+async def test_alerts_watcher_service_back_pressure(mock_wazuh_service):
+    """Test AlertsWatcherService back-pressure mechanism when Wazuh is disconnected."""
+    config = WazuhConfig()
+    temp_path = create_temp_file()
+    config.json_alert_file = temp_path
+    config.json_alert_file_poll_interval = 0.1  # Fast polling for test
+
+    alert_queue = AsyncMaxSizeQueue()
+    shutdown_event = asyncio.Event()
+
+    # Start with Wazuh disconnected to trigger back-pressure
+    mock_wazuh_service.is_connected = False
+
+    service = AlertsWatcherService(config, alert_queue, mock_wazuh_service, shutdown_event)
+
+    try:
+        # Start the service with Wazuh disconnected
+        task = asyncio.create_task(service.start())
+
+        # Write some alerts to the file while disconnected
+        alert_data = {"timestamp": "2023-01-01T00:00:00.000Z", "rule": {"level": 5}}
+        await async_write_text(temp_path, json.dumps(alert_data) + "\n")
+
+        # Let it run briefly - it should NOT process files due to back-pressure
+        await asyncio.sleep(0.3)
+
+        # Queue should be empty because back-pressure is active
+        assert alert_queue.qsize() == 0
+        assert service._back_pressure_active is True
+        assert service._skipped_checks > 0
+
+        # Now simulate Wazuh connection restored
+        mock_wazuh_service.is_connected = True
+
+        # Write another alert after connection is restored
+        alert_data2 = {"timestamp": "2023-01-01T00:00:01.000Z", "rule": {"level": 6}}
+        await async_write_text(temp_path, json.dumps(alert_data) + "\n" + json.dumps(alert_data2) + "\n")
+
+        # Wait for the service to detect reconnection and process the file
+        # Give it multiple poll intervals to ensure processing happens
+        max_wait_time = 1.0  # Maximum wait time
+        start_time = asyncio.get_event_loop().time()
+        
+        while asyncio.get_event_loop().time() - start_time < max_wait_time:
+            await asyncio.sleep(0.1)  # Check every 100ms
+            if alert_queue.qsize() > 0 and not service._back_pressure_active:
+                break
+
+        # Back-pressure should be deactivated and alerts processed
+        assert service._back_pressure_active is False
+        assert alert_queue.qsize() >= 1  # At least one alert should be processed
+
+        # Signal shutdown
+        shutdown_event.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    except TimeoutError:
+        LOGGER.error("Service task did not complete in time")
+
+    finally:
+        if Path(config.json_alert_file).exists() and service.file_monitor:
+            await safe_cleanup(service.file_monitor, config.json_alert_file)
 
 
 @pytest.mark.asyncio
