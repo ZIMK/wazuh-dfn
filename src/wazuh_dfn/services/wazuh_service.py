@@ -108,17 +108,24 @@ class WazuhService:
         try:
             LOGGER.info("Starting Wazuh service...")
             await self.connect()
-
-            # Verify connection by sending a test message
-            test_msg = {
-                "integration": f"{self.config.integration_name}",
-                "description": "Wazuh service started at {}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
-            }
-            await self._send_event(f"1:{self.config.integration_name}:{json.dumps(test_msg)}")
+            await self._validate_connection("startup")
             LOGGER.info("Successfully started Wazuh service and verified connection")
         except Exception as e:
             LOGGER.error(f"Failed to start Wazuh service: {e}")
             raise
+
+    async def _validate_connection(self, context: str = "validation") -> None:
+        """Validate connection by sending a test message.
+
+        Args:
+            context: Context for the validation (e.g., "startup", "reconnect")
+        """
+        test_msg = {
+            "integration": f"{self.config.integration_name}",
+            "description": f"Wazuh service {context} at {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        }
+        await self._send_event(f"1:{self.config.integration_name}:{json.dumps(test_msg)}")
+        LOGGER.debug(f"Connection validation successful ({context})")
 
     async def connect(self) -> None:
         """Establish socket connection to Wazuh server asynchronously.
@@ -134,7 +141,7 @@ class WazuhService:
             try:
                 # Set connecting state
                 self._connection_state = ConnectionState.CONNECTING
-                
+
                 # Close any existing connection without additional locking
                 await self._close_internal()
 
@@ -163,8 +170,7 @@ class WazuhService:
                     try:
                         socket_stat = socket_path.stat()
                         LOGGER.debug(
-                            f"Socket file details - mode: {oct(socket_stat.st_mode)}, "
-                            f"size: {socket_stat.st_size}"
+                            f"Socket file details - mode: {oct(socket_stat.st_mode)}, " f"size: {socket_stat.st_size}"
                         )
                     except Exception as stat_error:
                         LOGGER.warning(f"Could not get socket file details: {stat_error}")
@@ -229,12 +235,34 @@ class WazuhService:
         agent_id = alert.get("agent", {}).get("id", None)
         agent_name = alert.get("agent", {}).get("name", None)
         agent_ip = alert.get("agent", {}).get("ip", "any")
+        connection_failures = 0  # Track consecutive connection failures
 
         while retry_count < self.config.max_retries:
             try:
                 # Use the new atomic connection state check
                 if not self.is_connected:
-                    await self.connect()
+                    # Limit consecutive connection attempts to prevent infinite loops
+                    if connection_failures >= self.config.max_connection_failures_per_event:
+                        LOGGER.error(
+                            f"Too many consecutive connection failures ({connection_failures}). "
+                            f"Skipping event. Alert ID: {alert_id}, Agent ID: {agent_id}"
+                        )
+                        break
+
+                    try:
+                        await self._try_reconnect()
+                        connection_failures = 0  # Reset on successful connection
+                    except Exception as reconnect_error:
+                        connection_failures += 1
+                        LOGGER.warning(
+                            f"Reconnection failed during send_event "
+                            f"(failure {connection_failures}/"
+                            f"{self.config.max_connection_failures_per_event}): {reconnect_error}"
+                        )
+                        # Add exponential backoff for connection failures
+                        await asyncio.sleep(self.config.connection_failure_backoff_base * (2**connection_failures))
+                        retry_count += 1
+                        continue
 
                 msg: WazuhEventMessage = {
                     "integration": self.config.integration_name,
@@ -251,9 +279,18 @@ class WazuhService:
                 await self._send(msg=msg, agent_id=agent_id, agent_name=agent_name, agent_ip=agent_ip)
                 break  # If successful, exit the retry loop
             except Exception as e:
+                # Check if this is an unrecoverable error marked by _handle_socket_error
+                if hasattr(e, "unrecoverable") and getattr(e, "unrecoverable", False):
+                    LOGGER.error(
+                        f"Unrecoverable socket error while sending event. "
+                        f"Alert ID: {alert_id}, Agent ID: {agent_id}. Error: {e}"
+                    )
+                    # Don't retry unrecoverable errors
+                    break
+
                 retry_count += 1
                 if retry_count < self.config.max_retries:
-                    wait_time = min(self.config.retry_interval * (2**retry_count), 30)
+                    wait_time = min(self.config.retry_interval * (2**retry_count), self.config.max_retry_wait_time)
                     LOGGER.warning(
                         f"Failed to send event to Wazuh (attempt {retry_count}/{self.config.max_retries}). "
                         f"Alert ID: {alert_id}, Agent ID: {agent_id}. "
@@ -266,14 +303,77 @@ class WazuhService:
                         f"Alert ID: {alert_id}, Agent ID: {agent_id}. Error: {e}"
                     )
 
+    async def _wait_for_connecting_state(self) -> bool:
+        """Wait for another connection attempt to complete. Returns True if connection succeeded."""
+        max_wait_attempts = self.config.max_connection_wait_attempts
+        wait_attempts = 0
+        while self._connection_state == ConnectionState.CONNECTING and wait_attempts < max_wait_attempts:
+            await asyncio.sleep(self.config.connection_wait_sleep_interval)
+            wait_attempts += 1
+
+        # If still connecting after timeout, something may be wrong
+        if self._connection_state == ConnectionState.CONNECTING:
+            LOGGER.warning("Connection attempt timed out while waiting for another task")
+            return False
+
+        # Return True only if we successfully connected
+        return self._connection_state == ConnectionState.CONNECTED
+
+    async def _perform_connection_setup(self) -> None:
+        """Perform the actual connection setup based on platform."""
+        if sys.platform == "win32":
+            await self._setup_windows_connection()
+        else:
+            await self._setup_unix_connection()
+
+    async def _setup_windows_connection(self) -> None:
+        """Setup TCP connection for Windows platform."""
+        if isinstance(self.config.unix_socket_path, tuple):
+            host, port = self.config.unix_socket_path
+        else:
+            host, port_str = self.config.unix_socket_path.split(":")
+            port = int(port_str)
+
+        LOGGER.info(f"Reconnecting to Wazuh server via TCP socket - host: {host}, port: {port}")
+        self._reader, self._writer = await asyncio.open_connection(host, port)
+        self._is_dgram = False
+
+    async def _setup_unix_connection(self) -> None:
+        """Setup Unix socket connection, trying datagram first, then stream."""
+        if isinstance(self.config.unix_socket_path, tuple):
+            # Unix socket path should be a string, not a tuple
+            raise ValueError("Unix socket path should be a string for Unix systems")
+
+        socket_path = Path(self.config.unix_socket_path)
+        LOGGER.info(f"Reconnecting to Wazuh server via Unix socket - path: {socket_path}")
+
+        try:
+            self._is_dgram = True
+            self._dgram_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)  # type: ignore[attr-defined]
+            self._dgram_sock.setblocking(False)
+            self._dgram_sock.connect(str(socket_path))
+            LOGGER.info("Reconnected to Wazuh server using datagram socket")
+        except OSError:
+            self._is_dgram = False
+            if self._dgram_sock:
+                self._dgram_sock.close()
+                self._dgram_sock = None
+
+            self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))  # type: ignore[attr-defined]
+            LOGGER.info("Reconnected to Wazuh server using stream socket")
+
     async def _try_reconnect(self) -> None:
         """Attempt to reestablish connection to Wazuh server asynchronously."""
+        # Check if we're in a valid state to reconnect BEFORE acquiring the lock
+        if self._connection_state == ConnectionState.CONNECTING:
+            # Another task is already connecting, wait with timeout
+            await self._wait_for_connecting_state()
+            return
+
         async with self._lock:
-            # Check if we're in a valid state to reconnect
+            # Double-check state after acquiring lock
             if self._connection_state == ConnectionState.CONNECTING:
-                # Another task is already connecting, just wait
-                while self._connection_state == ConnectionState.CONNECTING:
-                    await asyncio.sleep(0.1)
+                # Another task started connecting while we were waiting for the lock
                 return
 
             if self._is_reconnecting:
@@ -286,18 +386,25 @@ class WazuhService:
 
             self._is_reconnecting = True
             try:
-                # Use internal close to avoid lock conflicts
-                async with self._state_lock:
-                    await self._close_internal()
+                # Set connecting state
+                self._connection_state = ConnectionState.CONNECTING
 
-                # Add small delay to prevent reconnect storm
-                await asyncio.sleep(0.1)
-                await self.connect()
+                # Close any existing connection without additional locking
+                await self._close_internal()
+
+                # Perform the actual connection setup
+                await self._perform_connection_setup()
+
+                # Set connected state
+                self._connection_state = ConnectionState.CONNECTED
+
+                # Validate the reconnection by sending a test message
+                await self._validate_connection("reconnect")
+                LOGGER.info("Successfully reconnected to Wazuh and verified connection")
             except Exception as e:
                 LOGGER.error(f"Failed to reconnect to Wazuh socket: {e}")
                 # Ensure we're in error state if connection failed
-                async with self._state_lock:
-                    self._connection_state = ConnectionState.ERROR
+                self._connection_state = ConnectionState.ERROR
                 raise
             finally:
                 self._is_reconnecting = False
@@ -350,12 +457,14 @@ class WazuhService:
         error_code = getattr(e, "errno", None)
         LOGGER.warning(f"Socket error (attempt {attempt + 1}/{max_attempts}): {e} (errno: {error_code})")
 
-        # Check if error code is in recoverable errors
-        if str(error_code) not in RecoverableSocketError.__members__.values():
-            LOGGER.error(f"Unrecoverable socket error: {e}")
-            # Set connection state to ERROR for unrecoverable errors
+        # Check if error code is in recoverable errors (only if errno is available)
+        # Generic errors without errno (like "Connection lost") are treated as recoverable
+        if error_code is not None and str(error_code) not in RecoverableSocketError.__members__.values():
+            # Mark as unrecoverable error but don't log here - let the caller handle it with context
             async with self._state_lock:
                 self._connection_state = ConnectionState.ERROR
+            # Add a marker to the exception so the caller knows it's unrecoverable
+            e.unrecoverable = True  # type: ignore[attr-defined]
             raise e
 
         if attempt >= max_attempts:
@@ -364,7 +473,7 @@ class WazuhService:
                 sys.exit(6)
             return False
 
-        wait_time = min(self.config.retry_interval * (2**attempt), 30)
+        wait_time = min(self.config.retry_interval * (2**attempt), self.config.max_retry_wait_time)
         LOGGER.info(f"Waiting {wait_time} seconds before retry...")
         await asyncio.sleep(wait_time)
 
@@ -427,10 +536,10 @@ class WazuhService:
                 closing_connections.append("stream")
             if self._is_dgram and self._dgram_sock:
                 closing_connections.append("datagram")
-            
+
             if closing_connections:
                 LOGGER.debug(f"Closing {', '.join(closing_connections)} connection(s) to Wazuh server")
-            
+
             # Close stream connection
             if not self._is_dgram and self._writer:
                 try:
@@ -455,10 +564,10 @@ class WazuhService:
             # Reset connection state
             self._is_dgram = False
             self._connection_state = ConnectionState.DISCONNECTED
-            
+
             if closing_connections:
                 LOGGER.debug("Connection to Wazuh server closed")
-                
+
         except Exception as e:
             LOGGER.error(f"Error closing connection to Wazuh server: {e}")
             # Ensure state is reset even if there are errors

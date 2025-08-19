@@ -5,7 +5,7 @@
 groups = ["default", "lint", "test", "types"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:f3569e4016daad626c80d4e0863f88d175b6d3d980bc115d4cda8f0e1552418d"
+content_hash = "sha256:a9df6abb49f948449ce7107dabf5b0da6b54a5211e694a9ebb8e7fbca19e663b"
 
 [[metadata.targets]]
 requires_python = ">=3.12"
@@ -634,6 +634,20 @@ dependencies = [
 files = [
     {file = "pytest-sugar-1.1.0.tar.gz", hash = "sha256:53138645cabc311a677bb09c307eab41681a563e498318cd2a0d7cd184837af4"},
     {file = "pytest_sugar-1.1.0-py3-none-any.whl", hash = "sha256:c853866512288f1b679efc10c565303de4617854287e977781f07904f4560668"},
+]
+
+[[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+requires_python = ">=3.7"
+summary = "pytest plugin to abort hanging tests"
+groups = ["test"]
+dependencies = [
+    "pytest>=7.0.0",
+]
+files = [
+    {file = "pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2"},
+    {file = "pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a"},
 ]
 
 [[package]]

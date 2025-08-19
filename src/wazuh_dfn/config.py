@@ -1,7 +1,10 @@
 """Configuration module for Wazuh DFN service."""
 
 import argparse
+import ipaddress
+import json
 import logging
+import os
 import tomllib
 from datetime import UTC, datetime
 from enum import Enum
@@ -94,6 +97,51 @@ class WazuhConfig(BaseModel):
         json_schema_extra={
             "env_var": "WAZUH_RETRY_INTERVAL",
             "cli": "--wazuh-retry-interval",
+        },
+        gt=0,
+    )
+    max_connection_failures_per_event: int = Field(
+        default=10,
+        description="Maximum consecutive connection failures per event before dropping it (was hardcoded at 3)",
+        json_schema_extra={
+            "env_var": "WAZUH_MAX_CONNECTION_FAILURES_PER_EVENT",
+            "cli": "--wazuh-max-connection-failures-per-event",
+        },
+        gt=0,
+    )
+    connection_failure_backoff_base: float = Field(
+        default=0.1,
+        description="Base sleep time for connection failure exponential backoff (seconds)",
+        json_schema_extra={
+            "env_var": "WAZUH_CONNECTION_FAILURE_BACKOFF_BASE",
+            "cli": "--wazuh-connection-failure-backoff-base",
+        },
+        gt=0,
+    )
+    max_retry_wait_time: int = Field(
+        default=30,
+        description="Maximum wait time cap for exponential backoff (seconds)",
+        json_schema_extra={
+            "env_var": "WAZUH_MAX_RETRY_WAIT_TIME",
+            "cli": "--wazuh-max-retry-wait-time",
+        },
+        gt=0,
+    )
+    max_connection_wait_attempts: int = Field(
+        default=50,
+        description="Maximum attempts to wait for connection state changes (default 50 = 5 seconds at 0.1s intervals)",
+        json_schema_extra={
+            "env_var": "WAZUH_MAX_CONNECTION_WAIT_ATTEMPTS",
+            "cli": "--wazuh-max-connection-wait-attempts",
+        },
+        gt=0,
+    )
+    connection_wait_sleep_interval: float = Field(
+        default=0.1,
+        description="Sleep interval when waiting for connection state changes (seconds)",
+        json_schema_extra={
+            "env_var": "WAZUH_CONNECTION_WAIT_SLEEP_INTERVAL",
+            "cli": "--wazuh-connection-wait-sleep-interval",
         },
         gt=0,
     )
@@ -716,8 +764,6 @@ class MiscConfig(BaseModel):
             raise ValueError(f"Invalid CIDR format: {v}")
 
         try:
-            import ipaddress
-
             ipaddress.ip_network(v, strict=True)
         except ValueError as e:
             raise ValueError(f"Invalid CIDR notation: {e!s}")
@@ -860,9 +906,6 @@ class Config(BaseModel):
     @staticmethod
     def _load_from_env(config: "Config") -> None:
         """Load configuration from environment variables."""
-        import json  # Import json for parsing JSON strings in env vars
-        import os  # Import os only for environment variables access
-
         # Collect updates from environment variables
         env_updates = {}
 

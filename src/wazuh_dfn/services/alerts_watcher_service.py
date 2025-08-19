@@ -39,7 +39,7 @@ class AlertsWatcherService:
         self.file_path = config.json_alert_file
         self.latest_queue_put: datetime | None = None
         self.file_monitor: FileMonitor | None = None
-        
+
         # Back-pressure statistics
         self._back_pressure_active = False
         self._skipped_checks = 0
@@ -65,7 +65,7 @@ class AlertsWatcherService:
                 try:
                     # Check Wazuh connection status for back-pressure mechanism
                     is_connected = self.wazuh_service.is_connected
-                    
+
                     if not is_connected:
                         # Wazuh is disconnected - activate back-pressure
                         if not self._back_pressure_active:
@@ -74,9 +74,9 @@ class AlertsWatcherService:
                                 "pausing file monitoring to prevent queue overflow."
                             )
                             self._back_pressure_active = True
-                        
+
                         self._skipped_checks += 1
-                        
+
                         # Log status every 10 skipped checks (roughly every 10 seconds with default poll interval)
                         if self._skipped_checks % 10 == 0:
                             LOGGER.info(
@@ -92,12 +92,12 @@ class AlertsWatcherService:
                             )
                             self._back_pressure_active = False
                             self._skipped_checks = 0
-                        
+
                         # Normal file monitoring when connected
                         await self.file_monitor.check_file()
                         # Update latest queue put time from monitor
                         self.latest_queue_put = self.file_monitor.latest_queue_put
-                        
+
                 except Exception as e:
                     LOGGER.error(f"Error during file check: {e!s}")
                     # Continue the loop instead of breaking on transient errors

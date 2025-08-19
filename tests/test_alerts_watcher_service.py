@@ -287,7 +287,7 @@ async def test_alerts_watcher_service_back_pressure(mock_wazuh_service):
         # Give it multiple poll intervals to ensure processing happens
         max_wait_time = 1.0  # Maximum wait time
         start_time = asyncio.get_event_loop().time()
-        
+
         while asyncio.get_event_loop().time() - start_time < max_wait_time:
             await asyncio.sleep(0.1)  # Check every 100ms
             if alert_queue.qsize() > 0 and not service._back_pressure_active:
@@ -1156,7 +1156,7 @@ async def test_file_monitor_position_reversion():
 @pytest.mark.asyncio
 async def test_alerts_watcher_service_file_position_tracking_during_back_pressure(mock_wazuh_service):
     """Test that file position tracking works correctly during back-pressure activation/deactivation.
-    
+
     This test verifies:
     1. File monitoring pauses when Wazuh is disconnected (back-pressure)
     2. File position is maintained during the pause
@@ -1186,46 +1186,46 @@ async def test_alerts_watcher_service_file_position_tracking_during_back_pressur
             {"timestamp": "2023-01-01T00:00:00.000Z", "rule": {"level": 1}, "id": "alert_1"},
             {"timestamp": "2023-01-01T00:00:01.000Z", "rule": {"level": 2}, "id": "alert_2"},
         ]
-        
+
         alert_content = ""
         for alert in initial_alerts:
             alert_content += json.dumps(alert) + "\n"
-        
+
         await async_write_text(temp_path, alert_content)
-        
+
         # Wait for alerts to be processed
         await asyncio.sleep(0.3)
         initial_queue_size = alert_queue.qsize()
         assert initial_queue_size >= 2, f"Expected at least 2 alerts, got {initial_queue_size}"
-        
+
         # Get file position after processing initial alerts
         await asyncio.sleep(0.1)  # Ensure FileMonitor has updated position
         assert service.file_monitor is not None, "FileMonitor should be initialized"
         position_before_outage = service.file_monitor.last_complete_position
         LOGGER.info(f"File position before outage: {position_before_outage}")
-        
+
         # Simulate Wazuh disconnection to trigger back-pressure
         mock_wazuh_service.is_connected = False
-        
+
         # Wait for back-pressure to activate
         await asyncio.sleep(0.2)
         assert service._back_pressure_active is True, "Back-pressure should be active"
-        
+
         # Write more alerts while disconnected - these should NOT be processed
         outage_alerts = [
             {"timestamp": "2023-01-01T00:00:02.000Z", "rule": {"level": 3}, "id": "alert_3"},
             {"timestamp": "2023-01-01T00:00:03.000Z", "rule": {"level": 4}, "id": "alert_4"},
             {"timestamp": "2023-01-01T00:00:04.000Z", "rule": {"level": 5}, "id": "alert_5"},
         ]
-        
+
         outage_content = ""
         for alert in outage_alerts:
             outage_content += json.dumps(alert) + "\n"
-        
+
         # Append to the file while disconnected
         async with aiofiles.open(temp_path, "a") as f:
             await f.write(outage_content)
-        
+
         # Wait and verify no new alerts are processed during outage
         await asyncio.sleep(0.4)
         queue_size_during_outage = alert_queue.qsize()
@@ -1241,33 +1241,34 @@ async def test_alerts_watcher_service_file_position_tracking_during_back_pressur
             f"File position should not advance during outage. "
             f"Before: {position_before_outage}, During: {position_during_outage}"
         )
-        
+
         # Verify back-pressure statistics
         assert service._skipped_checks > 0, "Should have skipped file checks during outage"
         skipped_checks_count = service._skipped_checks
         LOGGER.info(f"Skipped {skipped_checks_count} file checks during outage")
-        
+
         # Simulate Wazuh reconnection
         mock_wazuh_service.is_connected = True
-        
+
         # Wait for back-pressure to deactivate and processing to resume
         max_wait_time = 1.0
         start_time = asyncio.get_event_loop().time()
-        
+
         while asyncio.get_event_loop().time() - start_time < max_wait_time:
             await asyncio.sleep(0.1)
             if not service._back_pressure_active and alert_queue.qsize() > queue_size_during_outage:
                 break
-        
+
         # Verify back-pressure is deactivated
         assert service._back_pressure_active is False, "Back-pressure should be deactivated after reconnection"
-        
+
         # Verify all alerts are now processed (including those written during outage)
         final_queue_size = alert_queue.qsize()
         expected_total_alerts = len(initial_alerts) + len(outage_alerts)
-        assert final_queue_size >= expected_total_alerts, \
-            f"Expected at least {expected_total_alerts} alerts, got {final_queue_size}"
-        
+        assert (
+            final_queue_size >= expected_total_alerts
+        ), f"Expected at least {expected_total_alerts} alerts, got {final_queue_size}"
+
         # Verify file position advanced after reconnection
         position_after_reconnection = service.file_monitor.last_complete_position
         LOGGER.info(f"File position after reconnection: {position_after_reconnection}")
@@ -1290,10 +1291,10 @@ async def test_alerts_watcher_service_file_position_tracking_during_back_pressur
         # (allowing for some to be processed multiple times due to test timing)
         for expected_id in expected_ids:
             assert expected_id in processed_ids, f"Alert {expected_id} was not processed"
-        
+
         LOGGER.info(f"Successfully processed alerts with IDs: {processed_ids}")
         LOGGER.info(f"Back-pressure test completed: {skipped_checks_count} checks skipped during outage")
-        
+
         # Signal shutdown
         shutdown_event.set()
         await asyncio.wait_for(task, timeout=2.0)

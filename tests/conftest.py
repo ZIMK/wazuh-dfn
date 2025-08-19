@@ -19,6 +19,12 @@ from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(10))
+
+
 @pytest.fixture(autouse=True)
 def disable_path_validation():
     """Disable path validation for all tests."""
@@ -65,8 +71,13 @@ def sample_config(tmp_path):
             json_alert_prefix="{",
             json_alert_suffix="}",
             json_alert_file_poll_interval=1.0,
-            max_retries=5,
-            retry_interval=5,
+            max_retries=3,  # Reduced from 5 for faster test failures
+            retry_interval=1,  # Reduced from 5 for faster test failures
+            max_connection_failures_per_event=2,  # Reduced from default 10 for faster test failures
+            connection_failure_backoff_base=0.01,  # Reduced from 0.1 for faster test failures
+            max_retry_wait_time=2,  # Reduced from 30 for faster test failures
+            max_connection_wait_attempts=5,  # Reduced from 50 for faster test failures
+            connection_wait_sleep_interval=0.05,  # Reduced from 0.1 for faster test failures
         ),
         kafka=KafkaConfig(
             timeout=60,

@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import json
 import logging
 import secrets
@@ -126,8 +127,6 @@ class FileMonitor:
                     LOGGER.error(f"Error closing underlying file handle: {e!s}")
 
             # Force cleanup
-            import gc
-
             gc.collect()
 
             # Reset to prevent further usage of closed handle
