@@ -154,7 +154,9 @@ class WazuhService:
                         port = int(port_str)
 
                     LOGGER.info(f"Connecting to Wazuh server via TCP socket - host: {host}, port: {port}")
-                    self._reader, self._writer = await asyncio.open_connection(host, port)
+                    self._reader, self._writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port), timeout=self.config.connection_timeout
+                    )
                     self._is_dgram = False
                 else:
                     # For Unix systems
@@ -193,7 +195,9 @@ class WazuhService:
 
                         # Fall back to stream socket
                         try:
-                            self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))
+                            self._reader, self._writer = await asyncio.wait_for(
+                                asyncio.open_unix_connection(str(socket_path)), timeout=self.config.connection_timeout
+                            )
                             LOGGER.info("Connected to Wazuh server using stream socket")
                         except Exception as stream_error:
                             LOGGER.error(f"Failed to connect with stream socket: {stream_error}")
@@ -335,7 +339,9 @@ class WazuhService:
             port = int(port_str)
 
         LOGGER.info(f"Reconnecting to Wazuh server via TCP socket - host: {host}, port: {port}")
-        self._reader, self._writer = await asyncio.open_connection(host, port)
+        self._reader, self._writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=self.config.connection_timeout
+        )
         self._is_dgram = False
 
     async def _setup_unix_connection(self) -> None:
@@ -359,7 +365,9 @@ class WazuhService:
                 self._dgram_sock.close()
                 self._dgram_sock = None
 
-            self._reader, self._writer = await asyncio.open_unix_connection(str(socket_path))  # type: ignore[attr-defined]
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(str(socket_path)), timeout=self.config.connection_timeout  # type: ignore[attr-defined]
+            )
             LOGGER.info("Reconnected to Wazuh server using stream socket")
 
     async def _try_reconnect(self) -> None:
@@ -514,11 +522,13 @@ class WazuhService:
                 if not self._is_dgram:
                     # For stream sockets
                     self._writer.write(event.encode())
-                    await self._writer.drain()
+                    await asyncio.wait_for(self._writer.drain(), timeout=self.config.write_timeout)
                 elif self._dgram_sock:
                     # For datagram sockets, use the event loop to send asynchronously
                     loop = asyncio.get_event_loop()
-                    await loop.sock_sendall(self._dgram_sock, event.encode())
+                    await asyncio.wait_for(
+                        loop.sock_sendall(self._dgram_sock, event.encode()), timeout=self.config.write_timeout
+                    )
                 return
             except Exception as e:
                 if not await self._handle_socket_error(e, attempt, max_attempts):

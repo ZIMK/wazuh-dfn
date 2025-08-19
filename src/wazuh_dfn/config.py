@@ -145,6 +145,33 @@ class WazuhConfig(BaseModel):
         },
         gt=0,
     )
+    connection_timeout: float = Field(
+        default=30.0,
+        description="Socket connection timeout in seconds",
+        json_schema_extra={
+            "env_var": "WAZUH_CONNECTION_TIMEOUT",
+            "cli": "--wazuh-connection-timeout",
+        },
+        gt=0,
+    )
+    read_timeout: float = Field(
+        default=10.0,
+        description="Socket read timeout in seconds",
+        json_schema_extra={
+            "env_var": "WAZUH_READ_TIMEOUT",
+            "cli": "--wazuh-read-timeout",
+        },
+        gt=0,
+    )
+    write_timeout: float = Field(
+        default=10.0,
+        description="Socket write timeout in seconds",
+        json_schema_extra={
+            "env_var": "WAZUH_WRITE_TIMEOUT",
+            "cli": "--wazuh-write-timeout",
+        },
+        gt=0,
+    )
     json_alert_file_poll_interval: float = Field(
         default=1.0,
         description="Interval in seconds between JSON alert file checks",

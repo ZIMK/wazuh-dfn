@@ -83,7 +83,14 @@ logging.getLogger().setLevel(logging.DEBUG)
 log_file = "performance_test.log"
 log_file_path = Path(log_file)
 if log_file_path.exists():
-    log_file_path.unlink()
+    try:
+        log_file_path.unlink()
+    except PermissionError:
+        # File is in use, use a different name
+        import time
+
+        log_file = f"performance_test_{int(time.time())}.log"
+        log_file_path = Path(log_file)
 
 file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.INFO)
@@ -92,7 +99,14 @@ file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelnam
 debug_log_file = "performance_test_debug.log"
 debug_log_file_path = Path(debug_log_file)
 if debug_log_file_path.exists():
-    debug_log_file_path.unlink()
+    try:
+        debug_log_file_path.unlink()
+    except PermissionError:
+        # File is in use, use a different name
+        import time
+
+        debug_log_file = f"performance_test_debug_{int(time.time())}.log"
+        debug_log_file_path = Path(debug_log_file)
 
 debug_file_handler = logging.FileHandler(debug_log_file)
 debug_file_handler.setLevel(logging.DEBUG)

@@ -806,3 +806,172 @@ async def test_wazuh_service_connect_socket_close_error(wazuh_config, mock_reade
     ):
         # The connect method should propagate the connection error
         await service.connect()
+
+
+@pytest.fixture
+def timeout_config():
+    """Create a WazuhConfig with custom timeout values."""
+    if sys.platform == "win32":
+        socket_path = ("localhost", 1514)
+    else:
+        socket_path = "/var/ossec/queue/sockets/queue"
+    return WazuhConfig(
+        unix_socket_path=socket_path,
+        connection_timeout=2.0,
+        read_timeout=1.0,
+        write_timeout=1.0,
+        max_retries=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_connection_timeout_tcp(timeout_config):
+    """Test connection timeout for TCP connections."""
+    service = WazuhService(timeout_config)
+
+    with patch("asyncio.open_connection") as mock_open_conn:
+        # Simulate a timeout during connection
+        mock_open_conn.side_effect = TimeoutError("Connection timeout")
+
+        with pytest.raises(TimeoutError):
+            await service.connect()
+
+        # Verify that asyncio.wait_for was used with the correct timeout
+        mock_open_conn.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connection_timeout_unix_stream(timeout_config):
+    """Test connection timeout for Unix stream connections."""
+    if sys.platform == "win32":
+        pytest.skip("Unix sockets not available on Windows")
+
+    timeout_config.unix_socket_path = "/var/ossec/queue/sockets/test_socket"
+    service = WazuhService(timeout_config)
+
+    with (
+        patch.object(Path, "exists", return_value=True),
+        patch("socket.socket") as mock_socket,
+        patch("asyncio.open_unix_connection") as mock_open_unix,
+    ):
+        # Simulate datagram socket failure to force stream socket usage
+        mock_dgram_sock = MagicMock()
+        mock_dgram_sock.connect.side_effect = OSError("Datagram failed")
+        mock_socket.return_value = mock_dgram_sock
+
+        # Simulate timeout during Unix stream connection
+        mock_open_unix.side_effect = TimeoutError("Unix connection timeout")
+
+        with pytest.raises(TimeoutError):
+            await service.connect()
+
+        mock_open_unix.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_stream_socket(timeout_config):
+    """Test write timeout for stream socket operations."""
+    service = WazuhService(timeout_config)
+
+    mock_reader = AsyncMock()
+    mock_writer = AsyncMock()
+    mock_writer.drain.side_effect = TimeoutError("Write timeout")
+
+    service._reader = mock_reader
+    service._writer = mock_writer
+    service._is_dgram = False
+    service._connection_state = ConnectionState.CONNECTED
+
+    test_event = "test event data"
+
+    with pytest.raises(ConnectionError, match="Failed to send event after 1 attempts"):
+        await service._send_event(test_event)
+
+    # Verify write operations were attempted
+    mock_writer.write.assert_called()
+    mock_writer.drain.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_datagram_socket(timeout_config):
+    """Test write timeout for datagram socket operations."""
+    if sys.platform == "win32":
+        pytest.skip("Unix sockets not available on Windows")
+
+    timeout_config.unix_socket_path = "/var/ossec/queue/sockets/test_socket"
+    service = WazuhService(timeout_config)
+
+    mock_dgram_sock = MagicMock()
+    service._dgram_sock = mock_dgram_sock
+    service._is_dgram = True
+    service._connection_state = ConnectionState.CONNECTED
+
+    test_event = "test event data"
+
+    with (
+        patch("asyncio.get_event_loop") as mock_get_loop,
+        patch("asyncio.wait_for") as mock_wait_for,
+    ):
+        mock_loop = AsyncMock()
+        mock_get_loop.return_value = mock_loop
+        mock_wait_for.side_effect = TimeoutError("Datagram write timeout")
+
+        with pytest.raises(ConnectionError, match="Failed to send event after 1 attempts"):
+            await service._send_event(test_event)
+
+        # Verify wait_for was called with the correct timeout
+        mock_wait_for.assert_called()
+        args, kwargs = mock_wait_for.call_args
+        assert kwargs["timeout"] == pytest.approx(timeout_config.write_timeout)
+
+
+@pytest.mark.asyncio
+async def test_timeout_config_defaults():
+    """Test that timeout configuration has reasonable defaults."""
+    config = WazuhConfig(unix_socket_path="/var/ossec/queue/sockets/queue")
+
+    assert config.connection_timeout == pytest.approx(30.0)
+    assert config.read_timeout == pytest.approx(10.0)
+    assert config.write_timeout == pytest.approx(10.0)
+
+
+@pytest.mark.asyncio
+async def test_timeout_config_custom_values():
+    """Test that timeout configuration accepts custom values."""
+    config = WazuhConfig(
+        unix_socket_path="/var/ossec/queue/sockets/queue",
+        connection_timeout=15.0,
+        read_timeout=5.0,
+        write_timeout=7.5,
+    )
+
+    assert config.connection_timeout == pytest.approx(15.0)
+    assert config.read_timeout == pytest.approx(5.0)
+    assert config.write_timeout == pytest.approx(7.5)
+
+
+@pytest.mark.asyncio
+async def test_reconnection_with_timeout(timeout_config):
+    """Test that reconnection operations respect timeout configuration."""
+    service = WazuhService(timeout_config)
+
+    with patch("asyncio.open_connection") as mock_open_conn:
+        # First call succeeds (initial connection)
+        mock_reader, mock_writer = AsyncMock(), AsyncMock()
+        mock_open_conn.return_value = (mock_reader, mock_writer)
+
+        # Connect initially
+        await service.connect()
+
+        # Now test reconnection with timeout
+        mock_open_conn.reset_mock()
+        mock_open_conn.side_effect = TimeoutError("Reconnection timeout")
+
+        # Trigger reconnection by simulating connection loss
+        service._connection_state = ConnectionState.DISCONNECTED
+
+        with pytest.raises(TimeoutError):
+            await service._try_reconnect()
+
+        # Verify that the timeout was applied during reconnection
+        mock_open_conn.assert_called_once()

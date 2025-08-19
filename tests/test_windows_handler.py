@@ -358,7 +358,7 @@ async def test_windows_handler_event_1100(windows_handler, sample_1100_alert):
 
 
 @pytest.mark.asyncio
-async def test_windows_handler_missing_eventdata(windows_handler, sample_4625_alert):
+async def test_windows_handler_missing_eventdata(windows_handler, sample_4625_alert, caplog):
     """Test WindowsHandler with missing eventdata field."""
     alert = sample_4625_alert.copy()
     alert["id"] = "test-alert-id"  # Add required id field
@@ -369,11 +369,18 @@ async def test_windows_handler_missing_eventdata(windows_handler, sample_4625_al
     windows_handler.wazuh_service.send_event = AsyncMock()
     windows_handler.wazuh_service.send_error = AsyncMock()  # For error handling
 
-    await windows_handler.process_alert(alert)
+    with caplog.at_level(logging.ERROR):
+        await windows_handler.process_alert(alert)
+
+    # Wait a bit for background Wazuh operations to complete (fire-and-forget)
     await asyncio.sleep(0.1)
 
-    # If the handler requires eventdata, check that error was properly handled
-    assert windows_handler.wazuh_service.send_error.called or not windows_handler.kafka_service.send_message.called
+    # The handler should still process the alert and send to both Kafka and Wazuh
+    # but log an error about missing eventdata
+    assert windows_handler.kafka_service.send_message.called
+    assert windows_handler.wazuh_service.send_event.called
+    assert "Incomplete Windows alert. No eventdata found" in caplog.text
+    assert "alert_id: test-alert-id" in caplog.text
 
 
 @pytest.mark.asyncio

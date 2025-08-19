@@ -92,10 +92,24 @@ class WindowsHandler:
         # Create message data for Kafka
         message_data = self._create_message_data(alert, event_id)
 
-        # Use asyncio to send to Kafka
+        # Use asyncio to send to Kafka (fire-and-forget with error handling)
         alert_id = alert.get("id", "Unknown")
-        # Wait for _send_message to complete instead of fire-and-forget
-        await self._send_message(message_data, alert_id)
+        asyncio.create_task(self._send_message_with_error_handling(message_data, alert_id))  # noqa: RUF006
+
+    async def _send_message_with_error_handling(self, message_data: KafkaMessage, alert_id: str) -> None:
+        """Wrapper for _send_message with comprehensive error handling.
+
+        This method provides fire-and-forget functionality while ensuring
+        all errors are properly caught and logged.
+
+        Args:
+            message_data: The formatted message to send to Kafka
+            alert_id: The alert ID for logging and tracking
+        """
+        try:
+            await self._send_message(message_data, alert_id)
+        except Exception as e:
+            LOGGER.error(f"Unhandled error in Windows handler message processing for alert {alert_id}: {e}")
 
     async def _send_message(self, message_data: KafkaMessage, alert_id: str) -> None:
         """Send message to Kafka asynchronously.
@@ -119,7 +133,7 @@ class WindowsHandler:
                 if "systemTime" in alert["data"]["win"]["system"]:
                     win_timestamp = alert["data"]["win"]["system"]["systemTime"]
 
-            # Send to Wazuh with the original format as fire-and-forget
+            # Send to Wazuh (fire-and-forget - informational)
             asyncio.create_task(  # noqa: RUF006
                 self._send_to_wazuh(
                     alert=alert,
@@ -133,8 +147,13 @@ class WindowsHandler:
         else:
             error_msg = f"Failed to send Windows alert to Kafka {alert_id}"
             LOGGER.error(error_msg)
-            # Send error to Wazuh as fire-and-forget
-            asyncio.create_task(self._send_error_to_wazuh(error_msg=error_msg, alert_id=alert_id))  # noqa: RUF006
+            # Send error to Wazuh (fire-and-forget - informational)
+            asyncio.create_task(  # noqa: RUF006
+                self._send_error_to_wazuh(
+                    error_msg=error_msg,
+                    alert_id=alert_id,
+                )
+            )
 
     async def _send_to_wazuh(
         self,
@@ -251,19 +270,16 @@ class WindowsHandler:
             alert_id = alert["id"]
             agent_id = alert["agent"]["id"]
             agent_name = alert["agent"]["name"]
-            LOGGER.error(
+            error_msg = (
                 f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
                 f" agent_id: {agent_id}, agent_name: {agent_name}"
             )
+            LOGGER.error(error_msg)
 
-            # Create a task for the async error sending to avoid blocking
-            # Using fire-and-forget pattern
+            # Send error to Wazuh (fire-and-forget - informational)
             asyncio.create_task(  # noqa: RUF006
                 self._send_error_to_wazuh(
-                    error_msg=(
-                        f"Incomplete Windows alert. No eventdata found. alert_id: {alert_id},"
-                        f" agent_id: {agent_id}, agent_name: {agent_name}"
-                    ),
+                    error_msg=error_msg,
                     alert_id=alert_id,
                 )
             )

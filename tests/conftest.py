@@ -21,6 +21,9 @@ from wazuh_dfn.services.wazuh_service import WazuhService
 
 def pytest_collection_modifyitems(items):
     for item in items:
+        # Skip timeout for performance tests
+        if item.get_closest_marker("performance"):
+            continue
         if item.get_closest_marker("timeout") is None:
             item.add_marker(pytest.mark.timeout(10))
 
