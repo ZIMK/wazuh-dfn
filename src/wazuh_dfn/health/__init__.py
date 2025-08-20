@@ -13,11 +13,20 @@ __author__ = "Sebastian Wolf (https://github.com/ZIMK/wazuh-dfn)"
 __maintainer__ = "Sebastian Wolf"
 
 # Import main health components for easy access
-from .api_server import (
-    APIConfiguration,
-    HealthAPIServer,
-    create_health_api_server,
-)
+# Note: HealthAPIServer requires optional aiohttp dependency
+try:
+    from .api import HealthAPIServer, AIOHTTP_AVAILABLE  # noqa: F401
+
+    _AIOHTTP_AVAILABLE = AIOHTTP_AVAILABLE
+except ImportError:
+    _AIOHTTP_AVAILABLE = False
+
+# Import APIConfig from main config for backward compatibility
+import contextlib
+
+with contextlib.suppress(ImportError):
+    from wazuh_dfn.config import APIConfig  # noqa: F401
+
 from .builders import (
     KafkaPerformanceBuilder,
     QueueStatsBuilder,
@@ -55,11 +64,9 @@ from .protocols import (
 )
 
 __all__ = [
-    "APIConfiguration",
     "BaseHealthMetricsProvider",
     "BaseHealthModel",
     "EventPublisher",
-    "HealthAPIServer",
     "HealthEvent",
     "HealthEventService",
     "HealthMetrics",
@@ -84,5 +91,8 @@ __all__ = [
     "WorkerPerformanceEvent",
     "WorkerProcessedTimesData",
     "WorkerStatsCollector",
-    "create_health_api_server",
 ]
+
+# Add API components if aiohttp is available
+if _AIOHTTP_AVAILABLE:
+    __all__.extend(["APIConfig", "HealthAPIServer"])

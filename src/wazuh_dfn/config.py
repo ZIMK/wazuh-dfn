@@ -747,6 +747,125 @@ class LogConfig(BaseModel):
         return v
 
 
+class APIConfig(BaseModel):
+    """Health API Server configuration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    # Core server settings
+    enabled: bool = Field(
+        default=False,
+        description="Master flag to enable/disable HTTP server",
+        json_schema_extra={
+            "env_var": "HEALTH_HTTP_SERVER_ENABLED",
+            "cli": "--health-api-enabled",
+        },
+    )
+    host: str = Field(
+        default="127.0.0.1",
+        description="Host to bind to (default localhost only for security)",
+        json_schema_extra={
+            "env_var": "HEALTH_API_HOST",
+            "cli": "--health-api-host",
+        },
+    )
+    port: int = Field(
+        default=8080,
+        description="Port to bind to",
+        json_schema_extra={
+            "env_var": "HEALTH_API_PORT",
+            "cli": "--health-api-port",
+        },
+        ge=1,
+        le=65535,
+    )
+
+    # Security settings
+    auth_token: str | None = Field(
+        default=None,
+        description="Optional bearer token for authentication",
+        json_schema_extra={
+            "env_var": "HEALTH_API_AUTH_TOKEN",
+            "cli": "--health-api-auth-token",
+        },
+    )
+    allowed_ips: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "::1"],
+        description="Allowed IP addresses/CIDR blocks",
+        json_schema_extra={
+            "env_var": "HEALTH_API_ALLOWED_IPS",
+            "cli": "--health-api-allowed-ips",
+        },
+    )
+    rate_limit: int = Field(
+        default=100,
+        description="Requests per minute rate limit",
+        json_schema_extra={
+            "env_var": "HEALTH_API_RATE_LIMIT",
+            "cli": "--health-api-rate-limit",
+        },
+        gt=0,
+    )
+
+    # HTTPS settings (optional)
+    https_enabled: bool = Field(
+        default=False,
+        description="Enable HTTPS support",
+        json_schema_extra={
+            "env_var": "HEALTH_API_HTTPS_ENABLED",
+            "cli": "--health-api-https-enabled",
+        },
+    )
+    cert_file: str | None = Field(
+        default=None,
+        description="Path to SSL certificate file",
+        json_schema_extra={
+            "env_var": "HEALTH_API_CERT_FILE",
+            "cli": "--health-api-cert-file",
+        },
+    )
+    key_file: str | None = Field(
+        default=None,
+        description="Path to SSL private key file",
+        json_schema_extra={
+            "env_var": "HEALTH_API_KEY_FILE",
+            "cli": "--health-api-key-file",
+        },
+    )
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def validate_allowed_ips(cls, v: list[str]) -> list[str]:
+        """Validate IP addresses and CIDR blocks in allowlist."""
+        if not v:
+            raise ValueError("allowed_ips cannot be empty")
+
+        for ip_str in v:
+            ip_cleaned = ip_str.strip()
+            if not ip_cleaned:
+                continue
+
+            try:
+                # Try as network (CIDR) or single IP
+                if "/" in ip_cleaned:
+                    ipaddress.ip_network(ip_cleaned, strict=False)
+                else:
+                    ipaddress.ip_address(ip_cleaned)
+            except ValueError as e:
+                raise ValueError(f"Invalid IP/CIDR in allowed_ips: {ip_cleaned}") from e
+
+        return v
+
+    @model_validator(mode="after")
+    def validate_https_config(self) -> "APIConfig":
+        """Validate HTTPS configuration consistency."""
+        if self.https_enabled and (not self.cert_file or not self.key_file):
+            LOGGER.warning(
+                "HTTPS enabled but cert_file or key_file not provided. " "HTTPS will be disabled at runtime."
+            )
+        return self
+
+
 class HealthConfig(BaseModel):
     """Health monitoring configuration (enhanced replacement for LogConfig.interval)."""
 
@@ -779,13 +898,11 @@ class HealthConfig(BaseModel):
         },
         gt=0,
     )
-    http_server_enabled: bool = Field(
-        default=False,
-        description="Enable/disable HTTP health API server",
-        json_schema_extra={
-            "env_var": "HEALTH_HTTP_SERVER_ENABLED",
-            "cli": "--health-http-server-enabled",
-        },
+
+    # API Server Configuration
+    api: APIConfig = Field(
+        default_factory=APIConfig,
+        description="Health API server configuration",
     )
 
     # Configurable thresholds (replace hardcoded values)
@@ -966,7 +1083,7 @@ class Config(BaseModel):
         default_config = Config().model_dump()
 
         # Update each section with new values
-        for section in ["dfn", "wazuh", "kafka", "log", "misc"]:
+        for section in ["dfn", "wazuh", "kafka", "log", "health", "misc"]:
             if section in section_updates:
                 if section in config_data:
                     # Process each field in the section
@@ -1073,7 +1190,7 @@ class Config(BaseModel):
         # Collect updates from environment variables
         env_updates = {}
 
-        for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+        for section_name in ["dfn", "wazuh", "kafka", "log", "health", "misc"]:
             section_updates = {}
             section_model = getattr(config, section_name)
 
@@ -1105,7 +1222,7 @@ class Config(BaseModel):
             merged_data = Config._merge_config_values(config, env_updates, overwrite_existing=False)
 
             # Apply the merged values to the config sections
-            for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            for section_name in ["dfn", "wazuh", "kafka", "log", "health", "misc"]:
                 if section_name in merged_data:
                     section_cls = type(getattr(config, section_name))
                     setattr(config, section_name, section_cls(**merged_data[section_name]))
@@ -1116,7 +1233,7 @@ class Config(BaseModel):
         # Collect updates from CLI arguments
         cli_updates = {}
 
-        for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+        for section_name in ["dfn", "wazuh", "kafka", "log", "health", "misc"]:
             section_updates = {}
             section_model = getattr(config, section_name)
 
@@ -1139,7 +1256,7 @@ class Config(BaseModel):
             merged_data = Config._merge_config_values(config, cli_updates, overwrite_existing=True)
 
             # Apply the merged values to the config sections
-            for section_name in ["dfn", "wazuh", "kafka", "log", "misc"]:
+            for section_name in ["dfn", "wazuh", "kafka", "log", "health", "misc"]:
                 if section_name in merged_data:
                     section_cls = type(getattr(config, section_name))
                     setattr(config, section_name, section_cls(**merged_data[section_name]))
