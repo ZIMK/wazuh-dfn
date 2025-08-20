@@ -1,5 +1,7 @@
 """Alerts worker service module for processing alerts from the queue."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -12,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from wazuh_dfn.config import MiscConfig
+from wazuh_dfn.health.builders import WorkerLastProcessedBuilder, WorkerPerformanceBuilder
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 if TYPE_CHECKING:
@@ -99,7 +102,7 @@ class AlertsWorkerService:
         """
         return not self.shutdown_event.is_set()
 
-    def get_worker_performance(self) -> "WorkerPerformanceData":
+    def get_worker_performance(self) -> WorkerPerformanceData:
         """Get current worker performance metrics.
 
         Returns:
@@ -128,7 +131,7 @@ class AlertsWorkerService:
         """
         return "alerts_worker"
 
-    def get_queue_stats(self) -> "QueueStatsData":
+    def get_queue_stats(self) -> QueueStatsData:
         """Get current queue statistics.
 
         Returns:
@@ -457,37 +460,33 @@ class AlertsWorkerService:
 
                     # Send performance data to health event service (preferred) or logging service (fallback)
                     if self._health_event_service:
-                        performance_data: WorkerPerformanceData = {
-                            "timestamp": now_time.timestamp(),
-                            "alerts_processed": alerts_processed,
-                            "rate": rate,
-                            "avg_processing": avg_processing,
-                            "recent_avg": recent_avg,
-                            "min_time": timing_stats["min_time"],
-                            "max_time": timing_stats["max_time"],
-                            "slow_alerts": timing_stats["slow_alerts"],
-                            "extremely_slow_alerts": timing_stats["extremely_slow_alerts"],
-                            "last_processing_time": last_processing_time,
-                            "last_alert_id": last_alert_id,
-                        }
+                        performance_data: WorkerPerformanceData = (
+                            WorkerPerformanceBuilder.create()
+                            .with_timestamp(now_time.timestamp())
+                            .with_alerts_processed(alerts_processed)
+                            .with_rate(rate)
+                            .with_processing_times(
+                                avg_processing, recent_avg, timing_stats["min_time"], timing_stats["max_time"]
+                            )
+                            .with_slow_alerts(timing_stats["slow_alerts"], timing_stats["extremely_slow_alerts"])
+                            .with_last_alert(last_processing_time, last_alert_id)
+                            .build()
+                        )
                         await self._health_event_service.push_worker_performance(worker_name, performance_data)
                     elif self._logging_service:
-                        await self._logging_service.record_worker_performance(
-                            worker_name,
-                            {
-                                "timestamp": now_time.timestamp(),
-                                "alerts_processed": alerts_processed,
-                                "rate": rate,
-                                "avg_processing": avg_processing,
-                                "recent_avg": recent_avg,
-                                "min_time": timing_stats["min_time"],
-                                "max_time": timing_stats["max_time"],
-                                "slow_alerts": timing_stats["slow_alerts"],
-                                "extremely_slow_alerts": timing_stats["extremely_slow_alerts"],
-                                "last_processing_time": last_processing_time,
-                                "last_alert_id": last_alert_id,
-                            },
+                        performance_data_dict = (
+                            WorkerPerformanceBuilder.create()
+                            .with_timestamp(now_time.timestamp())
+                            .with_alerts_processed(alerts_processed)
+                            .with_rate(rate)
+                            .with_processing_times(
+                                avg_processing, recent_avg, timing_stats["min_time"], timing_stats["max_time"]
+                            )
+                            .with_slow_alerts(timing_stats["slow_alerts"], timing_stats["extremely_slow_alerts"])
+                            .with_last_alert(last_processing_time, last_alert_id)
+                            .build()
                         )
+                        await self._logging_service.record_worker_performance(worker_name, performance_data_dict)
                     else:
                         # Fallback if neither service is set
                         LOGGER.info(
@@ -585,14 +584,21 @@ class AlertsWorkerService:
                     # Update last processed information for metrics
                     if self._health_event_service:
                         # Store the last alert processing info
-                        last_processing_info: WorkerLastProcessedData = {
-                            "last_processing_time": processing_time,
-                            "last_alert_id": alert_id,
-                        }
+                        last_processing_info: WorkerLastProcessedData = (
+                            WorkerLastProcessedBuilder.create()
+                            .with_processing_time(processing_time)
+                            .with_alert_id(alert_id)
+                            .build()
+                        )
                         await self._health_event_service.push_worker_last_processed(worker_name, last_processing_info)
                     elif self._logging_service:
                         # Store the last alert processing info
-                        last_processing_info = {"last_processing_time": processing_time, "last_alert_id": alert_id}
+                        last_processing_info = (
+                            WorkerLastProcessedBuilder.create()
+                            .with_processing_time(processing_time)
+                            .with_alert_id(alert_id)
+                            .build()
+                        )
                         await self._logging_service.update_worker_last_processed(worker_name, last_processing_info)
 
                     # Track times

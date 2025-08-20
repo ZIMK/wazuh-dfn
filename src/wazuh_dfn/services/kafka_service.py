@@ -1,5 +1,7 @@
 """Kafka service module for handling Kafka operations."""
 
+from __future__ import annotations
+
 import asyncio
 import datetime
 import json
@@ -18,6 +20,7 @@ from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.helpers import create_ssl_context
 
 from wazuh_dfn.config import DFNConfig, KafkaConfig
+from wazuh_dfn.health.builders import KafkaPerformanceBuilder
 from wazuh_dfn.health.models import KafkaPerformanceData
 from wazuh_dfn.services.wazuh_service import WazuhService
 
@@ -421,12 +424,15 @@ class KafkaService:
             self._metrics["total_sent"] += 1
 
             # Record performance data
-            performance_data: KafkaPerformanceData = {
-                "total_time": total_time,
-                "stage_times": stage_times,
-                "message_size": len(message_bytes),
-                "topic": str(self.dfn_config.dfn_id),
-            }
+            performance_data: KafkaPerformanceData = (
+                KafkaPerformanceBuilder.create(total_time)
+                .with_prep_time(stage_times.get("prep", 0.0))
+                .with_encode_time(stage_times.get("encode", 0.0))
+                .with_send_time(stage_times.get("send", 0.0))
+                .with_message_size(len(message_bytes))
+                .with_topic(str(self.dfn_config.dfn_id))
+                .build()
+            )
 
             if self._health_event_service:
                 await self._health_event_service.push_kafka_performance(performance_data)
@@ -525,7 +531,7 @@ class KafkaService:
         """
         return self.is_connected()
 
-    def get_kafka_stats(self) -> "KafkaInternalStatsData":
+    def get_kafka_stats(self) -> KafkaInternalStatsData:
         """Get internal Kafka performance statistics.
 
         Returns:

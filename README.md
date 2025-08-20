@@ -36,6 +36,12 @@ Please always take a look at the documentation for further details. This
 - **Comprehensive Monitoring**: Detailed logging and performance metrics
 - **Resource Management**: Dynamic queue management to control memory usage
 - **File Monitoring**: Reliable alert file monitoring with rotation detection and partial alert handling
+- **Advanced Health Monitoring**: Real-time health monitoring with REST API endpoints
+  - **REST API Server**: Optional HTTP server for health status queries (`pip install wazuh-dfn[health-api]`)
+  - **Security Features**: Bearer token authentication, IP allowlists (CIDR), rate limiting, HTTPS support
+  - **Real-time Metrics**: System resources, service health, worker performance, and Kafka statistics
+  - **Dependency Injection**: ServiceContainer architecture eliminates circular dependencies
+  - **Event-driven Architecture**: Push/pull hybrid system for comprehensive health data collection
 
 ## Installation
 
@@ -82,6 +88,66 @@ For all available options:
 ```bash
 wazuh-dfn --help-all
 ```
+
+### Health Monitoring Configuration
+
+The health monitoring system provides real-time insights into service performance and system status. To enable the optional REST API server:
+
+1. **Install health API dependencies**:
+   ```bash
+   pip install wazuh-dfn[health-api]
+   ```
+
+2. **Enable the HTTP server**:
+   ```bash
+   export HEALTH_HTTP_SERVER_ENABLED=true
+   export HEALTH_API_HOST=127.0.0.1  # Default: localhost only
+   export HEALTH_API_PORT=8080       # Default port
+   ```
+
+3. **Optional security configuration**:
+   ```bash
+   # Authentication
+   export HEALTH_API_AUTH_TOKEN=your_secure_token
+   
+   # IP allowlist (CIDR notation supported)
+   export HEALTH_API_ALLOWED_IPS=127.0.0.1,192.168.1.0/24,::1
+   
+   # Rate limiting (requests per minute)
+   export HEALTH_API_RATE_LIMIT=100
+   
+   # HTTPS support
+   export HEALTH_API_HTTPS_ENABLED=true
+   export HEALTH_API_CERT_FILE=/path/to/cert.pem
+   export HEALTH_API_KEY_FILE=/path/to/key.pem
+   ```
+
+4. **Health monitoring endpoints**:
+   - `GET /health` - Overall health status
+   - `GET /health/detailed` - Detailed health metrics
+   - `GET /health/system` - System resource information
+   - `GET /health/services` - Individual service status
+   - `GET /health/workers` - Worker performance metrics
+   - `GET /server-info` - API server information
+
+The health monitoring system runs independently of the REST API and provides continuous monitoring even when the HTTP server is disabled.
+
+### Troubleshooting Health Monitoring
+
+**HTTP Server Issues:**
+- If `HEALTH_HTTP_SERVER_ENABLED=true` but the server doesn't start, check that `aiohttp` is installed: `pip install wazuh-dfn[health-api]`
+- The server defaults to `127.0.0.1` (localhost only) for security. Set `HEALTH_API_HOST=0.0.0.0` to accept external connections
+- Check logs for specific error messages related to port binding or certificate issues
+
+**Authentication Issues:**
+- Bearer token authentication requires the `Authorization: Bearer <token>` header
+- Ensure the token matches the `HEALTH_API_AUTH_TOKEN` environment variable exactly
+- IP allowlist uses CIDR notation - ensure your client IP is included in `HEALTH_API_ALLOWED_IPS`
+
+**Performance Monitoring:**
+- Health monitoring continues even if the HTTP server fails
+- Check logs for health service status and performance metrics
+- Memory usage is bounded by configurable thresholds to prevent resource exhaustion
 
 ## Support
 If you found a problem with the software, please
