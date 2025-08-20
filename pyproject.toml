@@ -27,6 +27,7 @@ dependencies = [
     "zipp>=3.21.0,<4.0.0",              # ZIP file import support
     "aiofiles>=24.1.0,<25.0.0",         # Async file I/O operations
     "aiokafka>=0.12.0,<1.0.0",          # Async Kafka client (replacing confluent-kafka)
+    "wazuh-dfn[health-api]",
 ]
 
 [project.urls]
@@ -36,6 +37,11 @@ Tracker = "https://github.com/ZIMK/wazuh-dfn/-/issues"
 
 [project.scripts]
 wazuh-dfn = "wazuh_dfn.main:main"
+
+[project.optional-dependencies]
+health-api = [
+    "aiohttp<4.0.0,>=3.9.0",
+]
 
 [build-system]
 requires = ["pdm-backend"]

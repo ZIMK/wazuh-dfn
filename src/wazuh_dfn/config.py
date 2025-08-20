@@ -747,6 +747,142 @@ class LogConfig(BaseModel):
         return v
 
 
+class HealthConfig(BaseModel):
+    """Health monitoring configuration (enhanced replacement for LogConfig.interval)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=False)
+
+    stats_interval: int = Field(
+        default=600,
+        description="Health statistics collection interval in seconds (replaces LOG_INTERVAL)",
+        json_schema_extra={
+            "env_var": "HEALTH_STATS_INTERVAL",
+            "cli": "--health-stats-interval",
+        },
+        gt=0,
+    )
+    history_retention: int = Field(
+        default=3600,
+        description="Health history retention period in seconds",
+        json_schema_extra={
+            "env_var": "HEALTH_HISTORY_RETENTION",
+            "cli": "--health-history-retention",
+        },
+        gt=0,
+    )
+    max_history_entries: int = Field(
+        default=1000,
+        description="Maximum number of health history entries to prevent unbounded growth",
+        json_schema_extra={
+            "env_var": "HEALTH_MAX_HISTORY_ENTRIES",
+            "cli": "--health-max-history-entries",
+        },
+        gt=0,
+    )
+    http_server_enabled: bool = Field(
+        default=False,
+        description="Enable/disable HTTP health API server",
+        json_schema_extra={
+            "env_var": "HEALTH_HTTP_SERVER_ENABLED",
+            "cli": "--health-http-server-enabled",
+        },
+    )
+
+    # Configurable thresholds (replace hardcoded values)
+    queue_warning_threshold: int = Field(
+        default=70,
+        description="Queue fill percentage warning threshold",
+        json_schema_extra={
+            "env_var": "HEALTH_QUEUE_WARNING_THRESHOLD",
+            "cli": "--health-queue-warning-threshold",
+        },
+        ge=1,
+        le=100,
+    )
+    queue_critical_threshold: int = Field(
+        default=90,
+        description="Queue fill percentage critical threshold",
+        json_schema_extra={
+            "env_var": "HEALTH_QUEUE_CRITICAL_THRESHOLD",
+            "cli": "--health-queue-critical-threshold",
+        },
+        ge=1,
+        le=100,
+    )
+    worker_stall_threshold: int = Field(
+        default=60,
+        description="Worker stall detection threshold in seconds",
+        json_schema_extra={
+            "env_var": "HEALTH_WORKER_STALL_THRESHOLD",
+            "cli": "--health-worker-stall-threshold",
+        },
+        gt=0,
+    )
+    kafka_slow_threshold: float = Field(
+        default=1.0,
+        description="Kafka slow operation threshold in seconds",
+        json_schema_extra={
+            "env_var": "HEALTH_KAFKA_SLOW_THRESHOLD",
+            "cli": "--health-kafka-slow-threshold",
+        },
+        gt=0.0,
+    )
+    kafka_extremely_slow_threshold: float = Field(
+        default=5.0,
+        description="Kafka extremely slow operation threshold in seconds",
+        json_schema_extra={
+            "env_var": "HEALTH_KAFKA_EXTREMELY_SLOW_THRESHOLD",
+            "cli": "--health-kafka-extremely-slow-threshold",
+        },
+        gt=0.0,
+    )
+
+    @field_validator("queue_critical_threshold")
+    @classmethod
+    def validate_queue_critical_above_warning(cls, v: int, info) -> int:
+        """Ensure critical threshold is higher than warning threshold."""
+        if "queue_warning_threshold" in info.data:
+            warning = info.data["queue_warning_threshold"]
+            if v <= warning:
+                raise ValueError(
+                    f"queue_critical_threshold ({v}) must be greater than " f"queue_warning_threshold ({warning})"
+                )
+        return v
+
+    @field_validator("kafka_extremely_slow_threshold")
+    @classmethod
+    def validate_kafka_extremely_slow_above_slow(cls, v: float, info) -> float:
+        """Ensure extremely slow threshold is higher than slow threshold."""
+        if "kafka_slow_threshold" in info.data:
+            slow = info.data["kafka_slow_threshold"]
+            if v <= slow:
+                raise ValueError(
+                    f"kafka_extremely_slow_threshold ({v}) must be greater than " f"kafka_slow_threshold ({slow})"
+                )
+        return v
+
+    @classmethod
+    def with_legacy_log_config_warning(cls, log_config: LogConfig) -> "HealthConfig":
+        """Create HealthConfig from LogConfig with migration warning.
+
+        As specified in TODO: "if old LOG_INTERVAL found, log warning and mention new HEALTH_STATS_INTERVAL"
+
+        Args:
+            log_config: Existing LogConfig to migrate from
+
+        Returns:
+            HealthConfig: New health configuration using log_config.interval
+        """
+        logger = logging.getLogger(__name__)
+
+        logger.warning(
+            f"Using LogConfig.interval ({log_config.interval}s) for health monitoring. "
+            f"Consider migrating to HealthConfig with HEALTH_STATS_INTERVAL environment variable."
+        )
+
+        return cls(stats_interval=log_config.interval)
+
+
 class MiscConfig(BaseModel):
     """Miscellaneous configuration."""
 
@@ -807,6 +943,7 @@ class Config(BaseModel):
     wazuh: WazuhConfig = Field(default_factory=WazuhConfig)
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
     log: LogConfig = Field(default_factory=LogConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
     misc: MiscConfig = Field(default_factory=MiscConfig)
     config_cache: dict[str, str] = Field(default_factory=dict, exclude=True)  # Renamed from _config_cache
 

@@ -5,13 +5,18 @@ import json
 import logging
 import secrets
 import tempfile
+import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+
+if TYPE_CHECKING:
+    from wazuh_dfn.health.event_service import HealthEventService
+    from wazuh_dfn.health.models import QueueStatsData, WorkerLastProcessedData, WorkerPerformanceData
 
 from .alerts_service import AlertsService
 
@@ -68,6 +73,7 @@ class AlertsWorkerService:
 
         # Reference to the logging service (will be set later)
         self._logging_service = None
+        self._health_event_service: HealthEventService | None = None
 
     def set_logging_service(self, logging_service) -> None:
         """Set the logging service reference for performance logging.
@@ -76,6 +82,111 @@ class AlertsWorkerService:
             logging_service: The logging service instance
         """
         self._logging_service = logging_service
+
+    def set_health_event_service(self, health_event_service: HealthEventService) -> None:
+        """Set the health event service for direct event pushing.
+
+        Args:
+            health_event_service: The health event service instance
+        """
+        self._health_event_service = health_event_service
+
+    def get_health_status(self) -> bool:
+        """Check if the service is healthy and operational.
+
+        Returns:
+            bool: True if service is healthy, False otherwise
+        """
+        return not self.shutdown_event.is_set()
+
+    def get_worker_performance(self) -> "WorkerPerformanceData":
+        """Get current worker performance metrics.
+
+        Returns:
+            WorkerPerformanceData: Worker performance data
+        """
+        # Return basic performance data
+        return {
+            "alerts_processed": self._queue_stats.get("total_processed", 0),
+            "rate": 0.0,
+            "avg_processing": 0.0,
+            "recent_avg": 0.0,
+            "min_time": 0.0,
+            "max_time": 0.0,
+            "slow_alerts": 0,
+            "extremely_slow_alerts": 0,
+            "last_processing_time": 0.0,
+            "last_alert_id": "",
+            "timestamp": time.time(),
+        }
+
+    def get_worker_name(self) -> str:
+        """Get the worker identifier.
+
+        Returns:
+            str: Unique worker name/ID
+        """
+        return "alerts_worker"
+
+    def get_queue_stats(self) -> "QueueStatsData":
+        """Get current queue statistics.
+
+        Returns:
+            QueueStatsData: Queue statistics data
+        """
+        return {
+            "total_processed": self._queue_stats.get("total_processed", 0),
+            "max_queue_size": self.alert_queue.maxsize,
+            "queue_full_count": self._queue_stats.get("queue_full_count", 0),
+            "last_queue_size": self.alert_queue.qsize(),
+        }
+
+    def get_queue_name(self) -> str:
+        """Get the queue identifier.
+
+        Returns:
+            str: Queue name/identifier
+        """
+        return "alert_queue"
+
+    def is_queue_healthy(self) -> bool:
+        """Check if queue is operating within normal parameters.
+
+        Returns:
+            bool: True if queue is healthy, False if at risk
+        """
+        # Consider queue healthy if not full and service is running
+        return not self.alert_queue.full() and self.get_health_status()
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics.
+
+        Returns:
+            dict[str, Any]: Service metrics data
+        """
+        return {
+            "health_status": self.get_health_status(),
+            "worker_performance": self.get_worker_performance(),
+            "queue_stats": self.get_queue_stats(),
+            "is_processing": self.is_processing(),
+        }
+
+    def is_processing(self) -> bool:
+        """Check if service is currently processing alerts.
+
+        Returns:
+            bool: True if actively processing
+        """
+        return self.get_health_status() and not self.alert_queue.empty()
+
+    def get_last_error(self) -> str | None:
+        """Get the last error message if any.
+
+        Returns:
+            str | None: Last error message or None
+        """
+        # Would need to implement error tracking
+        return None
 
     @property
     async def worker_processed_times(self) -> dict[str, float]:
@@ -344,8 +455,23 @@ class AlertsWorkerService:
                     recent_times = timing_stats["processing_times"][-10:]
                     recent_avg = sum(recent_times) / len(recent_times) if recent_times else 0
 
-                    # Send performance data to logging service instead of logging directly
-                    if self._logging_service:
+                    # Send performance data to health event service (preferred) or logging service (fallback)
+                    if self._health_event_service:
+                        performance_data: WorkerPerformanceData = {
+                            "timestamp": now_time.timestamp(),
+                            "alerts_processed": alerts_processed,
+                            "rate": rate,
+                            "avg_processing": avg_processing,
+                            "recent_avg": recent_avg,
+                            "min_time": timing_stats["min_time"],
+                            "max_time": timing_stats["max_time"],
+                            "slow_alerts": timing_stats["slow_alerts"],
+                            "extremely_slow_alerts": timing_stats["extremely_slow_alerts"],
+                            "last_processing_time": last_processing_time,
+                            "last_alert_id": last_alert_id,
+                        }
+                        await self._health_event_service.push_worker_performance(worker_name, performance_data)
+                    elif self._logging_service:
                         await self._logging_service.record_worker_performance(
                             worker_name,
                             {
@@ -363,7 +489,7 @@ class AlertsWorkerService:
                             },
                         )
                     else:
-                        # Fallback if logging service isn't set
+                        # Fallback if neither service is set
                         LOGGER.info(
                             f"Worker {worker_name} performance: {alerts_processed} alerts processed, "
                             f"rate: {rate:.2f} alerts/sec, avg processing: {avg_processing*1000:.2f}ms"
@@ -457,7 +583,14 @@ class AlertsWorkerService:
                     processing_time = (process_end - process_start).total_seconds()
 
                     # Update last processed information for metrics
-                    if self._logging_service:
+                    if self._health_event_service:
+                        # Store the last alert processing info
+                        last_processing_info: WorkerLastProcessedData = {
+                            "last_processing_time": processing_time,
+                            "last_alert_id": alert_id,
+                        }
+                        await self._health_event_service.push_worker_last_processed(worker_name, last_processing_info)
+                    elif self._logging_service:
                         # Store the last alert processing info
                         last_processing_info = {"last_processing_time": processing_time, "last_alert_id": alert_id}
                         await self._logging_service.update_worker_last_processed(worker_name, last_processing_info)

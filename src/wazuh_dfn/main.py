@@ -14,14 +14,16 @@ from typing import Union, get_args, get_origin
 
 from dotenv import load_dotenv
 
-from .config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from .config import Config, DFNConfig, HealthConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
+from .health.event_service import HealthEventService
+from .health.health_service import HealthService
+from .service_container import ServiceContainer
 from .services import (
     AlertsService,
     AlertsWatcherService,
     AlertsWorkerService,
     KafkaService,
-    LoggingService,
     WazuhService,
 )
 from .services.max_size_queue import AsyncMaxSizeQueue
@@ -330,6 +332,7 @@ async def setup_service(config: Config) -> None:
     """
     shutdown_event = asyncio.Event()
     alert_queue = AsyncMaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
+    service_container = None  # Initialize early for cleanup
 
     LOGGER.info("Starting services...")
     try:
@@ -370,41 +373,83 @@ async def setup_service(config: Config) -> None:
             shutdown_event=shutdown_event,
         )
 
-        # Initialize logging service
-        LOGGER.debug("Initializing LoggingService...")
-        logging_service = LoggingService(
-            config=config.log,
-            alert_queue=alert_queue,
-            kafka_service=kafka_service,
-            alerts_watcher_service=alerts_watcher_service,
-            alerts_worker_service=alerts_worker_service,
-            shutdown_event=shutdown_event,
-        )
+        # === ServiceContainer Integration (Phase 1.4) ===
+        # Initialize ServiceContainer for health monitoring
+        LOGGER.debug("Initializing ServiceContainer...")
+        service_container = ServiceContainer()
 
-        # Set up centralized performance logging connections
-        LOGGER.debug("Setting up performance logging connections...")
-        alerts_worker_service.set_logging_service(logging_service)
-        kafka_service.set_logging_service(logging_service)
+        # Get or create health config
+        health_config = getattr(config, "health", None)
+        if health_config is None:
+            # Create default health config
+            health_config = HealthConfig()
+
+        # Initialize HealthEventService first (lightweight, no dependencies)
+        LOGGER.debug("Initializing HealthEventService...")
+        health_event_service = HealthEventService(config=health_config)
+
+        # Register core services
+        service_container.register_service("health_event", health_event_service)
+        service_container.register_service("wazuh", wazuh_service)
+        service_container.register_service("kafka", kafka_service)
+        service_container.register_service("alerts", alerts_service)
+        service_container.register_service("alerts_worker", alerts_worker_service)
+        service_container.register_service("alerts_watcher", alerts_watcher_service)
+
+        # Register as metrics providers (once services implement protocols)
+        # Note: For now, services don't implement the full protocols yet
+        # This would be the pattern once protocols are implemented:
+        # try:
+        #     if hasattr(alerts_worker_service, 'get_worker_performance'):
+        #         service_container.register_worker_provider("alerts_worker", alerts_worker_service)
+        #     if hasattr(alerts_worker_service, 'get_queue_stats'):
+        #         service_container.register_queue_provider("alert_queue", alerts_worker_service)
+        #     if hasattr(kafka_service, 'get_kafka_stats'):
+        #         service_container.register_kafka_provider("kafka", kafka_service)
+        # except Exception as e:
+        #     LOGGER.debug(f"Some providers not available yet: {e}")
+
+        # Initialize HealthService (replaces LoggingService)
+        LOGGER.debug("Initializing HealthService (replacing LoggingService)...")
+        try:
+            # Initialize health service with ServiceContainer and reference to event service
+            health_service = HealthService(
+                container=service_container,
+                config=health_config,
+                event_queue=None,  # Pass None, HealthService will get events via ServiceContainer
+            )
+
+            # Register health service itself (avoids circular dependency)
+            service_container.register_service("health", health_service)
+            LOGGER.info("Health monitoring system initialized successfully (replaced LoggingService)")
+
+        except Exception as e:
+            LOGGER.warning(f"Health monitoring system not available: {e}")
+            health_service = None
+        # === END ServiceContainer Integration ===
+
+        # Connect services to HealthEventService for real-time event pushing
+        LOGGER.debug("Connecting services to HealthEventService...")
+        alerts_worker_service.set_health_event_service(health_event_service)
+        kafka_service.set_health_event_service(health_event_service)
+
+        # Register services as metrics providers for periodic health collection
+        LOGGER.debug("Registering services as metrics providers...")
+        service_container.register_worker_provider("alerts_worker", alerts_worker_service)
+        service_container.register_queue_provider("alert_queue", alerts_worker_service)
+        service_container.register_kafka_provider("kafka", kafka_service)
 
         # Set up signal handlers for clean shutdown
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(shutdown_event)))
 
-        # Use Python 3.11+ task groups for cleaner task management
-        async with asyncio.TaskGroup() as tg:
-            # Start all services as concurrent tasks
-            tg.create_task(kafka_service.start(), name="KafkaService")
-            tg.create_task(alerts_worker_service.start(), name="AlertsWorkerService")
-            tg.create_task(alerts_watcher_service.start(), name="AlertsWatcherService")
+        # Start all services using ServiceContainer
+        LOGGER.info("Starting all services...")
+        await service_container.start_all_services()
 
-            # Give the other services a moment to initialize
-            await asyncio.sleep(10)
-
-            tg.create_task(logging_service.start(), name="LoggingService")
-
-            # Wait until shutdown is signaled
-            await shutdown_event.wait()
+        # Wait until shutdown is signaled
+        await shutdown_event.wait()
 
     except asyncio.CancelledError:
         LOGGER.info("Tasks cancelled")
@@ -413,6 +458,13 @@ async def setup_service(config: Config) -> None:
         shutdown_event.set()
         raise
     finally:
+        # Clean shutdown of all services
+        LOGGER.info("Shutting down services...")
+        try:
+            if "service_container" in locals():
+                await service_container.stop_all_services()
+        except Exception as e:
+            LOGGER.error(f"Error during service shutdown: {e}")
         LOGGER.info("Service shutdown complete")
 
 

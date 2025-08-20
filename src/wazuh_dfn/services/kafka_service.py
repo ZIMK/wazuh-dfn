@@ -7,13 +7,18 @@ import logging
 import ssl
 import time
 from enum import StrEnum, auto
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from wazuh_dfn.health.event_service import HealthEventService
+    from wazuh_dfn.health.models import KafkaInternalStatsData
 
 from aiokafka import AIOKafkaProducer
 from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.helpers import create_ssl_context
 
 from wazuh_dfn.config import DFNConfig, KafkaConfig
+from wazuh_dfn.health.models import KafkaPerformanceData
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 LOGGER = logging.getLogger(__name__)
@@ -61,18 +66,6 @@ class KafkaResponse(TypedDict):
     topic: str
 
 
-class KafkaPerformanceData(TypedDict, total=False):
-    """Type definition for Kafka performance data."""
-
-    # Required fields
-    total_time: float
-
-    # Optional fields
-    stage_times: dict[str, float]  # Keys include 'prep', 'encode', 'send', 'connect'
-    message_size: int
-    topic: str
-
-
 class KafkaService:
     """Service for handling Kafka operations.
 
@@ -110,6 +103,7 @@ class KafkaService:
 
         # Reference to the logging service (will be set later)
         self._logging_service = None
+        self._health_event_service: HealthEventService | None = None
 
         # Track message count for diagnostics
         self._metrics = {
@@ -125,6 +119,14 @@ class KafkaService:
             logging_service: The logging service instance
         """
         self._logging_service = logging_service
+
+    def set_health_event_service(self, health_event_service: HealthEventService) -> None:
+        """Set the health event service for direct event pushing.
+
+        Args:
+            health_event_service: The health event service instance
+        """
+        self._health_event_service = health_event_service
 
     def _create_custom_ssl_context(self) -> ssl.SSLContext:
         """Create a custom SSL context for more control over SSL/TLS settings.
@@ -426,13 +428,15 @@ class KafkaService:
                 "topic": str(self.dfn_config.dfn_id),
             }
 
-            if self._logging_service:
+            if self._health_event_service:
+                await self._health_event_service.push_kafka_performance(performance_data)
+            elif self._logging_service:
                 await self._logging_service.record_kafka_performance(performance_data)
 
-            return {
-                "success": True,
-                "topic": str(self.dfn_config.dfn_id),
-            }
+            return KafkaResponse(
+                success=True,
+                topic=str(self.dfn_config.dfn_id),
+            )
 
     async def send_message(self, message: KafkaMessage) -> KafkaResponse | None:
         """Send message to Kafka broker asynchronously.
@@ -510,3 +514,70 @@ class KafkaService:
             )
         except Exception as e:
             LOGGER.error(f"Error stopping Kafka producer: {e}")
+
+    # Protocol implementation methods for health monitoring
+
+    def get_health_status(self) -> bool:
+        """Check if the service is healthy and operational.
+
+        Returns:
+            bool: True if service is healthy, False otherwise
+        """
+        return self.is_connected()
+
+    def get_kafka_stats(self) -> "KafkaInternalStatsData":
+        """Get internal Kafka performance statistics.
+
+        Returns:
+            KafkaInternalStatsData: Kafka performance metrics
+        """
+        return {
+            "slow_operations": self._metrics.get("slow_operations", 0),
+            "total_operations": self._metrics.get("total_sent", 0),
+            "last_slow_operation_time": 0.0,  # Would need to track this
+            "max_operation_time": 0.0,  # Would need to track this
+            "recent_stage_times": [],  # Would need to track recent slow operations
+        }
+
+    def is_connected(self) -> bool:
+        """Check if Kafka connection is active.
+
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        return self.producer is not None
+
+    def get_connection_info(self) -> dict[str, Any]:
+        """Get Kafka connection information.
+
+        Returns:
+            dict[str, Any]: Connection details
+        """
+        return {
+            "bootstrap_servers": self.dfn_config.dfn_broker,
+            "timeout": self.config.timeout,
+            "compression_type": self.config.compression_type,
+            "connected": self.is_connected(),
+        }
+
+    def get_last_error(self) -> str | None:
+        """Get the last error message if any.
+
+        Returns:
+            str | None: Last error message or None
+        """
+        # Would need to implement error tracking
+        return None
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics.
+
+        Returns:
+            dict[str, Any]: Service metrics data
+        """
+        return {
+            "health_status": self.get_health_status(),
+            "kafka_stats": self.get_kafka_stats(),
+            "connection_info": self.get_connection_info(),
+            "last_error": self.get_last_error(),
+        }
