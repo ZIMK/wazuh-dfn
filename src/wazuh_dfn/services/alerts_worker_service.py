@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from wazuh_dfn.config import MiscConfig
 from wazuh_dfn.health.builders import WorkerLastProcessedBuilder, WorkerPerformanceBuilder
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 if TYPE_CHECKING:
     from wazuh_dfn.health.event_service import HealthEventService

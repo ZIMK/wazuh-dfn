@@ -10,12 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-from wazuh_dfn.config import Config, DFNConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from wazuh_dfn.config import Config, DFNConfig, HealthConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from wazuh_dfn.health.builders import KafkaPerformanceBuilder, WorkerPerformanceBuilder
+from wazuh_dfn.health.event_service import HealthEventService
+from wazuh_dfn.health.health_service import HealthService
+from wazuh_dfn.health.models import HealthThresholds
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.service_container import ServiceContainer
 from wazuh_dfn.services.alerts_service import AlertsService
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.alerts_worker_service import AlertsWorkerService
 from wazuh_dfn.services.kafka_service import KafkaService
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 
@@ -267,3 +272,65 @@ async def alerts_watcher_service(sample_config, alert_queue, wazuh_service, shut
     # Cleanup
     with suppress(Exception):
         await service.stop()
+
+
+# Health Service Fixtures
+@pytest.fixture
+def health_config():
+    """Create a HealthConfig instance for testing."""
+    return HealthConfig(
+        stats_interval=1,  # Fast interval for testing
+        history_retention=3600,
+        max_history_entries=100,
+        queue_warning_threshold=70,
+        queue_critical_threshold=90,
+    )
+
+
+@pytest.fixture
+def health_thresholds():
+    """Create HealthThresholds for testing."""
+    return HealthThresholds()
+
+
+@pytest.fixture
+def service_container():
+    """Create a ServiceContainer for testing."""
+    return ServiceContainer()
+
+
+@pytest_asyncio.fixture
+async def health_event_service(health_config):
+    """Create a HealthEventService instance for testing."""
+    service = HealthEventService(config=health_config)
+    yield service
+    # Clean shutdown
+    if hasattr(service, "_shutdown_event"):
+        service._shutdown_event.set()
+
+
+@pytest_asyncio.fixture
+async def health_service(service_container, health_config, health_event_service):
+    """Create a HealthService instance for testing."""
+    # Create health service with event queue from health_event_service
+    service = HealthService(
+        container=service_container,
+        config=health_config,
+        event_queue=health_event_service._event_queue if health_event_service else None,
+    )
+    yield service
+    # Clean shutdown
+    if hasattr(service, "_shutdown_event"):
+        service._shutdown_event.set()
+
+
+@pytest.fixture
+def worker_performance_builder():
+    """Create WorkerPerformanceBuilder for testing."""
+    return WorkerPerformanceBuilder()
+
+
+@pytest.fixture
+def kafka_performance_builder():
+    """Create KafkaPerformanceBuilder for testing."""
+    return KafkaPerformanceBuilder(total_time=1.0)

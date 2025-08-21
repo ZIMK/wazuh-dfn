@@ -5,7 +5,7 @@ import json
 import logging
 import runpy
 from contextlib import suppress
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -51,6 +51,12 @@ log:
   file_path: "/opt/wazuh-dfn/logs/test.log"
   level: "INFO"
   interval: 60
+
+health:
+  stats_interval: 1
+  history_retention: 3600
+  queue_warning_threshold: 70
+  queue_critical_threshold: 90
 
 misc:
   num_workers: 1
@@ -257,7 +263,9 @@ def mock_services():
         patch("wazuh_dfn.main.AlertsService") as mock_alerts,
         patch("wazuh_dfn.main.AlertsWorkerService") as mock_alerts_worker,
         patch("wazuh_dfn.main.AlertsWatcherService") as mock_observer,
-        patch("wazuh_dfn.main.LoggingService") as mock_logging,
+        patch("wazuh_dfn.main.HealthService") as mock_health,
+        patch("wazuh_dfn.main.HealthEventService") as mock_health_event,
+        patch("wazuh_dfn.main.ServiceContainer") as mock_service_container,
         patch("wazuh_dfn.main.asyncio.Event") as mock_event,
         patch("wazuh_dfn.main.AsyncMaxSizeQueue") as mock_queue,
     ):
@@ -266,7 +274,18 @@ def mock_services():
         mock_alerts.return_value = create_service_mock()
         mock_alerts_worker.return_value = create_service_mock()
         mock_observer.return_value = create_service_mock()
-        mock_logging.return_value = create_service_mock()
+        mock_health.return_value = create_service_mock()
+        mock_health_event.return_value = create_service_mock()
+
+        # Mock ServiceContainer with proper methods
+        mock_container = MagicMock()
+        mock_container.register_service = MagicMock()
+        mock_container.register_worker_provider = MagicMock()
+        mock_container.register_queue_provider = MagicMock()
+        mock_container.register_kafka_provider = MagicMock()
+        mock_container.start_all_services = MagicMock()
+        mock_container.stop_all_services = MagicMock()
+        mock_service_container.return_value = mock_container
 
         yield {
             "wazuh": mock_wazuh,
@@ -274,7 +293,9 @@ def mock_services():
             "alerts": mock_alerts,
             "alerts_worker": mock_alerts_worker,
             "observer": mock_observer,
-            "logging": mock_logging,
+            "health": mock_health,
+            "health_event": mock_health_event,
+            "service_container": mock_service_container,
             "event": mock_event,
             "queue": mock_queue,
         }
@@ -304,7 +325,7 @@ def test_setup_directories_error(sample_config_path):
 
 @pytest.mark.asyncio
 async def test_setup_service(sample_config_path, mock_services, event_loop):
-    """Test service setup and initialization."""
+    """Test service setup and initialization with HealthService."""
     with patch("sys.argv", ["script.py", "-c", sample_config_path, "--skip-path-validation"]):
         config = load_config(parse_args())
 
@@ -313,8 +334,14 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
         "kafka": mock_services["kafka"].return_value,
         "alerts_worker": mock_services["alerts_worker"].return_value,
         "observer": mock_services["observer"].return_value,
-        "logging": mock_services["logging"].return_value,
+        "health": mock_services["health"].return_value,
+        "health_event": mock_services["health_event"].return_value,
     }
+
+    # Mock ServiceContainer behavior
+    mock_container = mock_services["service_container"].return_value
+    mock_container.start_all_services = MagicMock(return_value=asyncio.Future())
+    mock_container.start_all_services.return_value.set_result(None)
 
     for service in services.values():
         start_future = asyncio.Future(loop=event_loop)
@@ -325,24 +352,14 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
         stop_future.set_result(None)
         service.stop = MagicMock(return_value=stop_future)
 
-    with patch("asyncio.get_running_loop") as mock_loop, patch("asyncio.TaskGroup") as mock_task_group:
+    # Mock asyncio.Event to properly handle await
+    mock_event = AsyncMock()
+    mock_event.wait = AsyncMock()
+
+    with patch("asyncio.get_running_loop") as mock_loop, patch("asyncio.Event", return_value=mock_event):
         mock_loop_instance = MagicMock()
         mock_loop_instance.add_signal_handler = MagicMock()
         mock_loop.return_value = mock_loop_instance
-
-        mock_tg = MagicMock()
-
-        async def async_enter(self):
-            return mock_tg
-
-        async def async_exit(self, exc_type, exc_val, exc_tb):
-            return None
-
-        mock_tg_instance = MagicMock()
-        mock_tg_instance.__aenter__ = async_enter
-        mock_tg_instance.__aexit__ = async_exit
-        mock_tg_instance.create_task = MagicMock()
-        mock_task_group.return_value = mock_tg_instance
 
         test_task = asyncio.create_task(setup_service(config))
         await asyncio.sleep(0.1)
@@ -352,7 +369,8 @@ async def test_setup_service(sample_config_path, mock_services, event_loop):
             await test_task
 
     mock_services["wazuh"].assert_called_once()
-    services["wazuh"].start.assert_called_once()
+    mock_services["health"].assert_called_once()
+    mock_services["service_container"].assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -366,7 +384,8 @@ async def test_setup_service_wazuh_error(sample_config_path, mock_services):
         "kafka": mock_services["kafka"].return_value,
         "alerts_worker": mock_services["alerts_worker"].return_value,
         "observer": mock_services["observer"].return_value,
-        "logging": mock_services["logging"].return_value,
+        "health": mock_services["health"].return_value,
+        "health_event": mock_services["health_event"].return_value,
     }
 
     error_future = asyncio.Future()
@@ -394,8 +413,14 @@ async def test_setup_service_cleanup(sample_config_path, mock_services):
         "kafka": mock_services["kafka"].return_value,
         "alerts_worker": mock_services["alerts_worker"].return_value,
         "observer": mock_services["observer"].return_value,
-        "logging": mock_services["logging"].return_value,
+        "health": mock_services["health"].return_value,
+        "health_event": mock_services["health_event"].return_value,
     }
+
+    # Mock ServiceContainer stop behavior
+    mock_container = mock_services["service_container"].return_value
+    mock_container.stop_all_services = MagicMock(return_value=asyncio.Future())
+    mock_container.stop_all_services.return_value.set_result(None)
 
     for service in services.values():
         start_future = asyncio.Future()
@@ -457,7 +482,7 @@ def test_service_cleanup_error_handling(mocker):
             "kafka": mocker.MagicMock(),
             "alerts_worker": mocker.MagicMock(),
             "observer": mocker.MagicMock(),
-            "logging": mocker.MagicMock(),
+            "health": mocker.MagicMock(),
         }
 
         error_service = mock_services["wazuh"]

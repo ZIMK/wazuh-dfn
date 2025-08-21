@@ -41,7 +41,7 @@ class SecurityMiddleware:
         self.rate_limiter = (
             RateLimiter(
                 max_requests=api_config.rate_limit,
-                window_seconds=60,  # Fixed 60-second window as rate_limit is per minute
+                window_seconds=api_config.rate_limit_window,
             )
             if api_config.rate_limit > 0
             else None
@@ -147,7 +147,7 @@ class SecurityMiddleware:
             response.headers["X-RateLimit-Limit"] = str(self.api_config.rate_limit)
             response.headers["X-RateLimit-Remaining"] = str(remaining)
             response.headers["X-RateLimit-Reset"] = str(int(reset_time))
-            response.headers["Retry-After"] = str(60)  # 60 seconds window
+            response.headers["Retry-After"] = str(self.api_config.rate_limit_window)
             raise response
 
         return await handler(request)

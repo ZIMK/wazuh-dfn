@@ -9,7 +9,7 @@ from typing import Any
 import psutil
 
 from wazuh_dfn.config import LogConfig
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 from .alerts_watcher_service import AlertsWatcherService
 from .alerts_worker_service import AlertsWorkerService

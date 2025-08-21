@@ -9,7 +9,7 @@ from pathlib import Path
 
 import aiofiles
 
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 LOGGER = logging.getLogger(__name__)
 

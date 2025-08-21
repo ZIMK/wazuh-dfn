@@ -21,6 +21,7 @@ def load_json_file(file_path: str) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_windows_ip_address_handling(alerts_service, caplog) -> None:
     """Test that Windows alerts correctly handle missing IP addresses."""
     caplog.set_level(logging.INFO)
@@ -61,6 +62,7 @@ async def test_windows_ip_address_handling(alerts_service, caplog) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_windows_log_cleared_handling(alerts_service, caplog) -> None:
     """Test that Windows log cleared alerts (Event ID 1102) generate correct XML structure."""
     caplog.set_level(logging.INFO)
@@ -105,6 +107,7 @@ async def test_windows_log_cleared_handling(alerts_service, caplog) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_process_integration_files(alerts_service, caplog) -> None:  # noqa: PLR0912 NOSONAR
     """Test processing of all alert types from the integration_files directory"""
     caplog.set_level(logging.INFO)

@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import logging
-import logging.config
 import logging.handlers
 import signal
 import sys
@@ -18,6 +17,7 @@ from .config import Config, DFNConfig, HealthConfig, KafkaConfig, LogConfig, Mis
 from .exceptions import ConfigValidationError
 from .health.event_service import HealthEventService
 from .health.health_service import HealthService
+from .max_size_queue import AsyncMaxSizeQueue
 from .service_container import ServiceContainer
 from .services import (
     AlertsService,
@@ -26,7 +26,6 @@ from .services import (
     KafkaService,
     WazuhService,
 )
-from .services.max_size_queue import AsyncMaxSizeQueue
 
 # Logging
 LOGGER = logging.getLogger(__name__)
@@ -451,7 +450,7 @@ async def setup_service(config: Config) -> None:
         # Wait until shutdown is signaled
         await shutdown_event.wait()
 
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # NOSONAR
         LOGGER.info("Tasks cancelled")
     except Exception as e:
         LOGGER.error(f"Error in service setup: {e}", exc_info=True)

@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING
 
 from wazuh_dfn.config import HealthConfig
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 from .models import (
     HealthEvent,
@@ -50,12 +51,18 @@ class HealthEventService:
             config: Health configuration for thresholds (required)
         """
         self.logger = logging.getLogger(f"{__name__}.HealthEventService")
-        self._event_queue: asyncio.Queue[HealthEvent] = asyncio.Queue()
+        self._event_queue = AsyncMaxSizeQueue(maxsize=config.event_queue_size)
         self._config = config
+        self._shutdown_event = asyncio.Event()
 
         # Use configurable thresholds from config
         self._extremely_slow_threshold = config.kafka_extremely_slow_threshold
         self._worker_stall_threshold = config.worker_stall_threshold
+
+    @property
+    def event_queue(self) -> AsyncMaxSizeQueue:
+        """Access to the event queue for testing and health service polling."""
+        return self._event_queue
 
     async def push_worker_performance(self, worker_name: str, performance_data: WorkerPerformanceData) -> None:
         """Real-time push from AlertsWorkerService (replaces record_worker_performance).

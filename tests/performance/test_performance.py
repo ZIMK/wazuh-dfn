@@ -70,12 +70,12 @@ import aiofiles
 import pytest
 
 from wazuh_dfn.config import MiscConfig, WazuhConfig
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services import WazuhService
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.handlers.syslog_handler import SyslogHandler
 from wazuh_dfn.services.handlers.windows_handler import WindowsHandler
 from wazuh_dfn.services.kafka_service import KafkaResponse, KafkaService
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 # Configure logging
 logging.getLogger().setLevel(logging.DEBUG)

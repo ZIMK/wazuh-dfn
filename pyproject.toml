@@ -57,6 +57,7 @@ test = [
     "pytest-mock>=3.0.0,<4.0.0",
     "hypothesis>=6.0.0,<7.0.0",
     "pytest-asyncio>=0.26.0,<1.0.0", # Support for testing async code
+    "pytest-aiohttp>=1.0.0,<2.0.0",  # aiohttp testing fixtures
     "coverage[toml]>=7.8.0,<8.0.0",  # Test coverage reporting
     "termcolor>=3.0.0,<4.0.0",       # Terminal color output formatting
     "pytest-timeout>=2.4.0",
@@ -238,7 +239,7 @@ addopts = """
     --tb=short
     --cov-branch
     --no-cov-on-fail
-    -m 'not performance'
+    -m 'not performance and not integration'
 """
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
@@ -253,4 +254,5 @@ filterwarnings = [
 ]
 markers = [
     "performance(threshold, description): marks tests as performance tests with threshold and description parameters",
+    "integration: marks tests as integration tests that require server setup and longer execution time",
 ]

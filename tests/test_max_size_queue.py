@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 
 @pytest.mark.asyncio
@@ -45,7 +45,7 @@ async def test_overflow_behavior():
     ],
 )
 async def test_overflow_logging(maxsize, items):
-    with patch("wazuh_dfn.services.max_size_queue.LOGGER") as mock_logger:
+    with patch("wazuh_dfn.max_size_queue.LOGGER") as mock_logger:
         queue = AsyncMaxSizeQueue(maxsize=maxsize)
 
         # Fill queue beyond capacity
@@ -63,7 +63,7 @@ async def test_overflow_logging(maxsize, items):
 
 @pytest.mark.asyncio
 async def test_log_threshold():
-    with patch("wazuh_dfn.services.max_size_queue.LOGGER") as mock_logger:
+    with patch("wazuh_dfn.max_size_queue.LOGGER") as mock_logger:
         queue = AsyncMaxSizeQueue(maxsize=100)
 
         # Log first discarded message

@@ -799,10 +799,19 @@ class APIConfig(BaseModel):
     )
     rate_limit: int = Field(
         default=100,
-        description="Requests per minute rate limit",
+        description="Requests per minute rate limit (0 to disable)",
         json_schema_extra={
             "env_var": "HEALTH_API_RATE_LIMIT",
             "cli": "--health-api-rate-limit",
+        },
+        ge=0,
+    )
+    rate_limit_window: int = Field(
+        default=60,
+        description="Rate limiting window in seconds",
+        json_schema_extra={
+            "env_var": "HEALTH_API_RATE_LIMIT_WINDOW",
+            "cli": "--health-api-rate-limit-window",
         },
         gt=0,
     )
@@ -895,6 +904,15 @@ class HealthConfig(BaseModel):
         json_schema_extra={
             "env_var": "HEALTH_MAX_HISTORY_ENTRIES",
             "cli": "--health-max-history-entries",
+        },
+        gt=0,
+    )
+    event_queue_size: int = Field(
+        default=50,
+        description="Health event queue maximum size to prevent memory issues",
+        json_schema_extra={
+            "env_var": "HEALTH_EVENT_QUEUE_SIZE",
+            "cli": "--health-event-queue-size",
         },
         gt=0,
     )

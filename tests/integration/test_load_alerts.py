@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.file_monitor import FileMonitor
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 
 TEST_DIR = Path(__file__).parent
 INTEGRATION_DIR = TEST_DIR / "integration_files"
@@ -38,6 +38,7 @@ async def write_alerts_to_temp_file(alerts):
 
 
 # Test cases
+@pytest.mark.integration
 def test_load_alerts():
     """Test that all JSON alert files can be loaded"""
     test_files = get_test_files()
@@ -59,6 +60,7 @@ def test_load_alerts():
         assert "level" in alert["rule"]
 
 
+@pytest.mark.integration
 def test_alert_types():
     """Test specific alert types"""
     # Test Windows login failure
@@ -72,6 +74,7 @@ def test_alert_types():
     assert f2b_alert["rule"]["id"] == "833002"
 
 
+@pytest.mark.integration
 def test_alert_geolocation():
     """Test alerts with geolocation data"""
     alerts_with_geo = [load_json_alert(f) for f in get_test_files() if "GeoLocation" in load_json_alert(f)]
@@ -86,6 +89,7 @@ def test_alert_geolocation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_file_monitor_processing():
     """Test FileMonitor processing of alerts"""
     # Load all test alerts
@@ -134,6 +138,7 @@ async def test_file_monitor_processing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_file_monitor_rotation():
     """Test FileMonitor handling file rotation"""
     # Load test alerts

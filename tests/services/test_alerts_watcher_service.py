@@ -21,9 +21,9 @@ import pytest
 from pydantic import ValidationError
 
 from wazuh_dfn.config import WazuhConfig
+from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.alerts_watcher_service import AlertsWatcherService
 from wazuh_dfn.services.file_monitor import CHUNK_SIZE, FileMonitor
-from wazuh_dfn.services.max_size_queue import AsyncMaxSizeQueue
 from wazuh_dfn.services.wazuh_service import WazuhService
 
 logging.basicConfig(level=logging.DEBUG)
