@@ -132,6 +132,46 @@ The health monitoring system provides real-time insights into service performanc
 
 The health monitoring system runs independently of the REST API and provides continuous monitoring even when the HTTP server is disabled.
 
+### Migration: LoggingService -> HealthService
+
+The project replaces the legacy periodic LoggingService (which emitted statistics at `LogConfig.interval` / `LOG_INTERVAL`) with the new HealthService and `HealthConfig` (`HEALTH_STATS_INTERVAL`).
+
+- The `LogConfig` still configures normal logging outputs (console/file/level). Only the periodic LoggingService is deprecated.
+- If you previously relied on `LOG_INTERVAL` or `log.interval` to emit periodic statistics, migrate that value to `HEALTH_STATS_INTERVAL` or `health.stats_interval`.
+- If `LOG_INTERVAL` is present at runtime, the application will log a migration warning to assist moving to the new health configuration.
+
+Quick examples — enable the health API server (disabled by default):
+
+Bash example:
+```bash
+# Enable health API server (defaults to disabled)
+export HEALTH_HTTP_SERVER_ENABLED=true
+export HEALTH_API_HOST=127.0.0.1
+export HEALTH_API_PORT=8080
+
+# Optional: secure the API with a bearer token
+export HEALTH_API_AUTH_TOKEN=your_secure_token
+
+# Start the service (example entrypoint)
+python -m wazuh_dfn
+```
+
+PowerShell example:
+```powershell
+# Enable health API server
+$env:HEALTH_HTTP_SERVER_ENABLED = 'true'
+$env:HEALTH_API_HOST = '127.0.0.1'
+$env:HEALTH_API_PORT = '8080'
+
+# Optional: secure the API with a bearer token
+$env:HEALTH_API_AUTH_TOKEN = 'your_secure_token'
+
+# Start the service (example entrypoint)
+python -m wazuh_dfn
+```
+
+Security note: the API is intentionally disabled by default and binds to `127.0.0.1` unless you explicitly change `HEALTH_API_HOST`. Use `HEALTH_API_AUTH_TOKEN` and IP allowlists to restrict access.
+
 ### Troubleshooting Health Monitoring
 
 **HTTP Server Issues:**

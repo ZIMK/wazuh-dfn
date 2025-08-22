@@ -33,36 +33,30 @@ class KafkaPerformanceData(TypedDict, total=False):
 
 
 # Status Enums (using StrEnum for better serialization)
-class OverallHealthStatus(StrEnum):
-    """Overall system health status."""
+class HealthStatus(StrEnum):
+    """Universal health status for all components and API responses."""
 
     HEALTHY = "HEALTHY"
     DEGRADED = "DEGRADED"
     CRITICAL = "CRITICAL"
+    ERROR = "ERROR"
 
 
 class WorkerStatus(StrEnum):
-    """Worker health status."""
+    """Worker-specific status."""
 
     ACTIVE = "ACTIVE"
     STALLED = "STALLED"
     IDLE = "IDLE"
 
 
-class KafkaStatus(StrEnum):
-    """Kafka service health status."""
+class ServiceStatus(StrEnum):
+    """Service-specific status (Kafka, databases, etc.)."""
 
     HEALTHY = "HEALTHY"
     SLOW = "SLOW"
     DISCONNECTED = "DISCONNECTED"
-
-
-class MonitorStatus(StrEnum):
-    """File monitor health status."""
-
-    ACTIVE = "ACTIVE"
     ERROR = "ERROR"
-    IDLE = "IDLE"
 
 
 # TypedDicts for events and real-time data
@@ -422,14 +416,14 @@ class QueueHealth(BaseHealthModel):
     avg_wait_time: float = Field(ge=0.0, description="Average time items wait in queue")
 
     # Health assessment
-    status: OverallHealthStatus = Field(default=OverallHealthStatus.HEALTHY)
+    status: HealthStatus = Field(default=HealthStatus.HEALTHY)
     timestamp: datetime = Field(default_factory=lambda: datetime.now())
 
     @computed_field
     @property
     def is_healthy(self) -> bool:
         """Computed field: True if queue is operating normally."""
-        return self.status == OverallHealthStatus.HEALTHY and self.utilization_percentage < 80.0
+        return self.status == HealthStatus.HEALTHY and self.utilization_percentage < 80.0
 
     @computed_field
     @property
@@ -474,7 +468,7 @@ class ServiceHealth(BaseHealthModel):
     slow_operations_count: int = Field(ge=0, description="Count of slow operations")
 
     # Health assessment
-    status: OverallHealthStatus = Field(default=OverallHealthStatus.HEALTHY)
+    status: HealthStatus = Field(default=HealthStatus.HEALTHY)
     error_rate: float = Field(ge=0.0, le=100.0, description="Error rate percentage")
     timestamp: datetime = Field(default_factory=lambda: datetime.now())
 
@@ -482,7 +476,7 @@ class ServiceHealth(BaseHealthModel):
     @property
     def is_healthy(self) -> bool:
         """Computed field: True if service is healthy."""
-        return self.is_connected and self.status == OverallHealthStatus.HEALTHY and self.error_rate < 5.0
+        return self.is_connected and self.status == HealthStatus.HEALTHY and self.error_rate < 5.0
 
     @computed_field
     @property
@@ -524,14 +518,14 @@ class SystemHealth(BaseHealthModel):
     load_average: list[float] = Field(default_factory=list, description="System load average [1min, 5min, 15min]")
 
     # Health assessment
-    status: OverallHealthStatus = Field(default=OverallHealthStatus.HEALTHY)
+    status: HealthStatus = Field(default=HealthStatus.HEALTHY)
     timestamp: datetime = Field(default_factory=lambda: datetime.now())
 
     @computed_field
     @property
     def is_healthy(self) -> bool:
         """Computed field: True if system resources are healthy."""
-        return self.cpu_percent < 80.0 and self.memory_percent < 85.0 and self.status == OverallHealthStatus.HEALTHY
+        return self.cpu_percent < 80.0 and self.memory_percent < 85.0 and self.status == HealthStatus.HEALTHY
 
     @computed_field
     @property
@@ -559,7 +553,7 @@ class HealthMetrics(BaseHealthModel):
     version: str = Field(default="1.0.0", description="Health metrics schema version")
 
     # Aggregated health status
-    overall_status: OverallHealthStatus = Field(description="Overall system health")
+    overall_status: HealthStatus = Field(description="Overall system health")
     health_score: float = Field(ge=0.0, le=100.0, description="Overall health score (0-100)")
 
     # Component health
@@ -577,7 +571,7 @@ class HealthMetrics(BaseHealthModel):
     @property
     def is_healthy(self) -> bool:
         """Computed field: True if overall system is healthy."""
-        return self.overall_status == OverallHealthStatus.HEALTHY
+        return self.overall_status == HealthStatus.HEALTHY
 
     @computed_field
     @property
@@ -654,7 +648,7 @@ def determine_worker_status(
     return WorkerStatus.ACTIVE
 
 
-def determine_queue_status(queue_health: QueueHealth, thresholds: HealthThresholds) -> OverallHealthStatus:
+def determine_queue_status(queue_health: QueueHealth, thresholds: HealthThresholds) -> HealthStatus:
     """Determine queue health status based on utilization and thresholds.
 
     Args:
@@ -662,21 +656,21 @@ def determine_queue_status(queue_health: QueueHealth, thresholds: HealthThreshol
         thresholds: Configurable threshold values
 
     Returns:
-        OverallHealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
+        HealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
     """
     utilization = queue_health.utilization_percentage
 
     if utilization >= thresholds.queue_critical_percentage:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
     elif utilization >= thresholds.queue_warning_percentage:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
     else:
-        return OverallHealthStatus.HEALTHY
+        return HealthStatus.HEALTHY
 
 
 def determine_service_status(  # noqa: PLR0911
     service_health: ServiceHealth, thresholds: HealthThresholds
-) -> OverallHealthStatus:
+) -> HealthStatus:
     """Determine service health status based on connection and performance.
 
     Args:
@@ -684,35 +678,33 @@ def determine_service_status(  # noqa: PLR0911
         thresholds: Configurable threshold values
 
     Returns:
-        OverallHealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
+        HealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
     """
     # Check connection status first
     if not service_health.is_connected:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
 
     # Check error rate
     if service_health.error_rate >= thresholds.service_error_rate_critical:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
     elif service_health.error_rate >= thresholds.service_error_rate_warning:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
 
     # Check response times for Kafka services
     if service_health.service_type == "kafka":
         if service_health.avg_response_time >= thresholds.kafka_extremely_slow_seconds:
-            return OverallHealthStatus.CRITICAL
+            return HealthStatus.CRITICAL
         elif service_health.avg_response_time >= thresholds.kafka_slow_operation_seconds:
-            return OverallHealthStatus.DEGRADED
+            return HealthStatus.DEGRADED
 
     # Check connection latency
     if service_health.connection_latency > thresholds.service_connection_timeout_seconds:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
 
-    return OverallHealthStatus.HEALTHY
+    return HealthStatus.HEALTHY
 
 
-def determine_system_status(  # noqa: PLR0911
-    system_health: SystemHealth, thresholds: HealthThresholds
-) -> OverallHealthStatus:
+def determine_system_status(system_health: SystemHealth, thresholds: HealthThresholds) -> HealthStatus:  # noqa: PLR0911
     """Determine system health status based on resource usage.
 
     Args:
@@ -720,28 +712,28 @@ def determine_system_status(  # noqa: PLR0911
         thresholds: Configurable threshold values
 
     Returns:
-        OverallHealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
+        HealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
     """
     # Check CPU usage
     if system_health.cpu_percent >= thresholds.system_cpu_critical_percentage:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
     elif system_health.cpu_percent >= thresholds.system_cpu_warning_percentage:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
 
     # Check memory usage
     if system_health.memory_percent >= thresholds.system_memory_critical_percentage:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
     elif system_health.memory_percent >= thresholds.system_memory_warning_percentage:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
 
     # Check file descriptor usage
     fd_usage = (system_health.open_files_count / system_health.max_open_files) * 100
     if fd_usage >= thresholds.open_files_critical_percentage:
-        return OverallHealthStatus.CRITICAL
+        return HealthStatus.CRITICAL
     elif fd_usage >= thresholds.open_files_warning_percentage:
-        return OverallHealthStatus.DEGRADED
+        return HealthStatus.DEGRADED
 
-    return OverallHealthStatus.HEALTHY
+    return HealthStatus.HEALTHY
 
 
 def determine_overall_status(  # noqa: PLR0912
@@ -750,7 +742,7 @@ def determine_overall_status(  # noqa: PLR0912
     services: list[ServiceHealth],
     system: SystemHealth,
     thresholds: HealthThresholds,
-) -> tuple[OverallHealthStatus, float]:
+) -> tuple[HealthStatus, float]:
     """Determine overall system health status with priority-based classification.
 
     Args:
@@ -766,49 +758,49 @@ def determine_overall_status(  # noqa: PLR0912
     # Priority order: CRITICAL > DEGRADED > HEALTHY
     # System issues are highest priority
     system_status = determine_system_status(system, thresholds)
-    if system_status == OverallHealthStatus.CRITICAL:
-        return OverallHealthStatus.CRITICAL, 0.0
+    if system_status == HealthStatus.CRITICAL:
+        return HealthStatus.CRITICAL, 0.0
 
     # Check for any critical services (especially Kafka)
     critical_services = 0
     degraded_services = 0
     for service in services:
         service_status = determine_service_status(service, thresholds)
-        if service_status == OverallHealthStatus.CRITICAL:
+        if service_status == HealthStatus.CRITICAL:
             critical_services += 1
-        elif service_status == OverallHealthStatus.DEGRADED:
+        elif service_status == HealthStatus.DEGRADED:
             degraded_services += 1
 
     if critical_services > 0:
-        return OverallHealthStatus.CRITICAL, 10.0  # Very low score for critical services
+        return HealthStatus.CRITICAL, 10.0  # Very low score for critical services
 
     # Check for critical queues
     critical_queues = 0
     degraded_queues = 0
     for queue in queues:
         queue_status = determine_queue_status(queue, thresholds)
-        if queue_status == OverallHealthStatus.CRITICAL:
+        if queue_status == HealthStatus.CRITICAL:
             critical_queues += 1
-        elif queue_status == OverallHealthStatus.DEGRADED:
+        elif queue_status == HealthStatus.DEGRADED:
             degraded_queues += 1
 
     if critical_queues > 0:
-        return OverallHealthStatus.CRITICAL, 20.0  # Low score for critical queues
+        return HealthStatus.CRITICAL, 20.0  # Low score for critical queues
 
     # Calculate health score based on component health
     total_components = len(workers) + len(queues) + len(services) + 1  # +1 for system
     healthy_components = 0
 
     # Count healthy components
-    if system_status == OverallHealthStatus.HEALTHY:
+    if system_status == HealthStatus.HEALTHY:
         healthy_components += 1
 
     for service in services:
-        if determine_service_status(service, thresholds) == OverallHealthStatus.HEALTHY:
+        if determine_service_status(service, thresholds) == HealthStatus.HEALTHY:
             healthy_components += 1
 
     for queue in queues:
-        if determine_queue_status(queue, thresholds) == OverallHealthStatus.HEALTHY:
+        if determine_queue_status(queue, thresholds) == HealthStatus.HEALTHY:
             healthy_components += 1
 
     for worker in workers:
@@ -818,12 +810,12 @@ def determine_overall_status(  # noqa: PLR0912
     health_score = (healthy_components / total_components) * 100
 
     # Determine overall status
-    if degraded_services > 0 or degraded_queues > 0 or system_status == OverallHealthStatus.DEGRADED:
-        return OverallHealthStatus.DEGRADED, max(health_score, 30.0)  # At least 30% for degraded
+    if degraded_services > 0 or degraded_queues > 0 or system_status == HealthStatus.DEGRADED:
+        return HealthStatus.DEGRADED, max(health_score, 30.0)  # At least 30% for degraded
 
     # Check worker health
     stalled_workers = sum(1 for w in workers if w.status == WorkerStatus.STALLED)
     if stalled_workers > len(workers) / 2:  # More than half workers stalled
-        return OverallHealthStatus.DEGRADED, max(health_score, 40.0)
+        return HealthStatus.DEGRADED, max(health_score, 40.0)
 
-    return OverallHealthStatus.HEALTHY, health_score
+    return HealthStatus.HEALTHY, health_score

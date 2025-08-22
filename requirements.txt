@@ -42,12 +42,12 @@ pytest-sugar==1.1.0
 pytest-timeout==2.4.0
 python-dotenv==1.1.1
 pyyaml==6.0.2
-ruff==0.12.9
+ruff==0.12.10
 sortedcontainers==2.4.0
 termcolor==3.1.0
-types-aiofiles==24.1.0.20250809
-types-psutil==7.0.0.20250801
-types-pyyaml==6.0.12.20250809
+types-aiofiles==24.1.0.20250822
+types-psutil==7.0.0.20250822
+types-pyyaml==6.0.12.20250822
 typing-extensions==4.14.1
 typing-inspection==0.4.1
 yarl==1.20.1

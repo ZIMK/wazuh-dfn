@@ -19,15 +19,14 @@ from pydantic import ValidationError
 from wazuh_dfn.health.models import (
     FileMonitorStatsData,
     HealthMetrics,
+    HealthStatus,
     HealthThresholds,
     KafkaInternalStatsData,
     KafkaPerformanceData,
-    KafkaStatus,
-    MonitorStatus,
-    OverallHealthStatus,
     QueueHealth,
     QueueStatsData,
     ServiceHealth,
+    ServiceStatus,
     SystemHealth,
     WorkerHealth,
     WorkerLastProcessedData,
@@ -162,25 +161,22 @@ def test_file_monitor_stats_data_structure():
 
 def test_status_enums():
     """Test status enum values and string conversion."""
-    # Test OverallHealthStatus
-    assert OverallHealthStatus.HEALTHY == "HEALTHY"
-    assert OverallHealthStatus.DEGRADED == "DEGRADED"
-    assert OverallHealthStatus.CRITICAL == "CRITICAL"
+    # Test HealthStatus
+    assert HealthStatus.HEALTHY == "HEALTHY"
+    assert HealthStatus.DEGRADED == "DEGRADED"
+    assert HealthStatus.CRITICAL == "CRITICAL"
+    assert HealthStatus.ERROR == "ERROR"
 
     # Test WorkerStatus
     assert WorkerStatus.ACTIVE == "ACTIVE"
     assert WorkerStatus.STALLED == "STALLED"
     assert WorkerStatus.IDLE == "IDLE"
 
-    # Test KafkaStatus
-    assert KafkaStatus.HEALTHY == "HEALTHY"
-    assert KafkaStatus.SLOW == "SLOW"
-    assert KafkaStatus.DISCONNECTED == "DISCONNECTED"
-
-    # Test MonitorStatus
-    assert MonitorStatus.ACTIVE == "ACTIVE"
-    assert MonitorStatus.ERROR == "ERROR"
-    assert MonitorStatus.IDLE == "IDLE"
+    # Test ServiceStatus (consolidated from KafkaStatus and MonitorStatus)
+    assert ServiceStatus.HEALTHY == "HEALTHY"
+    assert ServiceStatus.SLOW == "SLOW"
+    assert ServiceStatus.DISCONNECTED == "DISCONNECTED"
+    assert ServiceStatus.ERROR == "ERROR"
 
 
 def test_health_thresholds_model():
@@ -260,7 +256,7 @@ def test_queue_health_model():
         processing_rate=2.5,
         queue_full_events=5,
         avg_wait_time=0.25,
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
     )
 
     assert queue_health.queue_name == "alert_queue"
@@ -268,7 +264,7 @@ def test_queue_health_model():
     assert queue_health.max_size == 100
     assert queue_health.total_processed == 1000
     assert queue_health.queue_full_events == 5
-    assert queue_health.status == OverallHealthStatus.HEALTHY
+    assert queue_health.status == HealthStatus.HEALTHY
 
     # Test computed field
     assert queue_health.utilization_percentage == 10.0
@@ -279,7 +275,7 @@ def test_system_health_model():
     system_health = SystemHealth(
         process_id=12345,
         process_name="wazuh_dfn",
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
         cpu_percent=45.5,
         memory_percent=67.2,
         memory_usage_mb=512.0,
@@ -289,7 +285,7 @@ def test_system_health_model():
         threads_count=8,
     )
 
-    assert system_health.status == OverallHealthStatus.HEALTHY
+    assert system_health.status == HealthStatus.HEALTHY
     assert abs(system_health.cpu_percent - 45.5) < 0.01
     assert abs(system_health.memory_percent - 67.2) < 0.01
     assert system_health.open_files_count == 125
@@ -310,12 +306,12 @@ def test_service_health_model():
         max_response_time=0.15,
         slow_operations_count=5,
         error_rate=1.0,
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
     )
 
     assert service_health.service_name == "kafka_service"
     assert service_health.service_type == "kafka"
-    assert service_health.status == OverallHealthStatus.HEALTHY
+    assert service_health.status == HealthStatus.HEALTHY
     assert service_health.is_connected
     assert service_health.error_rate == 1.0
 
@@ -347,11 +343,11 @@ def test_health_metrics_model():
         processing_rate=5.5,
         queue_full_events=5,
         avg_wait_time=0.025,
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
     )
 
     system_health = SystemHealth(
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
         process_id=1234,
         process_name="wazuh_dfn",
         cpu_percent=45.5,
@@ -364,7 +360,7 @@ def test_health_metrics_model():
     )
 
     health_metrics = HealthMetrics(
-        overall_status=OverallHealthStatus.HEALTHY,
+        overall_status=HealthStatus.HEALTHY,
         health_score=85.5,
         timestamp=datetime.now(),
         system=system_health,
@@ -373,7 +369,7 @@ def test_health_metrics_model():
         services={},
     )
 
-    assert health_metrics.overall_status == OverallHealthStatus.HEALTHY
+    assert health_metrics.overall_status == HealthStatus.HEALTHY
     assert isinstance(health_metrics.timestamp, datetime)
     assert health_metrics.system == system_health
     assert len(health_metrics.workers) == 1
@@ -444,7 +440,7 @@ def test_determine_queue_status_function():
         avg_wait_time=0.01,
     )
     status = determine_queue_status(queue_health, thresholds)
-    assert status == OverallHealthStatus.HEALTHY
+    assert status == HealthStatus.HEALTHY
 
     # Test DEGRADED status (warning threshold)
     queue_health_degraded = QueueHealth(
@@ -458,7 +454,7 @@ def test_determine_queue_status_function():
         avg_wait_time=0.01,
     )
     status = determine_queue_status(queue_health_degraded, thresholds)
-    assert status == OverallHealthStatus.DEGRADED
+    assert status == HealthStatus.DEGRADED
 
     # Test CRITICAL status
     queue_health_critical = QueueHealth(
@@ -472,7 +468,7 @@ def test_determine_queue_status_function():
         avg_wait_time=0.01,
     )
     status = determine_queue_status(queue_health_critical, thresholds)
-    assert status == OverallHealthStatus.CRITICAL
+    assert status == HealthStatus.CRITICAL
 
 
 def test_determine_system_status_function():
@@ -492,7 +488,7 @@ def test_determine_system_status_function():
         threads_count=4,
     )
     status = determine_system_status(system_health, thresholds)
-    assert status == OverallHealthStatus.HEALTHY
+    assert status == HealthStatus.HEALTHY
 
     # Test DEGRADED status (CPU warning: default 80%)
     system_health_degraded = SystemHealth(
@@ -507,7 +503,7 @@ def test_determine_system_status_function():
         threads_count=4,
     )
     status = determine_system_status(system_health_degraded, thresholds)
-    assert status == OverallHealthStatus.DEGRADED
+    assert status == HealthStatus.DEGRADED
 
     # Test CRITICAL status (memory critical: default 95%)
     system_health_critical = SystemHealth(
@@ -522,7 +518,7 @@ def test_determine_system_status_function():
         threads_count=4,
     )
     status = determine_system_status(system_health_critical, thresholds)
-    assert status == OverallHealthStatus.CRITICAL
+    assert status == HealthStatus.CRITICAL
 
 
 def test_determine_service_status_function():
@@ -544,7 +540,7 @@ def test_determine_service_status_function():
         error_rate=0.5,  # Low error rate
     )
     status = determine_service_status(service_health, thresholds)
-    assert status == OverallHealthStatus.HEALTHY
+    assert status == HealthStatus.HEALTHY
 
     # Test CRITICAL status (disconnected)
     service_health_critical = ServiceHealth(
@@ -561,7 +557,7 @@ def test_determine_service_status_function():
         error_rate=0.5,
     )
     status = determine_service_status(service_health_critical, thresholds)
-    assert status == OverallHealthStatus.CRITICAL
+    assert status == HealthStatus.CRITICAL
 
     # Test DEGRADED status (high error rate)
     service_health_degraded = ServiceHealth(
@@ -578,7 +574,7 @@ def test_determine_service_status_function():
         error_rate=10.0,  # Above warning threshold (5.0%)
     )
     status = determine_service_status(service_health_degraded, thresholds)
-    assert status == OverallHealthStatus.DEGRADED
+    assert status == HealthStatus.DEGRADED
 
 
 def test_determine_overall_status_function():
@@ -646,7 +642,7 @@ def test_determine_overall_status_function():
         system=system_health,
         thresholds=thresholds,
     )
-    assert status == OverallHealthStatus.HEALTHY
+    assert status == HealthStatus.HEALTHY
     assert score > 0.0
 
     # Test CRITICAL when system is critical
@@ -668,7 +664,7 @@ def test_determine_overall_status_function():
         system=system_health_critical,
         thresholds=thresholds,
     )
-    assert status == OverallHealthStatus.CRITICAL
+    assert status == HealthStatus.CRITICAL
     assert score == 0.0  # Known to be exactly 0.0 for critical
 
     # Test DEGRADED when some components degraded
@@ -692,7 +688,7 @@ def test_determine_overall_status_function():
         system=system_health,
         thresholds=thresholds,
     )
-    assert status == OverallHealthStatus.DEGRADED
+    assert status == HealthStatus.DEGRADED
 
     # Test empty lists
     status, score = determine_overall_status(
@@ -702,7 +698,7 @@ def test_determine_overall_status_function():
         system=system_health,
         thresholds=thresholds,
     )
-    assert status == OverallHealthStatus.HEALTHY
+    assert status == HealthStatus.HEALTHY
 
 
 def test_model_serialization():
@@ -749,7 +745,7 @@ def test_model_validation_edge_cases():
         processing_rate=0.0,
         queue_full_events=0,
         avg_wait_time=0.0,
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
     )
 
     # Should handle minimal case gracefully
@@ -757,7 +753,7 @@ def test_model_validation_edge_cases():
 
     # Test SystemHealth with minimal valid values
     system_health = SystemHealth(
-        status=OverallHealthStatus.HEALTHY,
+        status=HealthStatus.HEALTHY,
         process_id=1,
         process_name="test",
         cpu_percent=0.0,

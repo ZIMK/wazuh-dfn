@@ -19,6 +19,7 @@ import pytest
 from wazuh_dfn.config import HealthConfig
 from wazuh_dfn.health.event_service import HealthEventService
 from wazuh_dfn.health.models import KafkaPerformanceData, WorkerPerformanceData
+from wazuh_dfn.health.protocols import QueueMetricsProvider
 from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
 
@@ -35,25 +36,35 @@ def health_config():
 
 
 @pytest.fixture
-def health_event_service(health_config):
+def shutdown_event():
+    """Create a shutdown event for testing."""
+    return asyncio.Event()
+
+
+@pytest.fixture
+def health_event_service(health_config, shutdown_event):
     """Create a HealthEventService for testing."""
-    return HealthEventService(health_config)
+    return HealthEventService(health_config, shutdown_event)
 
 
 @pytest.mark.asyncio
-async def test_health_event_service_initialization(health_config):
+async def test_health_event_service_initialization(health_config, shutdown_event):
     """Test HealthEventService initialization."""
-    service = HealthEventService(health_config)
+    service = HealthEventService(health_config, shutdown_event)
 
     assert hasattr(service, "_event_queue")
-    assert isinstance(service._event_queue, asyncio.Queue)
+    assert isinstance(service._event_queue, AsyncMaxSizeQueue)
     assert service._event_queue.qsize() == 0
+    assert hasattr(service, "_queue_stats")
+    assert hasattr(service, "_stats_lock")
+    assert hasattr(service, "_last_error")
+    assert service._last_error is None
 
 
 @pytest.mark.asyncio
-async def test_health_event_service_with_custom_queue(health_config):
+async def test_health_event_service_with_custom_queue(health_config, shutdown_event):
     """Test HealthEventService initialization with config."""
-    service = HealthEventService(health_config)
+    service = HealthEventService(health_config, shutdown_event)
 
     assert service._event_queue is not None
     assert service.event_queue.maxsize == 50  # Bounded queue from config
@@ -165,7 +176,8 @@ async def test_push_worker_last_processed_event(health_event_service):
 async def test_event_queue_overflow_behavior(health_config):
     """Test event queue behavior when it reaches capacity."""
     # Create service and replace its queue with a small one
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
     service._event_queue = AsyncMaxSizeQueue(maxsize=2)
 
     # Fill queue to capacity
@@ -185,7 +197,8 @@ async def test_event_queue_overflow_behavior(health_config):
 @pytest.mark.asyncio
 async def test_concurrent_event_pushing(health_config):
     """Test concurrent event pushing for thread safety."""
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
 
     # Create multiple concurrent pushers
     async def push_events(worker_id: int) -> None:
@@ -216,7 +229,8 @@ async def test_concurrent_event_pushing(health_config):
 @pytest.mark.asyncio
 async def test_event_processing_integration(health_config):
     """Test integration between event service and health service processing."""
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
 
     # Create a mock processor that collects events
     processed_events = []
@@ -268,7 +282,8 @@ async def test_event_processing_integration(health_config):
 @pytest.mark.asyncio
 async def test_event_data_integrity(health_config):
     """Test that event data maintains integrity through push/pop cycles."""
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
 
     # Test complex data structure
     complex_data: KafkaPerformanceData = {
@@ -291,7 +306,8 @@ async def test_event_data_integrity(health_config):
 @pytest.mark.asyncio
 async def test_event_metadata(health_config):
     """Test event metadata is properly added."""
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
 
     before_time = time.time()
     await service.push_worker_performance(
@@ -328,7 +344,8 @@ async def test_event_metadata(health_config):
 @pytest.mark.asyncio
 async def test_queue_task_done_integration(health_config):
     """Test that queue task_done functionality works correctly."""
-    service = HealthEventService(health_config)
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
 
     # Push some events
     await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
@@ -348,3 +365,220 @@ async def test_queue_task_done_integration(health_config):
 
     # Queue should be empty
     assert service.event_queue.qsize() == 0
+
+
+# QueueMetricsProvider Protocol Tests
+
+
+def test_queue_metrics_provider_protocol_compliance(health_event_service):
+    """Test that HealthEventService implements QueueMetricsProvider protocol."""
+    # Test protocol compliance using isinstance
+    assert isinstance(health_event_service, QueueMetricsProvider)
+
+    # Verify all required methods exist
+    assert hasattr(health_event_service, "get_queue_stats")
+    assert hasattr(health_event_service, "get_queue_name")
+    assert hasattr(health_event_service, "is_queue_healthy")
+    assert hasattr(health_event_service, "get_health_status")
+    assert hasattr(health_event_service, "get_service_metrics")
+    assert hasattr(health_event_service, "get_last_error")
+
+
+def test_get_queue_stats(health_event_service):
+    """Test get_queue_stats method returns correct QueueStatsData."""
+    queue_stats = health_event_service.get_queue_stats()
+
+    # Verify structure matches QueueStatsData TypedDict
+    assert "total_processed" in queue_stats
+    assert "max_queue_size" in queue_stats
+    assert "queue_full_count" in queue_stats
+    assert "last_queue_size" in queue_stats
+
+    # Verify initial values
+    assert queue_stats["total_processed"] == 0
+    assert queue_stats["max_queue_size"] == 50  # From config
+    assert queue_stats["queue_full_count"] == 0
+    assert queue_stats["last_queue_size"] == 0
+
+
+def test_get_queue_name(health_event_service):
+    """Test get_queue_name returns correct identifier."""
+    queue_name = health_event_service.get_queue_name()
+    assert queue_name == "health_event_queue"
+    assert isinstance(queue_name, str)
+
+
+def test_is_queue_healthy(health_event_service):
+    """Test is_queue_healthy method."""
+    # Should be healthy initially (not full and service running)
+    assert health_event_service.is_queue_healthy() is True
+
+    # Should be unhealthy if shutdown event is set
+    health_event_service._shutdown_event.set()
+    assert health_event_service.is_queue_healthy() is False
+
+
+def test_get_health_status(health_event_service):
+    """Test get_health_status method."""
+    # Should be healthy initially (shutdown event not set)
+    assert health_event_service.get_health_status() is True
+
+    # Should be unhealthy when shutdown event is set
+    health_event_service._shutdown_event.set()
+    assert health_event_service.get_health_status() is False
+
+
+def test_get_service_metrics(health_event_service):
+    """Test get_service_metrics returns comprehensive metrics."""
+    metrics = health_event_service.get_service_metrics()
+
+    # Verify structure
+    assert "health_status" in metrics
+    assert "queue_stats" in metrics
+    assert "queue_name" in metrics
+    assert "is_queue_healthy" in metrics
+    assert "event_queue_size" in metrics
+    assert "last_error" in metrics
+
+    # Verify initial values
+    assert metrics["health_status"] is True
+    assert metrics["queue_name"] == "health_event_queue"
+    assert metrics["is_queue_healthy"] is True
+    assert metrics["event_queue_size"] == 0
+    assert metrics["last_error"] is None
+
+    # Verify queue_stats is properly nested
+    queue_stats = metrics["queue_stats"]
+    assert isinstance(queue_stats, dict)
+    assert "total_processed" in queue_stats
+
+
+def test_get_last_error(health_event_service):
+    """Test get_last_error method."""
+    # Should be None initially
+    assert health_event_service.get_last_error() is None
+
+    # Should return error message after an error
+    test_error = "Test error message"
+    health_event_service._last_error = test_error
+    assert health_event_service.get_last_error() == test_error
+
+
+@pytest.mark.asyncio
+async def test_queue_stats_tracking(health_event_service):
+    """Test that queue statistics are properly tracked during operations."""
+    # Initial state
+    initial_stats = health_event_service.get_queue_stats()
+    assert initial_stats["total_processed"] == 0
+    assert initial_stats["last_queue_size"] == 0
+
+    # Push some events and verify stats update
+    await health_event_service.push_worker_performance(
+        "test_worker",
+        {
+            "timestamp": time.time(),
+            "alerts_processed": 10,
+            "rate": 1.0,
+            "avg_processing": 0.01,
+            "recent_avg": 0.01,
+            "min_time": 0.001,
+            "max_time": 0.02,
+            "slow_alerts": 0,
+            "extremely_slow_alerts": 0,
+            "last_processing_time": time.time(),
+            "last_alert_id": "alert-test",
+        },
+    )
+
+    await health_event_service.push_kafka_performance({"total_time": 0.1, "topic": "test"})
+
+    # Check stats updated
+    updated_stats = health_event_service.get_queue_stats()
+    assert updated_stats["total_processed"] == 2
+    assert updated_stats["last_queue_size"] == 2
+
+    # Consume events and verify stats update
+    await health_event_service.get_next_event()
+    await health_event_service.get_next_event()
+
+    consumed_stats = health_event_service.get_queue_stats()
+    assert consumed_stats["last_queue_size"] == 0
+
+
+@pytest.mark.asyncio
+async def test_queue_full_tracking(health_config):
+    """Test that queue full events are properly tracked."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Replace with small queue to test full condition
+    service._event_queue = AsyncMaxSizeQueue(maxsize=2)
+
+    # Fill queue to capacity
+    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
+    await service.push_kafka_performance({"total_time": 0.2, "topic": "test2"})
+
+    # Verify queue is full
+    assert service._event_queue.full()
+
+    # Check stats reflect the full queue
+    stats = service.get_queue_stats()
+    assert stats["last_queue_size"] == 2
+    assert stats["max_queue_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_error_tracking_in_push_methods(health_config):
+    """Test that errors are properly tracked during push operations."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Create a scenario that might cause errors by filling the queue
+    service._event_queue = AsyncMaxSizeQueue(maxsize=1)
+
+    # Fill the queue
+    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
+
+    # Verify initial state
+    assert service.get_last_error() is None
+
+    # The queue is now full, but our implementation should handle this gracefully
+    # and not raise exceptions, so last_error should remain None
+    with contextlib.suppress(TimeoutError):
+        # This might block or handle gracefully depending on implementation
+        await asyncio.wait_for(service.push_kafka_performance({"total_time": 0.2, "topic": "test2"}), timeout=0.1)
+
+    # The error handling is implementation-specific
+    # Our current implementation should not set errors for queue full conditions
+
+
+@pytest.mark.asyncio
+async def test_get_next_event_error_handling(health_config):
+    """Test error handling in get_next_event method."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Should return None when queue is empty (timeout)
+    event = await service.get_next_event()
+    assert event is None
+
+    # Should not set error for empty queue timeout
+    assert service.get_last_error() is None
+
+
+@pytest.mark.asyncio
+async def test_health_status_integration_with_queue_health(health_event_service):
+    """Test integration between health status and queue health."""
+    # Initially both should be healthy
+    assert health_event_service.get_health_status() is True
+    assert health_event_service.is_queue_healthy() is True
+
+    # When service becomes unhealthy, queue should also be unhealthy
+    health_event_service._shutdown_event.set()
+    assert health_event_service.get_health_status() is False
+    assert health_event_service.is_queue_healthy() is False
+
+    # Service metrics should reflect this
+    metrics = health_event_service.get_service_metrics()
+    assert metrics["health_status"] is False
+    assert metrics["is_queue_healthy"] is False

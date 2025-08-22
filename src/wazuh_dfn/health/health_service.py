@@ -12,7 +12,7 @@ import sys
 import time
 from contextlib import suppress
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 try:
     import psutil
@@ -29,8 +29,8 @@ from wazuh_dfn.service_container import ServiceContainer
 
 from .models import (
     HealthMetrics,
+    HealthStatus,
     HealthThresholds,
-    OverallHealthStatus,
     QueueHealth,
     ServiceHealth,
     SystemHealth,
@@ -39,11 +39,8 @@ from .models import (
     determine_overall_status,
 )
 
-if TYPE_CHECKING:
-    pass
-
-
-logger = logging.getLogger(__name__)
+# Logging
+LOGGER = logging.getLogger(__name__)
 
 
 class HealthService:
@@ -60,8 +57,9 @@ class HealthService:
     def __init__(
         self,
         container: ServiceContainer,
-        config: HealthConfig | None = None,
-        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
+        config: HealthConfig,
+        event_queue: asyncio.Queue[dict[str, Any]],
+        shutdown_event: asyncio.Event,
     ) -> None:
         """Initialize health service.
 
@@ -71,7 +69,6 @@ class HealthService:
             event_queue: Optional event queue from HealthEventService for real-time events
         """
         self.container = container
-        self.logger = logging.getLogger(f"{__name__}.HealthService")
         self._config = config or HealthConfig()
 
         # Caching
@@ -82,7 +79,7 @@ class HealthService:
         # Event processing - direct queue injection (cleaner than service discovery)
         self._event_queue_reference = event_queue
         self._event_processing_task: asyncio.Task | None = None
-        self._shutdown_event = asyncio.Event()  # LoggingService compatibility - performance tracking
+        self._shutdown_event = shutdown_event
         self._worker_performance_data: dict[str, dict[str, Any]] = {}
         self._worker_last_processed: dict[str, dict[str, Any]] = {}
         self._kafka_performance_data = {
@@ -104,56 +101,23 @@ class HealthService:
         # Note: ServiceContainer will register this service explicitly
         # to avoid circular dependency during initialization
 
-    @classmethod
-    def with_legacy_log_config(
-        cls,
-        container: ServiceContainer,
-        log_config: Any,  # Import would create circular dependency
-        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
-    ) -> HealthService:
-        """Create HealthService with legacy LogConfig migration.
-
-        Provides smooth migration path from LoggingService to HealthService.
-        Logs warning about using old LOG_INTERVAL and suggests new approach.
-
-        Args:
-            container: Service container
-            log_config: Legacy LogConfig object with interval attribute
-            event_queue: Optional event queue
-
-        Returns:
-            HealthService configured with legacy values and migration warnings
-        """
-        logger = logging.getLogger(f"{__name__}.HealthService")
-
-        logger.warning(
-            f"Using legacy LogConfig.interval ({log_config.interval}s) for health monitoring. "
-            f"Consider migrating to HealthConfig with HEALTH_STATS_INTERVAL environment variable. "
-            f"See documentation for full configuration options."
-        )
-
-        # Create HealthConfig using legacy interval
-        health_config = HealthConfig.with_legacy_log_config_warning(log_config)
-
-        return cls(container=container, config=health_config, event_queue=event_queue)
-
     async def start(self) -> None:
         """Start health service with periodic logging and event processing."""
-        self.logger.info("Starting health service")
+        LOGGER.info("Starting health service")
 
         # Start event processing if queue is available
         if self._event_queue_reference:
             self._event_processing_task = asyncio.create_task(self._process_events_loop())
-            self.logger.info("Started real-time event processing")
+            LOGGER.info("Started real-time event processing")
         else:
-            self.logger.info("No event queue provided - running without real-time events")
+            LOGGER.info("No event queue provided - running without real-time events")
 
         # Start periodic logging (LoggingService compatibility)
         await self._start_periodic_logging()
 
     async def stop(self) -> None:
         """Stop health service and cleanup."""
-        self.logger.info("Stopping health service")
+        LOGGER.info("Stopping health service")
         self._shutdown_event.set()
 
         # Stop event processing
@@ -168,20 +132,21 @@ class HealthService:
 
     async def _start_periodic_logging(self) -> None:
         """Start periodic statistics logging."""
+        LOGGER.info("Starting periodic logging")
         try:
             while not self._shutdown_event.is_set():
                 await self._log_stats()
                 with suppress(TimeoutError):
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=self._config.stats_interval)
         except asyncio.CancelledError:
-            self.logger.info("Periodic logging cancelled")
+            LOGGER.info("Periodic logging cancelled")
 
     async def _process_events_loop(self) -> None:
         """Process events from HealthEventService queue."""
         if not self._event_queue_reference:
             return
 
-        self.logger.info("Started real-time event processing")
+        LOGGER.info("Started real-time event processing")
 
         try:
             while not self._shutdown_event.is_set():
@@ -191,7 +156,7 @@ class HealthService:
                 except TimeoutError:
                     continue
         except asyncio.CancelledError:
-            self.logger.info("Event processing cancelled")
+            LOGGER.info("Event processing cancelled")
 
     async def _process_health_event(self, event: dict[str, Any]) -> None:
         """Process a health event."""
@@ -206,7 +171,7 @@ class HealthService:
                 await self._handle_kafka_performance_event(event)
 
         except Exception as e:
-            self.logger.error(f"Error processing event: {e}")
+            LOGGER.error(f"Error processing event: {e}")
 
     async def _handle_worker_performance_event(self, event: dict[str, Any]) -> None:
         """Handle worker performance event."""
@@ -257,7 +222,7 @@ class HealthService:
                 performance_data.get("extremely_slow_alerts", 0) > 0
                 and performance_data.get("last_processing_time", 0) > 5.0
             ):
-                self.logger.warning(
+                LOGGER.warning(
                     f"SLOW WORKER: {worker_name} processed alert in {performance_data['last_processing_time']:.2f}s. "
                     f"Alert ID: {performance_data.get('last_alert_id', 'unknown')}"
                 )
@@ -425,7 +390,7 @@ class HealthService:
         self._cached_metrics = None
 
         cleaned_count = len(self._worker_performance_data) + len(self._worker_last_processed)
-        self.logger.debug(
+        LOGGER.debug(
             f"Cleaned up health data (retention: {retention_seconds}s, "
             f"max entries: {max_entries}, remaining: {cleaned_count})"
         )
@@ -580,7 +545,7 @@ class HealthService:
             )
 
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            self.logger.warning(f"Could not collect system metrics: {e}")
+            LOGGER.warning(f"Could not collect system metrics: {e}")
             return SystemHealth(
                 process_id=1,
                 process_name="error",
@@ -626,7 +591,7 @@ class HealthService:
                 workers[worker_name] = worker
 
             except Exception as e:
-                self.logger.error(f"Error collecting worker health for {worker_name}: {e}")
+                LOGGER.error(f"Error collecting worker health for {worker_name}: {e}")
                 continue
 
         return workers
@@ -660,7 +625,7 @@ class HealthService:
                 queues["alert_queue"] = queue
 
         except Exception as e:
-            self.logger.error(f"Error collecting queue health: {e}")
+            LOGGER.error(f"Error collecting queue health: {e}")
 
         return queues
 
@@ -705,7 +670,7 @@ class HealthService:
                 services["kafka"] = kafka_health
 
         except Exception as e:
-            self.logger.error(f"Error collecting service health: {e}")
+            LOGGER.error(f"Error collecting service health: {e}")
 
         return services
 
@@ -728,7 +693,7 @@ class HealthService:
             await self._log_kafka_performance()
 
         except Exception as e:
-            self.logger.error(f"Error collecting monitoring stats: {e}", exc_info=True)
+            LOGGER.error(f"Error collecting monitoring stats: {e}", exc_info=True)
 
     async def _log_queue_stats(self) -> None:
         """Log queue statistics."""
@@ -736,7 +701,7 @@ class HealthService:
             queue_providers = self.container.get_queue_providers()
 
             if not queue_providers:
-                self.logger.debug("No queue providers available")
+                LOGGER.warning("No queue providers available")
                 return
 
             for queue_name, provider in queue_providers.items():
@@ -748,25 +713,23 @@ class HealthService:
                     fill_percentage = (queue_size / max_size) * 100 if max_size > 0 else 0
 
                     if fill_percentage > self._critical_fill_threshold:
-                        self.logger.error(
+                        LOGGER.error(
                             f"CRITICAL: Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})!"
                         )
                     elif fill_percentage > self._warning_fill_threshold:
-                        self.logger.warning(
-                            f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})!"
-                        )
+                        LOGGER.warning(f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})!")
                     else:
-                        self.logger.info(f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})")
+                        LOGGER.info(f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})")
 
-                    self.logger.info(
+                    LOGGER.info(
                         f"Queue {queue_name} stats: {stats.get('total_processed', 0)} total processed, "
                         f"max size reached: {max_size}, "
                         f"queue full warnings: {stats.get('queue_full_count', 0)}"
                     )
                 except Exception as e:
-                    self.logger.error(f"Error getting queue stats for {queue_name}: {e}")
+                    LOGGER.error(f"Error getting queue stats for {queue_name}: {e}")
         except Exception as e:
-            self.logger.error(f"Error logging queue stats: {e}")
+            LOGGER.error(f"Error logging queue stats: {e}")
 
     def _log_system_metrics(self) -> None:
         """Log system metrics."""
@@ -775,22 +738,22 @@ class HealthService:
 
         try:
             memory_percent = self.process.memory_percent()
-            self.logger.info(f"Current memory usage: {memory_percent:.2f}%")
+            LOGGER.info(f"Current memory usage: {memory_percent:.2f}%")
         except Exception as e:
-            self.logger.error(f"Error getting memory usage: {e}")
+            LOGGER.error(f"Error getting memory usage: {e}")
 
         if psutil:
             try:
                 cpu_percent = psutil.cpu_percent()
-                self.logger.info(f"CPU usage (avg): {cpu_percent:.2f}%")
+                LOGGER.info(f"CPU usage (avg): {cpu_percent:.2f}%")
             except Exception as e:
-                self.logger.debug(f"Error getting CPU average: {e}")
+                LOGGER.debug(f"Error getting CPU average: {e}")
 
         try:
             open_files = self.process.open_files()
-            self.logger.info(f"Current open files: {len(open_files)}")
+            LOGGER.info(f"Current open files: {open_files}")
         except Exception as e:
-            self.logger.error(f"Error getting open files: {e}")
+            LOGGER.error(f"Error getting open files: {e}")
 
     def _log_service_status(self) -> None:
         """Log service status."""
@@ -798,25 +761,29 @@ class HealthService:
             kafka_providers = self.container.get_kafka_providers()
 
             if not kafka_providers:
-                self.logger.debug("No Kafka providers available")
+                LOGGER.warning("No Kafka providers available")
                 return
 
             for service_name, provider in kafka_providers.items():
                 try:
                     is_healthy = provider.get_health_status() if hasattr(provider, "get_health_status") else True
                     if is_healthy:
-                        self.logger.info(f"Service {service_name} is alive")
+                        LOGGER.info(f"Service {service_name} is alive")
                     else:
-                        self.logger.warning(f"Service {service_name} is not healthy")
+                        LOGGER.warning(f"Service {service_name} is not healthy")
                 except Exception as e:
-                    self.logger.error(f"Error checking service {service_name}: {e}")
+                    LOGGER.error(f"Error checking service {service_name}: {e}")
         except Exception as e:
-            self.logger.error(f"Error logging service status: {e}")
+            LOGGER.error(f"Error logging service status: {e}")
 
     async def _log_worker_performance(self) -> None:
         """Log worker performance."""
         try:
             worker_providers = self.container.get_worker_providers()
+
+            if worker_providers is None or worker_providers == {}:
+                LOGGER.warning("No worker providers available")
+                return
 
             async with self._perf_lock:
                 worker_perf_data = self._worker_performance_data.copy()
@@ -832,12 +799,12 @@ class HealthService:
 
                     # Log with stall detection
                     if worker_seconds_ago > 60:
-                        self.logger.warning(
+                        LOGGER.warning(
                             f"Worker {name} last processed: {worker_last_processed}, "
                             f"{worker_seconds_ago:.2f} seconds ago (STALLED)"
                         )
                     else:
-                        self.logger.info(
+                        LOGGER.info(
                             f"Worker {name} last processed: {worker_last_processed}, "
                             f"{worker_seconds_ago:.2f} seconds ago"
                         )
@@ -845,7 +812,7 @@ class HealthService:
                     # Log performance metrics if available
                     if name in worker_perf_data:
                         perf = worker_perf_data[name]
-                        self.logger.info(
+                        LOGGER.info(
                             f"Worker {name} performance: {perf.get('alerts_processed', 0)} alerts processed, "
                             f"rate: {perf.get('rate', 0):.2f} alerts/sec, "
                             f"avg: {perf.get('avg_processing', 0)*1000:.2f}ms, "
@@ -854,15 +821,19 @@ class HealthService:
                             f"extremely slow: {perf.get('extremely_slow_alerts', 0)}"
                         )
                 except Exception as e:
-                    self.logger.error(f"Error logging worker performance for {name}: {e}")
+                    LOGGER.error(f"Error logging worker performance for {name}: {e}")
         except Exception as e:
-            self.logger.error(f"Error logging worker performance: {e}")
+            LOGGER.error(f"Error logging worker performance: {e}")
 
     async def _log_kafka_performance(self) -> None:
         """Log Kafka performance."""
         try:
             async with self._perf_lock:
                 kafka_perf = self._kafka_performance_data.copy()
+
+            if not kafka_perf:
+                LOGGER.warning("No Kafka performance data available")
+                return
 
             if kafka_perf["total_operations"] > 0:
                 slow_pct = (
@@ -871,7 +842,7 @@ class HealthService:
                     else 0
                 )
 
-                self.logger.info(
+                LOGGER.info(
                     f"Kafka performance: {kafka_perf['total_operations']} operations, "
                     f"{kafka_perf['slow_operations']} slow ({slow_pct:.1f}%), "
                     f"max time: {kafka_perf['max_operation_time']:.2f}s"
@@ -879,14 +850,14 @@ class HealthService:
 
                 if kafka_perf["slow_operations"] > 0 and kafka_perf["recent_stage_times"]:
                     latest = kafka_perf["recent_stage_times"][-1]
-                    self.logger.info(
+                    LOGGER.info(
                         f"Latest slow Kafka operation: "
                         f"Prep: {latest.get('prep', 0):.2f}s, "
                         f"Encode: {latest.get('encode', 0):.2f}s, "
                         f"Send: {latest.get('send', 0):.2f}s"
                     )
         except Exception as e:
-            self.logger.error(f"Error logging Kafka performance: {e}")
+            LOGGER.error(f"Error logging Kafka performance: {e}")
 
     # Health metrics API
     def get_health_metrics(self) -> HealthMetrics:
@@ -968,7 +939,7 @@ class HealthService:
                 threads_count=process_info.get("num_threads", 1),
             )
         except Exception as e:
-            self.logger.error(f"Error creating system health: {e}")
+            LOGGER.error(f"Error creating system health: {e}")
             return SystemHealth(
                 process_id=0,
                 process_name="error",
@@ -1008,7 +979,7 @@ class HealthService:
                     health_score=0.8 if is_healthy else 0.2,
                 )
             except Exception as e:
-                self.logger.error(f"Error collecting worker health for {name}: {e}")
+                LOGGER.error(f"Error collecting worker health for {name}: {e}")
                 workers[name] = WorkerHealth(
                     worker_name=name,
                     alerts_processed=0,
@@ -1039,11 +1010,11 @@ class HealthService:
                 max_size = stats.get("max_queue_size", 100)
                 utilization = (current_size / max_size) * 100 if max_size > 0 else 0.0
 
-                status = OverallHealthStatus.HEALTHY
+                status = HealthStatus.HEALTHY
                 if utilization > 90:
-                    status = OverallHealthStatus.CRITICAL
+                    status = HealthStatus.CRITICAL
                 elif utilization > 70:
-                    status = OverallHealthStatus.DEGRADED
+                    status = HealthStatus.DEGRADED
 
                 queues[name] = QueueHealth(
                     queue_name=name,
@@ -1057,7 +1028,7 @@ class HealthService:
                     status=status,
                 )
             except Exception as e:
-                self.logger.error(f"Error collecting queue health for {name}: {e}")
+                LOGGER.error(f"Error collecting queue health for {name}: {e}")
                 queues[name] = QueueHealth(
                     queue_name=name,
                     current_size=0,
@@ -1067,7 +1038,7 @@ class HealthService:
                     processing_rate=0.0,
                     queue_full_events=1,
                     avg_wait_time=0.0,
-                    status=OverallHealthStatus.CRITICAL,
+                    status=HealthStatus.CRITICAL,
                 )
 
         return queues
@@ -1093,10 +1064,10 @@ class HealthService:
                     max_response_time=1.0 if is_healthy else 10.0,
                     slow_operations_count=5 if is_healthy else 50,
                     error_rate=5.0 if is_healthy else 50.0,
-                    status=OverallHealthStatus.HEALTHY if is_healthy else OverallHealthStatus.CRITICAL,
+                    status=HealthStatus.HEALTHY if is_healthy else HealthStatus.CRITICAL,
                 )
             except Exception as e:
-                self.logger.error(f"Error collecting service health for {name}: {e}")
+                LOGGER.error(f"Error collecting service health for {name}: {e}")
                 services[name] = ServiceHealth(
                     service_name=name,
                     service_type="kafka",
@@ -1109,27 +1080,27 @@ class HealthService:
                     max_response_time=0.0,
                     slow_operations_count=1,
                     error_rate=100.0,
-                    status=OverallHealthStatus.CRITICAL,
+                    status=HealthStatus.CRITICAL,
                 )
 
         return services
 
-    def _calculate_overall_status(self, workers: dict, services: dict, system: SystemHealth) -> OverallHealthStatus:
+    def _calculate_overall_status(self, workers: dict, services: dict, system: SystemHealth) -> HealthStatus:
         """Calculate overall system status."""
         if not system.is_healthy:
-            return OverallHealthStatus.CRITICAL
+            return HealthStatus.CRITICAL
 
         if workers and not any(w.is_healthy for w in workers.values()):
-            return OverallHealthStatus.CRITICAL
+            return HealthStatus.CRITICAL
 
         if services and not any(s.is_healthy for s in services.values()):
-            return OverallHealthStatus.CRITICAL
+            return HealthStatus.CRITICAL
 
         # Check for degraded performance
         if workers and len([w for w in workers.values() if w.is_healthy]) < len(workers):
-            return OverallHealthStatus.DEGRADED
+            return HealthStatus.DEGRADED
 
-        return OverallHealthStatus.HEALTHY
+        return HealthStatus.HEALTHY
 
     def _calculate_health_score(self, workers: dict, services: dict, system: SystemHealth) -> float:
         """Calculate overall health score."""
@@ -1175,9 +1146,9 @@ class HealthService:
                 total_services == 0 or healthy_services > 0
             )
 
-            status = "HEALTHY" if is_operational else "CRITICAL"
+            status = HealthStatus.HEALTHY if is_operational else HealthStatus.CRITICAL
             if is_operational and (healthy_workers < total_workers or healthy_services < total_services):
-                status = "DEGRADED"
+                status = HealthStatus.DEGRADED
 
             return {
                 "status": status,
@@ -1186,8 +1157,8 @@ class HealthService:
                 "services": {"healthy": healthy_services, "total": total_services},
             }
         except Exception as e:
-            self.logger.error(f"Error in quick health check: {e}")
-            return {"status": "ERROR", "timestamp": time.time(), "error": "Health check failed"}
+            LOGGER.error(f"Error in quick health check: {e}")
+            return {"status": HealthStatus.ERROR, "timestamp": time.time(), "error": "Health check failed"}
 
     def get_worker_status(self) -> dict[str, Any]:
         """Get detailed worker status information."""
@@ -1215,7 +1186,7 @@ class HealthService:
                     "timestamp": performance["timestamp"],
                 }
             except Exception as e:
-                self.logger.error(f"Error collecting worker status for {name}: {e}")
+                LOGGER.error(f"Error collecting worker status for {name}: {e}")
                 worker_status[name] = {"healthy": False, "error": str(e), "timestamp": time.time()}
 
         return {
@@ -1227,3 +1198,241 @@ class HealthService:
             },
             "timestamp": time.time(),
         }
+
+    def get_detailed_health(self) -> dict[str, Any]:
+        """Get detailed health status for API endpoint."""
+        try:
+            metrics = self.get_health_metrics()
+
+            # Convert HealthMetrics to dict format expected by API
+            detailed_health = {
+                "overall_status": metrics.overall_status.value,
+                "health_score": metrics.health_score,
+                "timestamp": datetime.now().isoformat(),
+                "system": {
+                    "status": HealthStatus.HEALTHY if metrics.system.is_healthy else HealthStatus.DEGRADED,
+                    "cpu_percent": metrics.system.cpu_percent,
+                    "memory_percent": metrics.system.memory_percent,
+                    "memory_usage_mb": metrics.system.memory_usage_mb,
+                    "uptime_seconds": metrics.system.uptime_seconds,
+                    "process_id": metrics.system.process_id,
+                    "process_name": metrics.system.process_name,
+                    "threads_count": metrics.system.threads_count,
+                    "open_files_count": metrics.system.open_files_count,
+                    "max_open_files": metrics.system.max_open_files,
+                },
+                "workers": {
+                    "status": (
+                        HealthStatus.HEALTHY
+                        if all(w.is_healthy for w in metrics.workers.values())
+                        else HealthStatus.DEGRADED
+                    ),
+                    "total": len(metrics.workers),
+                    "active": sum(1 for w in metrics.workers.values() if w.status == WorkerStatus.ACTIVE),
+                    "workers": {
+                        name: {
+                            "worker_name": worker.worker_name,
+                            "status": worker.status.value,
+                            "alerts_processed": worker.alerts_processed,
+                            "processing_rate": worker.processing_rate,
+                            "avg_processing_time": worker.avg_processing_time,
+                            "health_score": worker.health_score,
+                            "last_alert_id": worker.last_alert_id,
+                        }
+                        for name, worker in metrics.workers.items()
+                    },
+                },
+                "queues": {
+                    "status": (
+                        HealthStatus.HEALTHY
+                        if all(q.is_healthy for q in metrics.queues.values())
+                        else HealthStatus.DEGRADED
+                    ),
+                    "total": len(metrics.queues),
+                    "queues": {
+                        name: {
+                            "queue_name": queue.queue_name,
+                            "status": queue.status.value,
+                            "current_size": queue.current_size,
+                            "max_size": queue.max_size,
+                            "utilization_percentage": queue.utilization_percentage,
+                            "total_processed": queue.total_processed,
+                            "processing_rate": queue.processing_rate,
+                        }
+                        for name, queue in metrics.queues.items()
+                    },
+                },
+                "services": {
+                    "status": (
+                        HealthStatus.HEALTHY
+                        if all(s.is_healthy for s in metrics.services.values())
+                        else HealthStatus.DEGRADED
+                    ),
+                    "total": len(metrics.services),
+                    "services": {
+                        name: {
+                            "service_name": service.service_name,
+                            "service_type": service.service_type,
+                            "status": service.status.value,
+                            "is_connected": service.is_connected,
+                            "connection_latency": service.connection_latency,
+                            "total_operations": service.total_operations,
+                            "successful_operations": service.successful_operations,
+                            "failed_operations": service.failed_operations,
+                            "error_rate": service.error_rate,
+                        }
+                        for name, service in metrics.services.items()
+                    },
+                },
+            }
+
+            return detailed_health
+
+        except Exception as e:
+            LOGGER.error(f"Error getting detailed health: {e}")
+            return {
+                "overall_status": "error",
+                "health_score": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+            }
+
+    def get_queue_status(self) -> dict[str, Any]:
+        """Get queue status information."""
+        try:
+            metrics = self.get_health_metrics()
+
+            queues_list = []
+            for queue_name, queue_health in metrics.queues.items():
+                queues_list.append(
+                    {
+                        "name": queue_name,
+                        "current_size": queue_health.current_size,
+                        "max_size": queue_health.max_size,
+                        "utilization_percentage": queue_health.utilization_percentage,
+                        "total_processed": queue_health.total_processed,
+                        "processing_rate": queue_health.processing_rate,
+                        "status": queue_health.status.value,
+                        "is_healthy": queue_health.is_healthy,
+                    }
+                )
+
+            summary = {
+                "total_queues": len(queues_list),
+                "healthy_queues": sum(1 for q in queues_list if q["is_healthy"]),
+                "total_pending": sum(q["current_size"] for q in queues_list),
+                "average_utilization": sum(q["utilization_percentage"] for q in queues_list) / max(len(queues_list), 1),
+                "status": HealthStatus.HEALTHY if all(q["is_healthy"] for q in queues_list) else HealthStatus.DEGRADED,
+            }
+
+            return {"queues": queues_list, "summary": summary}
+
+        except Exception as e:
+            LOGGER.error(f"Error getting queue status: {e}")
+            return {
+                "queues": [],
+                "summary": {
+                    "total_queues": 0,
+                    "healthy_queues": 0,
+                    "total_pending": 0,
+                    "average_utilization": 0.0,
+                    "status": HealthStatus.ERROR,
+                },
+            }
+
+    def get_system_status(self) -> dict[str, Any]:
+        """Get system status information."""
+        try:
+            metrics = self.get_health_metrics()
+
+            system_info = {
+                "system": {
+                    "status": HealthStatus.HEALTHY if metrics.system.is_healthy else HealthStatus.DEGRADED,
+                    "cpu_percent": metrics.system.cpu_percent,
+                    "memory_percent": metrics.system.memory_percent,
+                    "memory_usage_mb": metrics.system.memory_usage_mb,
+                    "uptime_seconds": metrics.system.uptime_seconds,
+                    "process_id": metrics.system.process_id,
+                    "process_name": metrics.system.process_name,
+                    "threads_count": metrics.system.threads_count,
+                    "open_files_count": metrics.system.open_files_count,
+                    "max_open_files": metrics.system.max_open_files,
+                    "resource_pressure": metrics.system.resource_pressure,
+                },
+                "timestamp": datetime.now().isoformat(),
+                "overall_health": metrics.overall_status.value,
+                "health_score": metrics.health_score,
+            }
+
+            return system_info
+
+        except Exception as e:
+            LOGGER.error(f"Error getting system status: {e}")
+            return {
+                "system": {
+                    "status": HealthStatus.ERROR,
+                    "cpu_percent": 0.0,
+                    "memory_percent": 0.0,
+                    "memory_usage_mb": 0.0,
+                    "uptime_seconds": 0.0,
+                },
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e),
+            }
+
+    # API compatibility aliases
+    def get_health_status(self) -> dict[str, Any]:
+        """API compatibility alias for get_quick_health_status()."""
+        return self.get_quick_health_status()
+
+    def get_detailed_health_status(self) -> dict[str, Any]:
+        """API compatibility alias for get_detailed_health()."""
+        return self.get_detailed_health()
+
+    async def get_readiness_status(self) -> dict[str, Any]:
+        """Get readiness status for Kubernetes-style health checks."""
+        try:
+            metrics = self.get_health_metrics()
+
+            # Check if core services are ready
+            is_ready = (
+                metrics.overall_status != HealthStatus.CRITICAL
+                and len(metrics.workers) > 0  # At least one worker should be available
+            )
+
+            return {
+                "ready": is_ready,
+                "timestamp": datetime.now().isoformat(),
+                "checks": {
+                    "overall_health": metrics.overall_status.value,
+                    "workers_available": len(metrics.workers) > 0,
+                    "system_healthy": metrics.system.is_healthy if metrics.system else False,
+                },
+            }
+        except Exception as e:
+            LOGGER.error(f"Error getting readiness status: {e}")
+            return {"ready": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+    async def get_liveness_status(self) -> dict[str, Any]:
+        """Get liveness status for Kubernetes-style health checks."""
+        try:
+            metrics = self.get_health_metrics()
+
+            return {
+                "alive": True,  # If we can execute this code, we're alive
+                "timestamp": datetime.now().isoformat(),
+                "uptime": metrics.system.uptime_seconds if metrics.system else 0.0,
+                "health_score": metrics.health_score,
+            }
+        except Exception as e:
+            LOGGER.error(f"Error getting liveness status: {e}")
+            return {"alive": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
+
+    async def get_metrics(self) -> dict[str, Any]:
+        """Get metrics in dictionary format for API compatibility."""
+        try:
+            metrics = self.get_health_metrics()
+            return metrics.model_dump()
+        except Exception as e:
+            LOGGER.error(f"Error getting metrics: {e}")
+            return {"error": str(e), "timestamp": datetime.now().isoformat()}

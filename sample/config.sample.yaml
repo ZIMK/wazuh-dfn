@@ -13,8 +13,20 @@ log:
   console: true # Enable console logging
   file_path: "/opt/wazuh-dfn/logs/wazuh-dfn.log" # Path to log file
   keep_files: 5 # Number of log files to keep
-  interval: 600 # Statistics logging interval in seconds
-  level: "INFO" # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  interval: 600 # Statistics logging interval in seconds (used by legacy LoggingService; migrate to health.stats_interval)
+  level: "INFO" # Logging level
+
+# Health monitoring configuration (new)
+health:
+  stats_interval: 600 # Health stats collection interval in seconds (replaces log.interval)
+  history_retention: 3600 # Health history retention in seconds
+  max_history_entries: 1000 # Maximum number of stored health history entries
+  event_queue_size: 50 # Maximum queued health events
+  # API server configuration
+  api:
+    enabled: false # Do not start the HTTP server by default. Set to true to enable.
+    host: "127.0.0.1"
+    port: 8080
 
 # Miscellaneous settings
 misc:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from wazuh_dfn.health.models import HealthMetrics, HealthStatus
+from wazuh_dfn.health.protocols import APIHealthProvider
+
 if TYPE_CHECKING:
     from aiohttp.web import Request, Response
 
@@ -16,7 +19,7 @@ except ImportError:
     web = None
     AIOHTTP_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 class HealthHandlers:
@@ -26,13 +29,13 @@ class HealthHandlers:
     detailed metrics, system status, and API information.
     """
 
-    def __init__(self, health_provider):
+    def __init__(self, health_service: APIHealthProvider):
         """Initialize handlers with health provider.
 
         Args:
-            health_provider: Health provider instance for status checks
+            health_service: Health provider instance that implements APIHealthProvider protocol
         """
-        self.health_provider = health_provider
+        self.health_service = health_service
 
     def register_routes(self, app):
         """Register all API routes with the application.
@@ -52,7 +55,7 @@ class HealthHandlers:
         app.router.add_get("/status/system", self.system_status_handler)
         app.router.add_get("/api/info", self.api_info_handler)
 
-    async def health_basic_handler(self, request: Request) -> Response:
+    def health_basic_handler(self, request: Request) -> Response:
         """Handle basic health check endpoint.
 
         Returns:
@@ -60,12 +63,15 @@ class HealthHandlers:
         """
         try:
             # Get basic health status
-            health_data = await self.health_provider.get_health_status()
+            health_data = self.health_service.get_health_status()
+
+            LOGGER.debug(f"Health check successful: {health_data}")
 
             # Determine status code based on health
-            if health_data.get("status") == "healthy":
+            status_value = health_data.get("status", HealthStatus.ERROR)
+            if status_value == HealthStatus.HEALTHY:
                 status_code = 200
-            elif health_data.get("status") == "degraded":
+            elif status_value == HealthStatus.DEGRADED:
                 status_code = 200  # Still operational
             else:
                 status_code = 503
@@ -73,10 +79,12 @@ class HealthHandlers:
             return web.json_response(health_data, status=status_code)
 
         except Exception as e:
-            logger.error(f"Error in basic health check: {e}")
-            return web.json_response({"status": "error", "message": "Health check failed", "timestamp": ""}, status=500)
+            LOGGER.error(f"Error in basic health check: {e}")
+            return web.json_response(
+                {"status": HealthStatus.ERROR, "message": "Health check failed", "timestamp": ""}, status=500
+            )
 
-    async def health_detailed_handler(self, request: Request) -> Response:
+    def health_detailed_handler(self, request: Request) -> Response:
         """Handle detailed health metrics endpoint.
 
         Returns:
@@ -84,12 +92,12 @@ class HealthHandlers:
         """
         try:
             # Get detailed health metrics
-            health_data = await self.health_provider.get_detailed_health()
+            health_data = self.health_service.get_detailed_health_status()
 
             # Determine status code based on health
-            if health_data.get("overall_status") == "healthy":
+            if health_data.get("overall_status") == HealthStatus.HEALTHY:
                 status_code = 200
-            elif health_data.get("overall_status") == "degraded":
+            elif health_data.get("overall_status") == HealthStatus.DEGRADED:
                 status_code = 200  # Still operational
             else:
                 status_code = 503
@@ -97,20 +105,20 @@ class HealthHandlers:
             return web.json_response(health_data, status=status_code)
 
         except Exception as e:
-            logger.error(f"Error in detailed health check: {e}")
+            LOGGER.error(f"Error in detailed health check: {e}")
             return web.json_response(
-                {"status": "error", "message": "Detailed health check failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "Detailed health check failed", "timestamp": ""}, status=500
             )
 
-    async def metrics_handler(self, request: Request) -> Response:
+    def metrics_handler(self, request: Request) -> Response:
         """Handle Prometheus metrics endpoint.
 
         Returns:
             Plain text response with Prometheus metrics
         """
         try:
-            # Get metrics from health provider
-            metrics_data = await self.health_provider.get_metrics()
+            # Get metrics from health service
+            metrics_data = self.health_service.get_health_metrics()
 
             # Convert to Prometheus format
             prometheus_metrics = self._format_prometheus_metrics(metrics_data)
@@ -118,9 +126,9 @@ class HealthHandlers:
             return web.Response(text=prometheus_metrics, content_type="text/plain")
 
         except Exception as e:
-            logger.error(f"Error in metrics endpoint: {e}")
+            LOGGER.error(f"Error in metrics endpoint: {e}")
             return web.json_response(
-                {"status": "error", "message": "Metrics collection failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "Metrics collection failed", "timestamp": ""}, status=500
             )
 
     async def worker_status_handler(self, request: Request) -> Response:
@@ -130,51 +138,51 @@ class HealthHandlers:
             JSON response with worker status information
         """
         try:
-            # Get worker status from health provider
-            worker_data = await self.health_provider.get_worker_status()
+            # Get worker status from health service
+            worker_data = self.health_service.get_worker_status()
 
             return web.json_response(worker_data, status=200)
 
         except Exception as e:
-            logger.error(f"Error in worker status endpoint: {e}")
+            LOGGER.error(f"Error in worker status endpoint: {e}")
             return web.json_response(
-                {"status": "error", "message": "Worker status check failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "Worker status check failed", "timestamp": ""}, status=500
             )
 
-    async def queue_status_handler(self, request: Request) -> Response:
+    def queue_status_handler(self, request: Request) -> Response:
         """Handle queue status endpoint.
 
         Returns:
             JSON response with queue status information
         """
         try:
-            # Get queue status from health provider
-            queue_data = await self.health_provider.get_queue_status()
+            # Get queue status from health service
+            queue_data = self.health_service.get_queue_status()
 
             return web.json_response(queue_data, status=200)
 
         except Exception as e:
-            logger.error(f"Error in queue status endpoint: {e}")
+            LOGGER.error(f"Error in queue status endpoint: {e}")
             return web.json_response(
-                {"status": "error", "message": "Queue status check failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "Queue status check failed", "timestamp": ""}, status=500
             )
 
-    async def system_status_handler(self, request: Request) -> Response:
+    def system_status_handler(self, request: Request) -> Response:
         """Handle system status endpoint.
 
         Returns:
             JSON response with system status information
         """
         try:
-            # Get system status from health provider
-            system_data = await self.health_provider.get_system_status()
+            # Get system status from health service
+            system_data = self.health_service.get_system_status()
 
             return web.json_response(system_data, status=200)
 
         except Exception as e:
-            logger.error(f"Error in system status endpoint: {e}")
+            LOGGER.error(f"Error in system status endpoint: {e}")
             return web.json_response(
-                {"status": "error", "message": "System status check failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "System status check failed", "timestamp": ""}, status=500
             )
 
     def api_info_handler(self, request: Request) -> Response:
@@ -209,30 +217,118 @@ class HealthHandlers:
             return web.json_response(api_info, status=200)
 
         except Exception as e:
-            logger.error(f"Error in API info endpoint: {e}")
+            LOGGER.error(f"Error in API info endpoint: {e}")
             return web.json_response(
-                {"status": "error", "message": "API info request failed", "timestamp": ""}, status=500
+                {"status": HealthStatus.ERROR, "message": "API info request failed", "timestamp": ""}, status=500
             )
 
-    def _format_prometheus_metrics(self, metrics_data: dict) -> str:
+    def _format_prometheus_metrics(self, metrics_data: HealthMetrics) -> str:
         """Format metrics data as Prometheus exposition format.
 
         Args:
-            metrics_data: Dictionary of metrics to format
+            metrics_data: HealthMetrics object to format
 
         Returns:
             Prometheus-formatted metrics string
         """
         lines = []
 
-        for metric_name, metric_value in metrics_data.items():
-            if isinstance(metric_value, (int, float)):
-                # Simple numeric metric
-                lines.append(f"wazuh_dfn_{metric_name} {metric_value}")
-            elif isinstance(metric_value, dict):
-                # Complex metric with labels
-                for sub_key, sub_value in metric_value.items():
-                    if isinstance(sub_value, (int, float)):
-                        lines.append(f'wazuh_dfn_{metric_name}{{type="{sub_key}"}} {sub_value}')
+        # Overall health metrics
+        lines.append("# HELP health_score Overall health score")
+        lines.append("# TYPE health_score gauge")
+
+        if metrics_data.health_score:
+            lines.append(f"health_score {metrics_data.health_score}")
+        else:
+            LOGGER.warning("Health score is not available, using default value of 0")
+            lines.append("health_score 0")
+
+        lines.append("# HELP overall_status Overall system status (0=healthy, 1=degraded, 2=critical)")
+        lines.append("# TYPE overall_status gauge")
+        status_map = {HealthStatus.HEALTHY: 0, HealthStatus.DEGRADED: 1, HealthStatus.CRITICAL: 2}
+        status_value = status_map.get(metrics_data.overall_status, 2)
+        lines.append(f"overall_status {status_value}")
+
+        # System metrics
+        if metrics_data.system:
+            lines.append("# HELP system_cpu_percent CPU usage percentage")
+            lines.append("# TYPE system_cpu_percent gauge")
+            lines.append(f"system_cpu_percent {metrics_data.system.cpu_percent}")
+
+            lines.append("# HELP system_memory_percent Memory usage percentage")
+            lines.append("# TYPE system_memory_percent gauge")
+            lines.append(f"system_memory_percent {metrics_data.system.memory_percent}")
+
+            lines.append("# HELP system_memory_usage_mb Memory usage in MB")
+            lines.append("# TYPE system_memory_usage_mb gauge")
+            lines.append(f"system_memory_usage_mb {metrics_data.system.memory_usage_mb}")
+
+            lines.append("# HELP system_uptime_seconds System uptime in seconds")
+            lines.append("# TYPE system_uptime_seconds gauge")
+            lines.append(f"system_uptime_seconds {metrics_data.system.uptime_seconds}")
+
+            lines.append("# HELP system_open_files_count Number of open files")
+            lines.append("# TYPE system_open_files_count gauge")
+            lines.append(f"system_open_files_count {metrics_data.system.open_files_count}")
+
+            lines.append("# HELP system_threads_count Number of threads")
+            lines.append("# TYPE system_threads_count gauge")
+            lines.append(f"system_threads_count {metrics_data.system.threads_count}")
+
+        # Worker metrics
+        lines.append("# HELP worker_alerts_processed Total alerts processed by worker")
+        lines.append("# TYPE worker_alerts_processed counter")
+        for worker_name, worker in metrics_data.workers.items():
+            lines.append(f'worker_alerts_processed{{worker="{worker_name}"}} {worker.alerts_processed}')
+
+        lines.append("# HELP worker_processing_rate Worker processing rate")
+        lines.append("# TYPE worker_processing_rate gauge")
+        for worker_name, worker in metrics_data.workers.items():
+            lines.append(f'worker_processing_rate{{worker="{worker_name}"}} {worker.processing_rate}')
+
+        lines.append("# HELP worker_health_score Worker health score")
+        lines.append("# TYPE worker_health_score gauge")
+        for worker_name, worker in metrics_data.workers.items():
+            lines.append(f'worker_health_score{{worker="{worker_name}"}} {worker.health_score}')
+
+        # Queue metrics
+        lines.append("# HELP queue_current_size Current queue size")
+        lines.append("# TYPE queue_current_size gauge")
+        for queue_name, queue in metrics_data.queues.items():
+            lines.append(f'queue_current_size{{queue="{queue_name}"}} {queue.current_size}')
+
+        lines.append("# HELP queue_utilization_percentage Queue utilization percentage")
+        lines.append("# TYPE queue_utilization_percentage gauge")
+        for queue_name, queue in metrics_data.queues.items():
+            lines.append(f'queue_utilization_percentage{{queue="{queue_name}"}} {queue.utilization_percentage}')
+
+        lines.append("# HELP queue_total_processed Total processed items")
+        lines.append("# TYPE queue_total_processed counter")
+        for queue_name, queue in metrics_data.queues.items():
+            lines.append(f'queue_total_processed{{queue="{queue_name}"}} {queue.total_processed}')
+
+        # Service metrics
+        lines.append("# HELP service_is_connected Service connection status")
+        lines.append("# TYPE service_is_connected gauge")
+        for service_name, service in metrics_data.services.items():
+            connection_value = 1 if service.is_connected else 0
+            lines.append(
+                f'service_is_connected{{service="{service_name}",' f'type="{service.service_type}"}} {connection_value}'
+            )
+
+        lines.append("# HELP service_total_operations Total service operations")
+        lines.append("# TYPE service_total_operations counter")
+        for service_name, service in metrics_data.services.items():
+            lines.append(
+                f'service_total_operations{{service="{service_name}",'
+                f'type="{service.service_type}"}} {service.total_operations}'
+            )
+
+        lines.append("# HELP service_error_rate Service error rate percentage")
+        lines.append("# TYPE service_error_rate gauge")
+        for service_name, service in metrics_data.services.items():
+            lines.append(
+                f'service_error_rate{{service="{service_name}"' f',type="{service.service_type}"}} {service.error_rate}'
+            )
 
         return "\n".join(lines) + "\n"

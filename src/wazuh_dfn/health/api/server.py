@@ -6,6 +6,9 @@ import asyncio
 import logging
 import ssl
 
+from wazuh_dfn.config import APIConfig
+from wazuh_dfn.health.protocols import APIHealthProvider
+
 try:
     from aiohttp import web
 
@@ -17,7 +20,7 @@ except ImportError:
 from .handlers import HealthHandlers
 from .middleware import SecurityMiddleware
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 class HealthAPIServer:
@@ -28,24 +31,34 @@ class HealthAPIServer:
     IP allowlists, and HTTPS support.
     """
 
-    def __init__(self, health_provider, api_config):
+    def __init__(
+        self,
+        health_provider: APIHealthProvider,
+        api_config: APIConfig,
+        shutdown_event: asyncio.Event | None = None,
+    ):
         """Initialize the Health API Server.
 
         Args:
-            health_provider: Health provider instance for status checks
+            health_provider: Health service instance or compatible provider
+                           that implements the APIHealthProvider protocol
             api_config: API configuration object with all settings
+            shutdown_event: Optional shutdown event to listen for server stop
         """
         if not AIOHTTP_AVAILABLE:
-            raise ImportError("aiohttp is required for the Health API Server. " "Install it with: pip install aiohttp")
+            LOGGER.warning("aiohttp is not available, cannot start Health API Server")
+            raise ImportError("aiohttp is required for the Health API Server. Install it with: pip install aiohttp")
 
+        # Store the provider directly - handlers will use its interface
         self.health_provider = health_provider
         self.api_config = api_config
+        self.shutdown_event = shutdown_event or asyncio.Event()
         self.app = None
         self.runner = None
         self.site = None
 
         # Initialize components
-        self.handlers = HealthHandlers(health_provider)
+        self.handlers = HealthHandlers(self.health_provider)
         self.security = SecurityMiddleware(api_config)
         self.rate_limiter = self.security.rate_limiter  # Reference for server info
 
@@ -66,13 +79,13 @@ class HealthAPIServer:
             context.set_ciphers("HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!SRP:!CAMELLIA")
 
             # Load certificate and key
-            context.load_cert_chain(self.api_config.cert_file, self.api_config.key_file)
+            context.load_cert_chain(str(self.api_config.cert_file), str(self.api_config.key_file))
 
-            logger.info("SSL context created successfully")
+            LOGGER.info("SSL context created successfully")
             return context
 
         except Exception as e:
-            logger.error(f"Failed to create SSL context: {e}")
+            LOGGER.error(f"Failed to create SSL context: {e}")
             raise
 
     def _create_app(self):
@@ -98,20 +111,25 @@ class HealthAPIServer:
             RuntimeError: If server is already running or aiohttp is not available
         """
         if not AIOHTTP_AVAILABLE:
+            LOGGER.warning("aiohttp is not available, cannot start Health API Server")
             raise RuntimeError("aiohttp is not available")
 
         if self.runner is not None:
+            LOGGER.warning("Health API Server is already running")
             raise RuntimeError("Server is already running")
 
         try:
             # Create application
+            LOGGER.debug("Creating Health API application...")
             self.app = self._create_app()
 
             # Create runner
+            LOGGER.debug("Creating Health API runner...")
             self.runner = web.AppRunner(self.app)
             await self.runner.setup()
 
             # Configure SSL if enabled
+            LOGGER.debug("Configuring SSL context...")
             ssl_context = self._create_ssl_context()
 
             # Create site
@@ -119,21 +137,26 @@ class HealthAPIServer:
                 self.runner, host=self.api_config.host, port=self.api_config.port, ssl_context=ssl_context
             )
 
+            LOGGER.debug("Starting Health API Server...")
             await self.site.start()
 
             protocol = "https" if ssl_context else "http"
-            logger.info(f"Health API Server started at {protocol}://{self.api_config.host}:" f"{self.api_config.port}")
+            LOGGER.info(f"Health API Server started at {protocol}://{self.api_config.host}: {self.api_config.port}")
 
+            # Keep running until shutdown
+            await self.shutdown_event.wait()
         except Exception as e:
-            logger.error(f"Failed to start Health API Server: {e}")
+            LOGGER.error(f"Failed to start Health API Server: {e}")
             await self.cleanup()
             raise
+        finally:
+            await self.stop()
 
     async def stop(self) -> None:
         """Stop the Health API Server gracefully."""
-        logger.info("Stopping Health API Server...")
+        LOGGER.info("Stopping Health API Server...")
         await self.cleanup()
-        logger.info("Health API Server stopped")
+        LOGGER.info("Health API Server stopped")
 
     async def cleanup(self) -> None:
         """Clean up server resources."""
@@ -154,25 +177,6 @@ class HealthAPIServer:
             True if server is running, False otherwise
         """
         return self.runner is not None and self.site is not None
-
-    async def run_forever(self) -> None:
-        """Run the server until interrupted.
-
-        This method starts the server and keeps it running until the process
-        is terminated or an exception occurs.
-        """
-        try:
-            await self.start()
-
-            # Keep running until interrupted
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                logger.info("Received interrupt signal")
-
-        finally:
-            await self.stop()
 
     def get_server_info(self) -> dict:
         """Get information about the server configuration.

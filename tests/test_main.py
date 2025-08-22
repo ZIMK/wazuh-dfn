@@ -253,8 +253,8 @@ def mock_services():
 
     def create_service_mock():
         mock = MagicMock()
-        mock.stop = MagicMock()
-        mock.start = MagicMock()
+        mock.stop = AsyncMock()
+        mock.start = AsyncMock()
         return mock
 
     with (
@@ -391,6 +391,13 @@ async def test_setup_service_wazuh_error(sample_config_path, mock_services):
     error_future = asyncio.Future()
     error_future.set_exception(RuntimeError("Failed to start Wazuh service"))
     services["wazuh"].start.return_value = error_future
+
+    # Mock ServiceContainer behavior to return proper awaitable
+    mock_container = mock_services["service_container"].return_value
+    mock_container.start_all_services = MagicMock(return_value=asyncio.Future())
+    mock_container.start_all_services.return_value.set_exception(RuntimeError("Failed to start Wazuh service"))
+    mock_container.stop_all_services = MagicMock(return_value=asyncio.Future())
+    mock_container.stop_all_services.return_value.set_result(None)
 
     with patch("asyncio.get_running_loop") as mock_loop:
         mock_loop_instance = MagicMock()

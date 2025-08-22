@@ -6,7 +6,6 @@ from .alerts_service import AlertsService
 from .alerts_watcher_service import AlertsWatcherService
 from .alerts_worker_service import AlertsWorkerService
 from .kafka_service import KafkaService
-from .logging_service import LoggingService
 from .wazuh_service import WazuhService
 
 __author__ = "Sebastian Wolf (https://github.com/ZIMK/wazuh-dfn)"
@@ -17,6 +16,5 @@ __all__ = [
     "AlertsWatcherService",
     "AlertsWorkerService",
     "KafkaService",
-    "LoggingService",
     "WazuhService",
 ]

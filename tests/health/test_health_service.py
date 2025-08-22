@@ -23,9 +23,9 @@ from wazuh_dfn.config import HealthConfig
 from wazuh_dfn.health.health_service import HealthService
 from wazuh_dfn.health.models import (
     HealthMetrics,
+    HealthStatus,
     HealthThresholds,
     KafkaPerformanceData,
-    OverallHealthStatus,
     WorkerHealth,
     WorkerPerformanceData,
     WorkerStatus,
@@ -35,12 +35,13 @@ from wazuh_dfn.service_container import ServiceContainer
 
 
 @pytest.mark.asyncio
-async def test_health_service_initialization(service_container, health_config):
+async def test_health_service_initialization(service_container, health_config, shutdown_event, health_event_service):
     """Test HealthService initialization with proper configuration."""
     health_service = HealthService(
         container=service_container,
         config=health_config,
-        event_queue=None,
+        event_queue=health_event_service._event_queue,
+        shutdown_event=shutdown_event,
     )
 
     assert health_service.container == service_container
@@ -65,25 +66,11 @@ async def test_health_service_initialization(service_container, health_config):
 
 
 @pytest.mark.asyncio
-async def test_health_service_initialization_with_defaults():
-    """Test HealthService initialization with default configuration."""
-    container = ServiceContainer()
-    health_service = HealthService(container=container)
-
-    assert health_service.container == container
-    assert isinstance(health_service._config, HealthConfig)
-    assert health_service._config.stats_interval == 600  # Default value
-    assert health_service._config.queue_warning_threshold == 70  # Default value
-
-
-@pytest.mark.asyncio
-async def test_health_service_with_event_queue(service_container, health_config):
+async def test_health_service_with_event_queue(service_container, health_config, shutdown_event):
     """Test HealthService initialization with event queue for real-time processing."""
     event_queue = asyncio.Queue()
     health_service = HealthService(
-        container=service_container,
-        config=health_config,
-        event_queue=event_queue,
+        container=service_container, config=health_config, event_queue=event_queue, shutdown_event=shutdown_event
     )
 
     assert health_service._event_queue_reference == event_queue
@@ -195,7 +182,7 @@ async def test_get_current_health_basic(health_service, service_container):
         # Mock system info for consistent testing
         with patch.object(health_service, "_collect_system_health") as mock_system:
             mock_system.return_value = {
-                "status": OverallHealthStatus.HEALTHY,
+                "status": HealthStatus.HEALTHY,
                 "cpu_percent": 20.0,
                 "memory_percent": 43.0,
                 "open_files": 10,
@@ -211,9 +198,9 @@ async def test_get_current_health_basic(health_service, service_container):
 
         assert isinstance(health_metrics, HealthMetrics)
         assert health_metrics.overall_status in [
-            OverallHealthStatus.HEALTHY,
-            OverallHealthStatus.DEGRADED,
-            OverallHealthStatus.CRITICAL,
+            HealthStatus.HEALTHY,
+            HealthStatus.DEGRADED,
+            HealthStatus.CRITICAL,
         ]
         assert health_metrics.system is not None
         assert health_metrics.workers is not None
@@ -365,7 +352,7 @@ async def test_system_health_monitoring(health_service):
 
 
 @pytest.mark.asyncio
-async def test_health_thresholds_configuration():
+async def test_health_thresholds_configuration(shutdown_event):
     """Test health threshold configuration and usage."""
     custom_config = HealthConfig(
         queue_warning_threshold=80,
@@ -375,7 +362,10 @@ async def test_health_thresholds_configuration():
     )
 
     container = ServiceContainer()
-    health_service = HealthService(container=container, config=custom_config)
+    event_queue = asyncio.Queue()
+    health_service = HealthService(
+        container=container, config=custom_config, shutdown_event=shutdown_event, event_queue=event_queue
+    )
 
     # Test that thresholds are applied correctly
     thresholds = health_service._config
@@ -386,13 +376,11 @@ async def test_health_thresholds_configuration():
 
 
 @pytest.mark.asyncio
-async def test_event_processing_setup(service_container, health_config):
+async def test_event_processing_setup(service_container, health_config, shutdown_event):
     """Test event processing task setup and cleanup."""
     event_queue = asyncio.Queue()
     health_service = HealthService(
-        container=service_container,
-        config=health_config,
-        event_queue=event_queue,
+        container=service_container, config=health_config, event_queue=event_queue, shutdown_event=shutdown_event
     )
 
     # Event processing should not be started automatically

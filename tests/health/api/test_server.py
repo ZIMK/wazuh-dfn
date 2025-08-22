@@ -1,11 +1,22 @@
 """Tests for wazuh_dfn.health.api.server module."""
 
+import asyncio
 import ssl
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from wazuh_dfn.health.api.server import HealthAPIServer
+from wazuh_dfn.health.models import (
+    HealthMetrics,
+    HealthStatus,
+    QueueHealth,
+    ServiceHealth,
+    SystemHealth,
+    WorkerHealth,
+    WorkerStatus,
+)
 
 try:
     from aiohttp import web
@@ -30,6 +41,7 @@ class MockAPIConfig:
         allowed_ips: list[str] | None = None,
         rate_limit: int = 0,
     ):
+        self.enabled = True
         self.host = host
         self.port = port
         self.https_enabled = https_enabled
@@ -38,13 +50,113 @@ class MockAPIConfig:
         self.auth_token = auth_token
         self.allowed_ips = allowed_ips or ["127.0.0.1", "::1"]
         self.rate_limit = rate_limit
+        self.rate_limit_window = 60
 
 
 class MockHealthProvider:
     """Mock health provider for testing."""
 
     def get_health_status(self) -> dict:
-        return {"status": "healthy"}
+        return {"status": HealthStatus.HEALTHY, "timestamp": "2023-01-01T00:00:00Z", "health_score": 95.5}
+
+    def get_detailed_health_status(self) -> dict:
+        return {
+            "overall_status": HealthStatus.HEALTHY,
+            "health_score": 95.5,
+            "timestamp": "2023-01-01T00:00:00Z",
+            "system": {"status": HealthStatus.HEALTHY, "cpu_percent": 10.0},
+            "workers": {"status": HealthStatus.HEALTHY, "total": 1, "active": 1},
+            "queues": {"status": HealthStatus.HEALTHY, "total": 1},
+            "services": {"status": HealthStatus.HEALTHY, "total": 1},
+        }
+
+    def get_health_metrics(self):
+        return HealthMetrics(
+            overall_status=HealthStatus.HEALTHY,
+            health_score=95.5,
+            system=SystemHealth(
+                process_id=12345,
+                process_name="test",
+                cpu_percent=10.0,
+                memory_percent=20.0,
+                memory_usage_mb=100.0,
+                open_files_count=10,
+                max_open_files=1024,
+                uptime_seconds=3600.0,
+                threads_count=4,
+                load_average=[0.1, 0.2, 0.3],
+            ),
+            workers={
+                "worker-1": WorkerHealth(
+                    worker_name="worker-1",
+                    timestamp=datetime.now(),
+                    alerts_processed=100,
+                    processing_rate=10.0,
+                    avg_processing_time=0.1,
+                    recent_avg_processing_time=0.1,
+                    min_processing_time=0.05,
+                    max_processing_time=0.2,
+                    slow_alerts_count=1,
+                    extremely_slow_alerts_count=0,
+                    last_processing_time=0.1,
+                    last_alert_id="alert-1",
+                    status=WorkerStatus.ACTIVE,
+                    health_score=0.95,
+                )
+            },
+            queues={
+                "queue-1": QueueHealth(
+                    queue_name="queue-1",
+                    current_size=5,
+                    max_size=100,
+                    utilization_percentage=5.0,
+                    total_processed=1000,
+                    processing_rate=10.0,
+                    queue_full_events=0,
+                    avg_wait_time=0.01,
+                    status=HealthStatus.HEALTHY,
+                    timestamp=datetime.now(),
+                )
+            },
+            services={
+                "service-1": ServiceHealth(
+                    service_name="service-1",
+                    service_type="test",
+                    is_connected=True,
+                    connection_latency=0.01,
+                    last_successful_connection=datetime.now(),
+                    total_operations=1000,
+                    successful_operations=990,
+                    failed_operations=10,
+                    avg_response_time=0.01,
+                    max_response_time=0.1,
+                    slow_operations_count=5,
+                    status=HealthStatus.HEALTHY,
+                    error_rate=1.0,
+                    timestamp=datetime.now(),
+                )
+            },
+        )
+
+    def get_worker_status(self) -> dict:
+        return {
+            "workers": {"worker-1": {"healthy": True, "processing": True}},
+            "summary": {"total": 1, "healthy": 1, "processing": 1},
+            "timestamp": 1234567890.0,
+        }
+
+    def get_queue_status(self) -> dict:
+        return {
+            "queues": {"queue-1": {"healthy": True, "current_size": 5}},
+            "summary": {"total": 1, "healthy": 1},
+            "timestamp": 1234567890.0,
+        }
+
+    def get_system_status(self) -> dict:
+        return {
+            "system": {"status": HealthStatus.HEALTHY, "cpu_percent": 10.0, "memory_percent": 20.0},
+            "timestamp": "2023-01-01T00:00:00Z",
+        }
 
 
 @pytest.fixture
@@ -95,13 +207,7 @@ def test_server_initialization_no_aiohttp():
         patch("wazuh_dfn.health.api.server.AIOHTTP_AVAILABLE", False),
         pytest.raises(ImportError, match="aiohttp is required"),
     ):
-        HealthAPIServer(MockHealthProvider(), MockAPIConfig())
-
-
-def test_create_ssl_context_disabled(health_api_server):
-    """Test SSL context creation when HTTPS is disabled."""
-    ssl_context = health_api_server._create_ssl_context()
-    assert ssl_context is None
+        HealthAPIServer(MockHealthProvider(), MockAPIConfig())  # type: ignore[arg-type]
 
 
 @patch("ssl.create_default_context")
@@ -157,7 +263,9 @@ async def test_start_stop_lifecycle(health_api_server):
             mock_site_class.return_value = mock_site
 
             # Test start
-            await health_api_server.start()
+            server_task = asyncio.create_task(health_api_server.start())
+
+            await asyncio.sleep(0.2)
 
             assert health_api_server.is_running() is True
             assert health_api_server.runner == mock_runner
@@ -166,11 +274,18 @@ async def test_start_stop_lifecycle(health_api_server):
             mock_runner.setup.assert_called_once()
             mock_site.start.assert_called_once()
 
-            # Test stop
+            health_api_server.shutdown_event.set()  # Trigger shutdown event
+
+            await asyncio.sleep(0.2)  # Allow event loop to process
+
             await health_api_server.stop()
+
+            await asyncio.sleep(0.2)
 
             assert health_api_server.is_running() is False
             mock_runner.cleanup.assert_called_once()
+
+            server_task.cancel()
 
 
 @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
@@ -190,25 +305,40 @@ async def test_start_with_ssl(mock_api_config_with_ssl, mock_health_provider):
     """Test server start with SSL enabled."""
     server = HealthAPIServer(mock_health_provider, mock_api_config_with_ssl)
 
-    with patch("aiohttp.web.AppRunner") as mock_runner_class:
+    with (
+        patch("aiohttp.web.AppRunner") as mock_runner_class,
+        patch("ssl.create_default_context") as mock_ssl_create,
+        patch("os.path.exists", return_value=True),
+    ):
         mock_runner = AsyncMock()
         mock_runner_class.return_value = mock_runner
+
+        # Mock SSL context creation
+        mock_ssl_context = MagicMock()
+        mock_ssl_create.return_value = mock_ssl_context
 
         with patch("aiohttp.web.TCPSite") as mock_site_class:
             mock_site = AsyncMock()
             mock_site_class.return_value = mock_site
 
-            with patch.object(server, "_create_ssl_context") as mock_ssl:
-                mock_ssl_context = MagicMock()
-                mock_ssl.return_value = mock_ssl_context
+            server_task = asyncio.create_task(server.start())
 
-                await server.start()
+            await asyncio.sleep(0.2)
 
-                # Verify SSL context was created and used
-                mock_ssl.assert_called_once()
-                mock_site_class.assert_called_once_with(
-                    mock_runner, host="127.0.0.1", port=8080, ssl_context=mock_ssl_context
-                )
+            # Verify SSL context was created and used
+            mock_ssl_create.assert_called_once_with(ssl.Purpose.CLIENT_AUTH)
+            mock_ssl_context.load_cert_chain.assert_called_once_with("/path/to/cert.pem", "/path/to/key.pem")
+            mock_site_class.assert_called_once_with(
+                mock_runner, host="127.0.0.1", port=8080, ssl_context=mock_ssl_context
+            )
+
+            server.shutdown_event.set()  # Trigger shutdown event
+
+            await asyncio.sleep(0.2)  # Allow event loop to process
+
+            await server.stop()
+
+            server_task.cancel()
 
 
 @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
@@ -243,26 +373,6 @@ def test_is_running(health_api_server):
     assert health_api_server.is_running() is False
 
 
-@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
-@pytest.mark.asyncio
-async def test_run_forever(health_api_server):
-    """Test run_forever method."""
-    with (
-        patch.object(health_api_server, "start") as mock_start,
-        patch.object(health_api_server, "stop") as mock_stop,
-        patch("asyncio.sleep") as mock_sleep,
-    ):
-
-        # Simulate KeyboardInterrupt after first sleep
-        mock_sleep.side_effect = [None, KeyboardInterrupt()]
-
-        await health_api_server.run_forever()
-
-        mock_start.assert_called_once()
-        mock_stop.assert_called_once()
-        assert mock_sleep.call_count == 2
-
-
 def test_get_server_info(mock_api_config, mock_health_provider):
     """Test server info generation."""
     if not AIOHTTP_AVAILABLE:
@@ -286,7 +396,7 @@ def test_get_server_info_custom_allowlist():
         pytest.skip("aiohttp not available")
 
     config = MockAPIConfig(allowed_ips=["192.168.1.0/24", "10.0.0.1"])
-    server = HealthAPIServer(MockHealthProvider(), config)
+    server = HealthAPIServer(MockHealthProvider(), config)  # type: ignore[arg-type]
     info = server.get_server_info()
 
     assert info["ip_allowlist_enabled"] is True
@@ -329,7 +439,7 @@ def test_parametrized_server_configs(host, port, https):
         pytest.skip("aiohttp not available")
 
     config = MockAPIConfig(host=host, port=port, https_enabled=https)
-    server = HealthAPIServer(MockHealthProvider(), config)
+    server = HealthAPIServer(MockHealthProvider(), config)  # type: ignore[arg-type]
 
     assert server.api_config.host == host
     assert server.api_config.port == port

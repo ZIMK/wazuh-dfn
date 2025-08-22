@@ -4,6 +4,7 @@ Tests authentication, authorization, rate limiting, and secure headers.
 """
 
 import asyncio
+import contextlib
 import time
 from datetime import datetime
 
@@ -14,7 +15,7 @@ from wazuh_dfn.config import APIConfig
 from wazuh_dfn.health.api.server import HealthAPIServer
 from wazuh_dfn.health.models import (
     HealthMetrics,
-    OverallHealthStatus,
+    HealthStatus,
     QueueHealth,
     ServiceHealth,
     SystemHealth,
@@ -26,7 +27,7 @@ from wazuh_dfn.health.models import (
 class MockSecureHealthProvider:
     """Mock health provider for security testing."""
 
-    async def get_health_metrics(self) -> HealthMetrics:
+    def get_health_metrics(self) -> HealthMetrics:
         """Return minimal health metrics for security testing."""
         system = SystemHealth(
             process_id=12345,
@@ -70,7 +71,7 @@ class MockSecureHealthProvider:
                 processing_rate=2.0,
                 queue_full_events=0,
                 avg_wait_time=0.01,
-                status=OverallHealthStatus.HEALTHY,
+                status=HealthStatus.HEALTHY,
                 timestamp=datetime.now(),
             )
         }
@@ -88,14 +89,14 @@ class MockSecureHealthProvider:
                 avg_response_time=0.001,
                 max_response_time=0.002,
                 slow_operations_count=0,
-                status=OverallHealthStatus.HEALTHY,
+                status=HealthStatus.HEALTHY,
                 error_rate=0.0,
                 timestamp=datetime.now(),
             )
         }
 
         return HealthMetrics(
-            overall_status=OverallHealthStatus.HEALTHY,
+            overall_status=HealthStatus.HEALTHY,
             health_score=100.0,
             system=system,
             workers=workers,
@@ -103,41 +104,41 @@ class MockSecureHealthProvider:
             services=services,
         )
 
-    async def get_health_status(self) -> dict:
+    def get_health_status(self) -> dict:
         """Basic health status."""
-        return {"status": "healthy", "timestamp": datetime.now().isoformat(), "health_score": 100.0}
+        return {"status": HealthStatus.HEALTHY, "timestamp": datetime.now().isoformat(), "health_score": 100.0}
 
-    async def get_detailed_health_status(self) -> dict:
+    def get_detailed_health_status(self) -> dict:
         """Detailed health status."""
         return {
-            "overall_status": "healthy",
+            "overall_status": HealthStatus.HEALTHY,
             "health_score": 100.0,
-            "system": {"status": "healthy"},
-            "workers": {"status": "healthy"},
-            "queues": {"status": "healthy"},
-            "services": {"status": "healthy"},
+            "system": {"status": HealthStatus.HEALTHY},
+            "workers": {"status": HealthStatus.HEALTHY},
+            "queues": {"status": HealthStatus.HEALTHY},
+            "services": {"status": HealthStatus.HEALTHY},
         }
 
-    async def get_detailed_health(self) -> dict:
+    def get_detailed_health(self) -> dict:
         """Detailed health endpoint alias."""
-        return await self.get_detailed_health_status()
+        return self.get_detailed_health_status()
 
-    async def get_metrics(self) -> dict:
+    def get_metrics(self) -> dict:
         """Get health metrics."""
-        metrics = await self.get_health_metrics()
+        metrics = self.get_health_metrics()
         return metrics.model_dump()
 
-    async def get_worker_status(self) -> dict:
+    def get_worker_status(self) -> dict:
         """Worker status."""
-        return {"workers": [], "summary": {"status": "healthy"}}
+        return {"workers": [], "summary": {"status": HealthStatus.HEALTHY}}
 
-    async def get_queue_status(self) -> dict:
+    def get_queue_status(self) -> dict:
         """Queue status."""
-        return {"queues": [], "summary": {"status": "healthy"}}
+        return {"queues": [], "summary": {"status": HealthStatus.HEALTHY}}
 
-    async def get_system_status(self) -> dict:
+    def get_system_status(self) -> dict:
         """System status."""
-        return {"system": {"status": "healthy"}, "timestamp": datetime.now().isoformat()}
+        return {"system": {"status": HealthStatus.HEALTHY}, "timestamp": datetime.now().isoformat()}
 
 
 @pytest.fixture(scope="module")
@@ -194,18 +195,30 @@ def rate_limited_server(rate_limited_api_config, secure_health_provider, event_l
     """Create a separate server with rate limiting enabled for specific tests."""
 
     async def setup_and_run():
-        server = HealthAPIServer(secure_health_provider, rate_limited_api_config)
-        await server.start()
-        await _wait_for_server_ready(f"http://{rate_limited_api_config.host}:{rate_limited_api_config.port}")
-        return server
+        shutdown_event = asyncio.Event()
+        server = HealthAPIServer(secure_health_provider, rate_limited_api_config, shutdown_event)
 
-    server = event_loop.run_until_complete(setup_and_run())
+        # Start server in background task
+        server_task = asyncio.create_task(server.start())
+
+        # Wait for server to be ready
+        await _wait_for_server_ready(f"http://{rate_limited_api_config.host}:{rate_limited_api_config.port}")
+
+        return server, shutdown_event, server_task
+
+    server, shutdown_event, server_task = event_loop.run_until_complete(setup_and_run())
 
     yield server
 
     # Cleanup
     async def cleanup():
-        await server.stop()
+        shutdown_event.set()  # Signal server to stop
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)  # Wait for server to stop gracefully
+        except TimeoutError:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
 
     event_loop.run_until_complete(cleanup())
 
@@ -224,18 +237,30 @@ def secure_server(event_loop, secure_api_config, secure_health_provider):
     """Create and start secure health API server for all tests in the module."""
 
     async def setup_and_run():
-        server = HealthAPIServer(secure_health_provider, secure_api_config)
-        await server.start()
-        await _wait_for_server_ready(f"http://{secure_api_config.host}:{secure_api_config.port}")
-        return server
+        shutdown_event = asyncio.Event()
+        server = HealthAPIServer(secure_health_provider, secure_api_config, shutdown_event)
 
-    server = event_loop.run_until_complete(setup_and_run())
+        # Start server in background task
+        server_task = asyncio.create_task(server.start())
+
+        # Wait for server to be ready
+        await _wait_for_server_ready(f"http://{secure_api_config.host}:{secure_api_config.port}")
+
+        return server, shutdown_event, server_task
+
+    server, shutdown_event, server_task = event_loop.run_until_complete(setup_and_run())
 
     yield server
 
     # Cleanup
     async def cleanup():
-        await server.stop()
+        shutdown_event.set()  # Signal server to stop
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)  # Wait for server to stop gracefully
+        except TimeoutError:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
 
     event_loop.run_until_complete(cleanup())
 
@@ -245,18 +270,30 @@ def insecure_server(event_loop, insecure_api_config, secure_health_provider):
     """Create and start insecure health API server for all tests in the module."""
 
     async def setup_and_run():
-        server = HealthAPIServer(secure_health_provider, insecure_api_config)
-        await server.start()
-        await _wait_for_server_ready(f"http://{insecure_api_config.host}:{insecure_api_config.port}")
-        return server
+        shutdown_event = asyncio.Event()
+        server = HealthAPIServer(secure_health_provider, insecure_api_config, shutdown_event)
 
-    server = event_loop.run_until_complete(setup_and_run())
+        # Start server in background task
+        server_task = asyncio.create_task(server.start())
+
+        # Wait for server to be ready
+        await _wait_for_server_ready(f"http://{insecure_api_config.host}:{insecure_api_config.port}")
+
+        return server, shutdown_event, server_task
+
+    server, shutdown_event, server_task = event_loop.run_until_complete(setup_and_run())
 
     yield server
 
     # Cleanup
     async def cleanup():
-        await server.stop()
+        shutdown_event.set()  # Signal server to stop
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)  # Wait for server to stop gracefully
+        except TimeoutError:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
 
     event_loop.run_until_complete(cleanup())
 

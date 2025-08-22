@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from wazuh_dfn.config import HealthConfig
 from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
@@ -22,6 +23,7 @@ from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 from .models import (
     HealthEvent,
     KafkaPerformanceEvent,
+    QueueStatsData,
     WorkerLastProcessedData,
     WorkerLastProcessedEvent,
     WorkerPerformanceData,
@@ -30,6 +32,10 @@ from .models import (
 
 if TYPE_CHECKING:
     from wazuh_dfn.health.models import KafkaPerformanceData
+
+
+# Logging
+LOGGER = logging.getLogger(__name__)
 
 
 class HealthEventService:
@@ -44,20 +50,33 @@ class HealthEventService:
     Removed subscriber pattern as it was redundant with queue polling.
     """
 
-    def __init__(self, config: HealthConfig) -> None:
+    def __init__(self, config: HealthConfig, shutdown_event: asyncio.Event) -> None:
         """Initialize HealthEventService.
 
         Args:
             config: Health configuration for thresholds (required)
+            shutdown_event: Event to signal shutdown
         """
-        self.logger = logging.getLogger(f"{__name__}.HealthEventService")
         self._event_queue = AsyncMaxSizeQueue(maxsize=config.event_queue_size)
         self._config = config
-        self._shutdown_event = asyncio.Event()
+        self._shutdown_event = shutdown_event
 
         # Use configurable thresholds from config
         self._extremely_slow_threshold = config.kafka_extremely_slow_threshold
         self._worker_stall_threshold = config.worker_stall_threshold
+
+        # Add counters for monitoring queue health - ensure timestamp is stored as int
+        self._queue_stats = {
+            "total_processed": 0,
+            "last_queue_size": 0,
+            "max_queue_size": 0,
+            "queue_full_count": 0,
+            "last_queue_check": int(datetime.now().timestamp()),
+        }
+        self._stats_lock = asyncio.Lock()
+
+        # Track last error for health monitoring
+        self._last_error: str | None = None
 
     @property
     def event_queue(self) -> AsyncMaxSizeQueue:
@@ -82,7 +101,24 @@ class HealthEventService:
         }
 
         # Add to queue for polling by HealthService
-        await self._event_queue.put(event)
+        try:
+            await self._event_queue.put(event)
+
+            # Update queue statistics
+            async with self._stats_lock:
+                self._queue_stats["total_processed"] += 1
+                current_size = self._event_queue.qsize()
+                self._queue_stats["last_queue_size"] = current_size
+                self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
+
+                # Check if queue is getting full
+                if self._event_queue.full():
+                    self._queue_stats["queue_full_count"] += 1
+
+        except Exception as e:
+            self._last_error = f"Failed to push worker performance event: {e}"
+            LOGGER.error(self._last_error)
+            raise
 
         # Immediate alerting for extremely slow operations (preserve current behavior)
         # Type-safe access: performance_data["extremely_slow_alerts"] instead of .get()
@@ -110,7 +146,24 @@ class HealthEventService:
         }
 
         # Add to queue for polling by HealthService
-        await self._event_queue.put(event)
+        try:
+            await self._event_queue.put(event)
+
+            # Update queue statistics
+            async with self._stats_lock:
+                self._queue_stats["total_processed"] += 1
+                current_size = self._event_queue.qsize()
+                self._queue_stats["last_queue_size"] = current_size
+                self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
+
+                # Check if queue is getting full
+                if self._event_queue.full():
+                    self._queue_stats["queue_full_count"] += 1
+
+        except Exception as e:
+            self._last_error = f"Failed to push worker last processed event: {e}"
+            LOGGER.error(self._last_error)
+            raise
 
     async def push_kafka_performance(self, operation_data: KafkaPerformanceData) -> None:
         """Real-time push from KafkaService (replaces record_kafka_performance).
@@ -128,7 +181,24 @@ class HealthEventService:
         }
 
         # Add to queue for polling by HealthService
-        await self._event_queue.put(event)
+        try:
+            await self._event_queue.put(event)
+
+            # Update queue statistics
+            async with self._stats_lock:
+                self._queue_stats["total_processed"] += 1
+                current_size = self._event_queue.qsize()
+                self._queue_stats["last_queue_size"] = current_size
+                self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
+
+                # Check if queue is getting full
+                if self._event_queue.full():
+                    self._queue_stats["queue_full_count"] += 1
+
+        except Exception as e:
+            self._last_error = f"Failed to push kafka performance event: {e}"
+            LOGGER.error(self._last_error)
+            raise
 
         # Immediate alerting for extremely slow operations (preserve current behavior)
         # Safe access: Use .get() since TypedDict has total=False
@@ -142,7 +212,7 @@ class HealthEventService:
         Args:
             event: Health event that triggered the alert
         """
-        self.logger.warning(
+        LOGGER.warning(
             f"IMMEDIATE ALERT: Extremely slow operation detected - "
             f"Event: {event['event_type']}, Timestamp: {event['timestamp']}"
         )
@@ -162,6 +232,83 @@ class HealthEventService:
             HealthEvent | None: Next event or None if queue is empty
         """
         try:
-            return await asyncio.wait_for(self._event_queue.get(), timeout=0.1)
+            event = await asyncio.wait_for(self._event_queue.get(), timeout=0.1)
+
+            # Update queue statistics on consumption
+            async with self._stats_lock:
+                self._queue_stats["last_queue_size"] = self._event_queue.qsize()
+                self._queue_stats["last_queue_check"] = int(time.time())
+
+            # Clear any previous errors on successful operation
+            self._last_error = None
+            return event
+
         except TimeoutError:
             return None
+        except Exception as e:
+            self._last_error = f"Failed to get next event: {e}"
+            LOGGER.error(self._last_error)
+            return None
+
+    # QueueMetricsProvider protocol implementation
+    def get_queue_stats(self) -> QueueStatsData:
+        """Get current queue statistics.
+
+        Returns:
+            QueueStatsData: Queue statistics data
+        """
+        return {
+            "total_processed": self._queue_stats.get("total_processed", 0),
+            "max_queue_size": self._event_queue.maxsize,
+            "queue_full_count": self._queue_stats.get("queue_full_count", 0),
+            "last_queue_size": self._event_queue.qsize(),
+        }
+
+    def get_queue_name(self) -> str:
+        """Get the queue identifier.
+
+        Returns:
+            str: Queue name/identifier
+        """
+        return "health_event_queue"
+
+    def is_queue_healthy(self) -> bool:
+        """Check if queue is operating within normal parameters.
+
+        Returns:
+            bool: True if queue is healthy, False if at risk
+        """
+        # Consider queue healthy if not full and service is running
+        return not self._event_queue.full() and self.get_health_status()
+
+    # HealthMetricsProvider protocol implementation
+    def get_health_status(self) -> bool:
+        """Check if the service is healthy and operational.
+
+        Returns:
+            bool: True if service is healthy, False otherwise
+        """
+        return not self._shutdown_event.is_set()
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics.
+
+        Returns:
+            dict[str, Any]: Service metrics data
+        """
+        return {
+            "health_status": self.get_health_status(),
+            "queue_stats": self.get_queue_stats(),
+            "queue_name": self.get_queue_name(),
+            "is_queue_healthy": self.is_queue_healthy(),
+            "event_queue_size": self.get_event_queue_size(),
+            "last_error": self.get_last_error(),
+        }
+
+    def get_last_error(self) -> str | None:
+        """Get the last error message if any.
+
+        Returns:
+            str | None: Last error message or None
+        """
+        return self._last_error

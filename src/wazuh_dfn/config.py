@@ -686,7 +686,11 @@ class LogConfig(BaseModel):
     )
     interval: int = Field(
         default=600,
-        description="Statistics logging interval in seconds",
+        description=(
+            "Statistics logging interval in seconds used by the legacy LoggingService. "
+            "The LoggingService is deprecated; use HealthConfig.stats_interval "
+            "(HEALTH_STATS_INTERVAL) for health metrics."
+        ),
         json_schema_extra={
             "env_var": "LOG_INTERVAL",
             "cli": "--log-interval",
@@ -709,6 +713,30 @@ class LogConfig(BaseModel):
             "cli": "--log-file-path",
         },
     )
+
+    @model_validator(mode="after")
+    def warn_if_logging_service_used(self) -> "LogConfig":
+        """Warn only if the legacy LoggingService interval is explicitly used.
+
+        The LogConfig itself remains valid for configuring logging outputs. Only the
+        LoggingService (which emitted periodic statistics) is deprecated. We warn
+        when users actively set a non-default interval or provide LOG_INTERVAL env var
+        so they can migrate to HealthConfig.stats_interval.
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            default_interval = type(self).model_fields["interval"].default
+        except Exception:
+            default_interval = 600
+
+        if os.getenv("LOG_INTERVAL") is not None or (self.interval is not None and self.interval != default_interval):
+            logger.warning(
+                "Legacy LoggingService detected: LOG_INTERVAL is set or LogConfig.interval differs from default. "
+                "The LoggingService is deprecated — migrate interval to HEALTH_STATS_INTERVAL and "
+                "consider enabling the Health API via health.api.enabled."
+            )
+
+        return self
 
     @field_validator("level")
     @classmethod

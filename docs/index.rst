@@ -16,6 +16,7 @@ Contents
    installation
    configuration
    usage
+   health
    troubleshooting
 
 .. toctree::

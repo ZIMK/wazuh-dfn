@@ -69,7 +69,7 @@ The service structure consists of several concurrent tasks:
 - File monitoring task (AlertsWatcherService)
 - Worker tasks (AlertsWorkerService) - multiple configurable workers
 - Kafka client task (KafkaService)
-- Logging and statistics task (LoggingService)
+- Health monitoring task (HealthService) - collects runtime metrics and provides an optional HTTP API
 
 You can configure the number of worker tasks with the `--misc-num-workers` parameter or `misc.num_workers` in the configuration file.
 
@@ -273,6 +273,27 @@ To check if the service is running correctly:
 2. Check that alerts are being processed without errors
 3. Monitor the statistics for processing rate and queue size
 4. Verify no excessive CPU or memory usage
+
+Health API (optional)
+~~~~~~~~~~~~~~~~~~~~~
+
+The HealthService exposes an optional HTTP API for runtime health and metrics. The API is disabled by default and binds to `127.0.0.1` for safety.
+
+Enable the API via configuration or environment variables:
+
+.. code-block:: bash
+
+   export HEALTH_HTTP_SERVER_ENABLED=true
+   export HEALTH_API_HOST=127.0.0.1
+   export HEALTH_API_PORT=8080
+
+To query the API (example):
+
+.. code-block:: bash
+
+   curl -H "Authorization: Bearer your_secure_token" http://127.0.0.1:8080/health
+
+Available endpoints include `/health`, `/health/detailed`, `/health/system`, `/health/services`, `/health/workers`, and `/server-info`.
 
 Troubleshooting
 ------------

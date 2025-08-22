@@ -1,20 +1,27 @@
 """Integration tests for Health API Server background operation.
 
-Tests the complete server lifecycle with real HTTP requests to all endpoints.
+Tests the complete server lifecycle wi                processing_rate=8.2,
+                queue_full_events=5,
+                avg_wait_time=0.12,
+                status=HealthStatus.DEGRADED,
+                timestamp=datetime.now(),al HTTP requests to all endpoints.
 """
 
 import asyncio
+import contextlib
+import logging
 import time
 from datetime import datetime
 
 import aiohttp
 import pytest
+import pytest_asyncio
 
 from wazuh_dfn.config import APIConfig
 from wazuh_dfn.health.api.server import HealthAPIServer
 from wazuh_dfn.health.models import (
     HealthMetrics,
-    OverallHealthStatus,
+    HealthStatus,
     QueueHealth,
     ServiceHealth,
     SystemHealth,
@@ -22,11 +29,14 @@ from wazuh_dfn.health.models import (
     WorkerStatus,
 )
 
+logging.basicConfig(level=logging.DEBUG)
+LOGGER = logging.getLogger(__name__)
+
 
 class MockHealthProvider:
     """Mock health provider for integration testing."""
 
-    async def get_health_metrics(self) -> HealthMetrics:
+    def get_health_metrics(self) -> HealthMetrics:
         """Return properly structured mock health data."""
         # System health
         system = SystemHealth(
@@ -89,7 +99,7 @@ class MockHealthProvider:
                 processing_rate=10.5,
                 queue_full_events=2,
                 avg_wait_time=0.05,
-                status=OverallHealthStatus.HEALTHY,
+                status=HealthStatus.HEALTHY,
                 timestamp=datetime.now(),
             ),
             "priority_queue": QueueHealth(
@@ -101,7 +111,7 @@ class MockHealthProvider:
                 processing_rate=3.2,
                 queue_full_events=15,
                 avg_wait_time=2.5,
-                status=OverallHealthStatus.DEGRADED,
+                status=HealthStatus.DEGRADED,
                 timestamp=datetime.now(),
             ),
         }
@@ -120,7 +130,7 @@ class MockHealthProvider:
                 avg_response_time=0.045,
                 max_response_time=0.200,
                 slow_operations_count=15,
-                status=OverallHealthStatus.HEALTHY,
+                status=HealthStatus.HEALTHY,
                 error_rate=0.21,
                 timestamp=datetime.now(),
             ),
@@ -136,14 +146,14 @@ class MockHealthProvider:
                 avg_response_time=0.120,
                 max_response_time=1.500,
                 slow_operations_count=25,
-                status=OverallHealthStatus.DEGRADED,
+                status=HealthStatus.DEGRADED,
                 error_rate=0.90,
                 timestamp=datetime.now(),
             ),
         }
 
         return HealthMetrics(
-            overall_status=OverallHealthStatus.DEGRADED,
+            overall_status=HealthStatus.DEGRADED,
             health_score=72.5,
             system=system,
             workers=workers,
@@ -151,26 +161,31 @@ class MockHealthProvider:
             services=services,
         )
 
-    async def get_health_status(self) -> dict:
+    def get_health_status(self) -> dict:
         """Basic health status for /health endpoint."""
-        return {"status": "healthy", "timestamp": datetime.now().isoformat(), "health_score": 95.5}
+        return {"status": HealthStatus.HEALTHY, "timestamp": datetime.now().isoformat(), "health_score": 95.5}
 
-    async def get_detailed_health_status(self) -> dict:
+    def get_detailed_health_status(self) -> dict:
         """Detailed health status for /health/detailed endpoint."""
         return {
-            "overall_status": "healthy",
+            "overall_status": HealthStatus.HEALTHY,
             "health_score": 95.5,
-            "system": {"status": "healthy", "cpu_usage": 15.7, "memory_usage": 32.4, "uptime_seconds": 7200.5},
-            "workers": {"status": "healthy", "active": 2, "idle": 1, "total": 3},
-            "queues": {"status": "healthy", "pending_tasks": 12, "processing_tasks": 3},
+            "system": {
+                "status": HealthStatus.HEALTHY,
+                "cpu_usage": 15.7,
+                "memory_usage": 32.4,
+                "uptime_seconds": 7200.5,
+            },
+            "workers": {"status": HealthStatus.HEALTHY, "active": 2, "idle": 1, "total": 3},
+            "queues": {"status": HealthStatus.HEALTHY, "pending_tasks": 12, "processing_tasks": 3},
             "services": {
-                "status": "healthy",
-                "database": {"status": "healthy", "response_time": 0.05},
-                "monitoring": {"status": "healthy"},
+                "status": HealthStatus.HEALTHY,
+                "database": {"status": HealthStatus.HEALTHY, "response_time": 0.05},
+                "monitoring": {"status": HealthStatus.HEALTHY},
             },
         }
 
-    async def get_readiness_status(self) -> dict:
+    def get_readiness_status(self) -> dict:
         """Readiness status for /health/ready endpoint."""
         return {
             "ready": True,
@@ -178,11 +193,11 @@ class MockHealthProvider:
             "checks": {"database_connection": True, "queue_accessible": True},
         }
 
-    async def get_liveness_status(self) -> dict:
+    def get_liveness_status(self) -> dict:
         """Liveness status for /health/live endpoint."""
         return {"alive": True, "timestamp": datetime.now().isoformat(), "uptime": 7200.5}
 
-    async def get_metrics(self) -> dict:
+    def get_metrics(self) -> dict:
         """Performance metrics for /health/metrics endpoint."""
         return {
             "timestamp": datetime.now().isoformat(),
@@ -195,11 +210,11 @@ class MockHealthProvider:
             },
         }
 
-    async def get_detailed_health(self) -> dict:
+    def get_detailed_health(self) -> dict:
         """Alias for get_detailed_health_status for compatibility."""
-        return await self.get_detailed_health_status()
+        return self.get_detailed_health_status()
 
-    async def get_worker_status(self) -> dict:
+    def get_worker_status(self) -> dict:
         """Worker status information."""
         return {
             "workers": [
@@ -208,10 +223,10 @@ class MockHealthProvider:
                 {"id": 3, "status": "idle", "current_task": None},
                 {"id": 4, "status": "idle", "current_task": None},
             ],
-            "summary": {"total_workers": 4, "active_workers": 2, "idle_workers": 2, "status": "healthy"},
+            "summary": {"total_workers": 4, "active_workers": 2, "idle_workers": 2, "status": HealthStatus.HEALTHY},
         }
 
-    async def get_queue_status(self) -> dict:
+    def get_queue_status(self) -> dict:
         """Queue status information."""
         return {
             "queues": [
@@ -235,15 +250,15 @@ class MockHealthProvider:
                 "total_processing": 4,
                 "total_completed": 1579,
                 "total_failed": 9,
-                "status": "healthy",
+                "status": HealthStatus.HEALTHY,
             },
         }
 
-    async def get_system_status(self) -> dict:
+    def get_system_status(self) -> dict:
         """System status information."""
         return {
             "system": {
-                "status": "healthy",
+                "status": HealthStatus.HEALTHY,
                 "cpu_usage": 15.7,
                 "memory_usage": 32.4,
                 "disk_usage": 45.2,
@@ -278,25 +293,33 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="module")
-def running_server(event_loop, api_config, health_provider):
+@pytest_asyncio.fixture(scope="module")
+async def running_server(event_loop, api_config, health_provider):
     """Create and start health API server for all tests in the module."""
 
-    async def setup_and_run():
-        server = HealthAPIServer(health_provider, api_config)
-        await server.start()
-        await _wait_for_server_ready(f"http://{api_config.host}:{api_config.port}")
-        return server
+    shutdown_event = asyncio.Event()
+    server = HealthAPIServer(health_provider, api_config, shutdown_event)
 
-    server = event_loop.run_until_complete(setup_and_run())
+    # Start server in background task
+    server_task = asyncio.create_task(server.start())
+
+    await asyncio.sleep(0.2)
+
+    # Wait for server to be ready
+    await _wait_for_server_ready(f"http://{api_config.host}:{api_config.port}")
 
     yield server
 
-    # Cleanup
-    async def cleanup():
-        await server.stop()
+    shutdown_event.set()  # Signal server to stop
 
-    event_loop.run_until_complete(cleanup())
+    await asyncio.sleep(0.2)
+
+    try:
+        await asyncio.wait_for(server_task, timeout=5.0)  # Wait for server to stop gracefully
+    except TimeoutError:
+        server_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server_task
 
 
 async def _wait_for_server_ready(base_url: str, timeout: int = 10) -> bool:
@@ -395,8 +418,10 @@ async def _test_endpoint(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_health_endpoint(running_server, api_config):
+async def test_health_endpoint(running_server, api_config, caplog):
     """Test basic health endpoint."""
+    caplog.set_level(logging.INFO)
+
     base_url = f"http://{api_config.host}:{api_config.port}"
 
     async with aiohttp.ClientSession() as session:
@@ -549,28 +574,32 @@ async def test_server_lifecycle(health_provider):
         rate_limit=1000,
     )
 
-    server = HealthAPIServer(health_provider, lifecycle_config)
+    shutdown_event = asyncio.Event()
+    server = HealthAPIServer(health_provider, lifecycle_config, shutdown_event)
 
     # Test initial state
     assert not server.is_running()
 
-    # Test start
-    await server.start()
-    assert server.is_running()
+    # Test start - run in background task
+    server_task = asyncio.create_task(server.start())
 
     # Test server responds
     base_url = f"http://{lifecycle_config.host}:{lifecycle_config.port}"
     await _wait_for_server_ready(base_url)
 
+    assert server.is_running()
+
     async with aiohttp.ClientSession() as session, session.get(f"{base_url}/health") as response:
         assert response.status == 200
 
     # Test stop
-    await server.stop()
+    shutdown_event.set()
+    await asyncio.wait_for(server_task, timeout=5.0)
     assert not server.is_running()
 
     # Test server no longer responds
     with pytest.raises((aiohttp.ClientError, OSError)):  # Connection error expected
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{base_url}/health", timeout=aiohttp.ClientTimeout(total=1)) as response:
-                pass
+                # This should not be reached due to connection error
+                pytest.fail("Server should not be reachable after shutdown")

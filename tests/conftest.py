@@ -300,9 +300,9 @@ def service_container():
 
 
 @pytest_asyncio.fixture
-async def health_event_service(health_config):
+async def health_event_service(health_config, shutdown_event):
     """Create a HealthEventService instance for testing."""
-    service = HealthEventService(config=health_config)
+    service = HealthEventService(config=health_config, shutdown_event=shutdown_event)
     yield service
     # Clean shutdown
     if hasattr(service, "_shutdown_event"):
@@ -310,13 +310,14 @@ async def health_event_service(health_config):
 
 
 @pytest_asyncio.fixture
-async def health_service(service_container, health_config, health_event_service):
+async def health_service(service_container, health_config, health_event_service, shutdown_event):
     """Create a HealthService instance for testing."""
     # Create health service with event queue from health_event_service
     service = HealthService(
         container=service_container,
         config=health_config,
-        event_queue=health_event_service._event_queue if health_event_service else None,
+        event_queue=health_event_service._event_queue,
+        shutdown_event=shutdown_event,
     )
     yield service
     # Clean shutdown

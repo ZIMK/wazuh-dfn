@@ -13,7 +13,9 @@ from typing import Union, get_args, get_origin
 
 from dotenv import load_dotenv
 
-from .config import Config, DFNConfig, HealthConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
+from wazuh_dfn.health.api import HealthAPIServer
+
+from .config import APIConfig, Config, DFNConfig, HealthConfig, KafkaConfig, LogConfig, MiscConfig, WazuhConfig
 from .exceptions import ConfigValidationError
 from .health.event_service import HealthEventService
 from .health.health_service import HealthService
@@ -128,7 +130,7 @@ def parse_args() -> argparse.Namespace:  # NOSONAR
 
     # Add arguments from field metadata
     config_fields = []
-    for cls_obj in [WazuhConfig, DFNConfig, KafkaConfig, LogConfig, MiscConfig]:
+    for cls_obj in [WazuhConfig, DFNConfig, KafkaConfig, LogConfig, MiscConfig, HealthConfig, APIConfig]:
         cls_name = cls_obj.__name__.replace("Config", "")  # Remove "Config" suffix for cleaner display
         for field_name, field_info in cls_obj.model_fields.items():
             if field_name.startswith("_"):  # Skip private fields
@@ -331,16 +333,18 @@ async def setup_service(config: Config) -> None:
     """
     shutdown_event = asyncio.Event()
     alert_queue = AsyncMaxSizeQueue(maxsize=config.wazuh.json_alert_queue_size)
-    service_container = None  # Initialize early for cleanup
 
-    LOGGER.info("Starting services...")
+    # Initialize ServiceContainer for health monitoring
+    LOGGER.info("Initializing ServiceContainer...")
+    service_container = ServiceContainer()
+
+    LOGGER.info("Initializing services...")
     try:
         # Initialize core services
-        LOGGER.debug("Initializing WazuhService...")
+        LOGGER.info("Initializing WazuhService...")
         wazuh_service = WazuhService(config=config.wazuh)
-        await wazuh_service.start()
 
-        LOGGER.debug("Initializing KafkaService...")
+        LOGGER.info("Initializing KafkaService...")
         kafka_service = KafkaService(
             config=config.kafka,
             dfn_config=config.dfn,
@@ -349,14 +353,14 @@ async def setup_service(config: Config) -> None:
         )
 
         # Initialize alert processing services
-        LOGGER.debug("Initializing AlertsService...")
+        LOGGER.info("Initializing AlertsService...")
         alerts_service = AlertsService(
             config=config.misc,
             kafka_service=kafka_service,
             wazuh_service=wazuh_service,
         )
 
-        LOGGER.debug("Initializing AlertsWorkerService...")
+        LOGGER.info("Initializing AlertsWorkerService...")
         alerts_worker_service = AlertsWorkerService(
             config=config.misc,
             alert_queue=alert_queue,
@@ -364,18 +368,13 @@ async def setup_service(config: Config) -> None:
             shutdown_event=shutdown_event,
         )
 
-        LOGGER.debug("Initializing AlertsWatcherService...")
+        LOGGER.info("Initializing AlertsWatcherService...")
         alerts_watcher_service = AlertsWatcherService(
             config=config.wazuh,
             alert_queue=alert_queue,
             wazuh_service=wazuh_service,
             shutdown_event=shutdown_event,
         )
-
-        # === ServiceContainer Integration (Phase 1.4) ===
-        # Initialize ServiceContainer for health monitoring
-        LOGGER.debug("Initializing ServiceContainer...")
-        service_container = ServiceContainer()
 
         # Get or create health config
         health_config = getattr(config, "health", None)
@@ -384,8 +383,8 @@ async def setup_service(config: Config) -> None:
             health_config = HealthConfig()
 
         # Initialize HealthEventService first (lightweight, no dependencies)
-        LOGGER.debug("Initializing HealthEventService...")
-        health_event_service = HealthEventService(config=health_config)
+        LOGGER.info("Initializing HealthEventService...")
+        health_event_service = HealthEventService(config=health_config, shutdown_event=shutdown_event)
 
         # Register core services
         service_container.register_service("health_event", health_event_service)
@@ -395,47 +394,48 @@ async def setup_service(config: Config) -> None:
         service_container.register_service("alerts_worker", alerts_worker_service)
         service_container.register_service("alerts_watcher", alerts_watcher_service)
 
-        # Register as metrics providers (once services implement protocols)
-        # Note: For now, services don't implement the full protocols yet
-        # This would be the pattern once protocols are implemented:
-        # try:
-        #     if hasattr(alerts_worker_service, 'get_worker_performance'):
-        #         service_container.register_worker_provider("alerts_worker", alerts_worker_service)
-        #     if hasattr(alerts_worker_service, 'get_queue_stats'):
-        #         service_container.register_queue_provider("alert_queue", alerts_worker_service)
-        #     if hasattr(kafka_service, 'get_kafka_stats'):
-        #         service_container.register_kafka_provider("kafka", kafka_service)
-        # except Exception as e:
-        #     LOGGER.debug(f"Some providers not available yet: {e}")
-
-        # Initialize HealthService (replaces LoggingService)
-        LOGGER.debug("Initializing HealthService (replacing LoggingService)...")
+        # Initialize HealthService
+        LOGGER.info("Initializing HealthService...")
         try:
             # Initialize health service with ServiceContainer and reference to event service
             health_service = HealthService(
                 container=service_container,
                 config=health_config,
-                event_queue=None,  # Pass None, HealthService will get events via ServiceContainer
+                event_queue=health_event_service.event_queue,  # Pass event queue from HealthEventService
+                shutdown_event=shutdown_event,
             )
 
             # Register health service itself (avoids circular dependency)
             service_container.register_service("health", health_service)
-            LOGGER.info("Health monitoring system initialized successfully (replaced LoggingService)")
+            LOGGER.info("Health monitoring system initialized successfully")
 
         except Exception as e:
             LOGGER.warning(f"Health monitoring system not available: {e}")
             health_service = None
-        # === END ServiceContainer Integration ===
+
+        # Register health api server
+        if config.health.api and config.health.api.enabled:
+            try:
+                health_api_server = HealthAPIServer(
+                    config=config.health.api,
+                    shutdown_event=shutdown_event,
+                )
+                service_container.register_service("health_api", health_api_server)
+                LOGGER.info("Health API server registered successfully")
+
+            except Exception as e:
+                LOGGER.error(f"Failed to register health API server: {e}")
 
         # Connect services to HealthEventService for real-time event pushing
-        LOGGER.debug("Connecting services to HealthEventService...")
+        LOGGER.info("Connecting services to HealthEventService...")
         alerts_worker_service.set_health_event_service(health_event_service)
         kafka_service.set_health_event_service(health_event_service)
 
         # Register services as metrics providers for periodic health collection
-        LOGGER.debug("Registering services as metrics providers...")
+        LOGGER.info("Registering services as metrics providers...")
         service_container.register_worker_provider("alerts_worker", alerts_worker_service)
-        service_container.register_queue_provider("alert_queue", alerts_worker_service)
+        service_container.register_queue_provider(alerts_worker_service.get_queue_name(), alerts_worker_service)
+        service_container.register_queue_provider(health_event_service.get_queue_name(), health_event_service)
         service_container.register_kafka_provider("kafka", kafka_service)
 
         # Set up signal handlers for clean shutdown
@@ -460,7 +460,7 @@ async def setup_service(config: Config) -> None:
         # Clean shutdown of all services
         LOGGER.info("Shutting down services...")
         try:
-            if "service_container" in locals():
+            if service_container:
                 await service_container.stop_all_services()
         except Exception as e:
             LOGGER.error(f"Error during service shutdown: {e}")

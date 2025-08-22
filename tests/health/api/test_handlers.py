@@ -7,7 +7,7 @@ import pytest
 
 from wazuh_dfn.health.models import (
     HealthMetrics,
-    OverallHealthStatus,
+    HealthStatus,
     QueueHealth,
     ServiceHealth,
     SystemHealth,
@@ -36,10 +36,7 @@ def mock_health_provider():
     class MockHealthProvider:
         """Mock health provider for testing."""
 
-        def __init__(self):
-            self.health_metrics = self.create_mock_metrics()
-
-        def create_mock_metrics(self) -> HealthMetrics:
+        def get_health_metrics(self) -> HealthMetrics:
             """Create comprehensive mock health metrics."""
             system = SystemHealth(
                 process_id=12345,
@@ -83,7 +80,7 @@ def mock_health_provider():
                     processing_rate=10.5,
                     queue_full_events=2,
                     avg_wait_time=0.05,
-                    status=OverallHealthStatus.HEALTHY,
+                    status=HealthStatus.HEALTHY,
                     timestamp=datetime.now(),
                 )
             }
@@ -101,14 +98,14 @@ def mock_health_provider():
                     avg_response_time=0.045,
                     max_response_time=0.200,
                     slow_operations_count=15,
-                    status=OverallHealthStatus.HEALTHY,
+                    status=HealthStatus.HEALTHY,
                     error_rate=0.21,
                     timestamp=datetime.now(),
                 )
             }
 
             return HealthMetrics(
-                overall_status=OverallHealthStatus.HEALTHY,
+                overall_status=HealthStatus.HEALTHY,
                 health_score=95.5,
                 system=system,
                 workers=workers,
@@ -116,50 +113,112 @@ def mock_health_provider():
                 services=services,
             )
 
-        async def get_health_status(self) -> dict:
+        def get_health_status(self) -> dict:
             """Basic health status for /health endpoint."""
-            return {"status": "healthy", "timestamp": datetime.now().isoformat(), "health_score": 95.5}
+            return {"status": HealthStatus.HEALTHY, "timestamp": datetime.now().isoformat(), "health_score": 95.5}
 
-        async def get_detailed_health(self) -> dict:
-            """Detailed health status."""
+        def get_detailed_health_status(self) -> dict:
+            """Detailed health status for /health/detailed endpoint."""
             return {
-                "overall_status": "healthy",
+                "overall_status": HealthStatus.HEALTHY,
                 "health_score": 95.5,
-                "system": {"status": "healthy", "cpu_usage": 15.7},
-                "workers": {"status": "healthy", "active": 1},
-                "queues": {"status": "healthy", "pending_tasks": 23},
-                "services": {"status": "healthy", "kafka": {"status": "healthy"}},
+                "system": {
+                    "status": HealthStatus.HEALTHY,
+                    "cpu_usage": 15.7,
+                    "memory_usage": 32.4,
+                    "uptime_seconds": 7200.5,
+                },
+                "workers": {"status": HealthStatus.HEALTHY, "active": 2, "idle": 1, "total": 3},
+                "queues": {"status": HealthStatus.HEALTHY, "pending_tasks": 12, "processing_tasks": 3},
+                "services": {
+                    "status": HealthStatus.HEALTHY,
+                    "database": {"status": HealthStatus.HEALTHY, "response_time": 0.05},
+                    "monitoring": {"status": HealthStatus.HEALTHY},
+                },
             }
 
-        async def get_worker_status(self) -> dict:
+        def get_readiness_status(self) -> dict:
+            """Readiness status for /health/ready endpoint."""
+            return {
+                "ready": True,
+                "timestamp": datetime.now().isoformat(),
+                "checks": {"database_connection": True, "queue_accessible": True},
+            }
+
+        def get_liveness_status(self) -> dict:
+            """Liveness status for /health/live endpoint."""
+            return {"alive": True, "timestamp": datetime.now().isoformat(), "uptime": 7200.5}
+
+        def get_metrics(self) -> dict:
+            """Performance metrics for /health/metrics endpoint."""
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "metrics": {
+                    "requests_total": 12345,
+                    "errors_total": 23,
+                    "response_time_avg": 0.125,
+                    "cpu_usage": 15.7,
+                    "memory_usage": 512.8,
+                },
+            }
+
+        def get_detailed_health(self) -> dict:
+            """Alias for get_detailed_health_status for compatibility."""
+            return self.get_detailed_health_status()
+
+        def get_worker_status(self) -> dict:
             """Worker status information."""
             return {
-                "workers": [{"id": 1, "status": "active", "current_task": "processing"}],
-                "summary": {"total_workers": 1, "active_workers": 1, "status": "healthy"},
+                "workers": [
+                    {"id": 1, "status": "active", "current_task": "processing"},
+                    {"id": 2, "status": "active", "current_task": "monitoring"},
+                    {"id": 3, "status": "idle", "current_task": None},
+                    {"id": 4, "status": "idle", "current_task": None},
+                ],
+                "summary": {"total_workers": 4, "active_workers": 2, "idle_workers": 2, "status": HealthStatus.HEALTHY},
             }
 
-        async def get_queue_status(self) -> dict:
+        def get_queue_status(self) -> dict:
             """Queue status information."""
             return {
-                "queues": [{"name": "alert_queue", "pending_tasks": 23, "processing_tasks": 1}],
-                "summary": {"total_pending": 23, "status": "healthy"},
+                "queues": [
+                    {
+                        "name": "main_queue",
+                        "pending_tasks": 12,
+                        "processing_tasks": 3,
+                        "completed_tasks": 1245,
+                        "failed_tasks": 8,
+                    },
+                    {
+                        "name": "priority_queue",
+                        "pending_tasks": 2,
+                        "processing_tasks": 1,
+                        "completed_tasks": 334,
+                        "failed_tasks": 1,
+                    },
+                ],
+                "summary": {
+                    "total_pending": 14,
+                    "total_processing": 4,
+                    "total_completed": 1579,
+                    "total_failed": 9,
+                    "status": HealthStatus.HEALTHY,
+                },
             }
 
-        async def get_system_status(self) -> dict:
+        def get_system_status(self) -> dict:
             """System status information."""
             return {
-                "system": {"status": "healthy", "cpu_usage": 15.7, "memory_usage": 32.4},
+                "system": {
+                    "status": HealthStatus.HEALTHY,
+                    "cpu_usage": 15.7,
+                    "memory_usage": 32.4,
+                    "disk_usage": 45.2,
+                    "network_connections": 23,
+                    "system_load": [0.8, 1.2, 1.5],
+                    "uptime_seconds": 7200.5,
+                },
                 "timestamp": datetime.now().isoformat(),
-            }
-
-        async def get_metrics(self) -> dict:
-            """Get metrics for the metrics endpoint."""
-            return {
-                "health_score": 95.5,
-                "system": {"cpu_usage": 15.7, "memory_usage": 32.4},
-                "workers": {"active": 1, "total": 1},
-                "queues": {"alert_queue": {"size": 23, "max_size": 1000}},
-                "services": {"kafka": {"operations_per_sec": 1000}},
             }
 
     return MockHealthProvider()
@@ -200,7 +259,7 @@ async def test_health_basic_handler(aiohttp_client, aiohttp_app):
     assert resp.status == 200
 
     data = await resp.json()
-    assert data["status"] == "healthy"
+    assert data["status"] == HealthStatus.HEALTHY
     assert "health_score" in data
 
 
@@ -213,7 +272,7 @@ async def test_health_detailed_handler(aiohttp_client, aiohttp_app):
     assert resp.status == 200
 
     data = await resp.json()
-    assert data["overall_status"] == "healthy"
+    assert data["overall_status"] == HealthStatus.HEALTHY
     assert "system" in data
     assert "workers" in data
     assert "queues" in data
@@ -267,7 +326,7 @@ async def test_metrics_handler(aiohttp_client, aiohttp_app):
     assert resp.status == 200
 
     content = await resp.text()
-    assert "wazuh_dfn_health_score" in content
+    assert "health_score" in content
     assert "95.5" in content
 
 
@@ -277,7 +336,7 @@ def test_handlers_initialization(mock_health_provider):
         pytest.skip("aiohttp not available")
 
     handlers = HealthHandlers(mock_health_provider)
-    assert handlers.health_provider is mock_health_provider
+    assert handlers.health_service is mock_health_provider
 
 
 def test_register_routes(mock_health_provider):
@@ -299,19 +358,15 @@ def test_format_prometheus_metrics(mock_health_provider):
 
     handlers = HealthHandlers(mock_health_provider)
 
-    metrics_data = {
-        "health_score": 95.5,
-        "system": {"cpu_usage": 15.7, "memory_usage": 32.4},
-        "workers": {"active": 1, "total": 1},
-    }
+    metrics_data = mock_health_provider.get_health_metrics()
 
     prometheus_output = handlers._format_prometheus_metrics(metrics_data)
 
-    assert "wazuh_dfn_health_score 95.5" in prometheus_output
-    assert 'wazuh_dfn_system{type="cpu_usage"} 15.7' in prometheus_output
-    assert 'wazuh_dfn_system{type="memory_usage"} 32.4' in prometheus_output
-    assert 'wazuh_dfn_workers{type="active"} 1' in prometheus_output
-    assert 'wazuh_dfn_workers{type="total"} 1' in prometheus_output
+    assert "health_score 95.5" in prometheus_output
+    assert "system_cpu_percent 15.7" in prometheus_output
+    assert "system_memory_percent 32.4" in prometheus_output
+    assert 'worker_alerts_processed{worker="worker-1"} 1250' in prometheus_output
+    assert 'worker_health_score{worker="worker-1"} 0.95' in prometheus_output
 
 
 @pytest.mark.asyncio
@@ -324,7 +379,7 @@ async def test_handler_error_handling(mock_health_provider):
     request = make_mocked_request("GET", "/health")
 
     with patch.object(mock_health_provider, "get_health_status", side_effect=Exception("Test error")):
-        response = await handlers.health_basic_handler(request)
+        response = handlers.health_basic_handler(request)
         assert response.status == 500
 
 

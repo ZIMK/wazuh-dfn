@@ -23,6 +23,8 @@ from .models import (
     WorkerProcessedTimesData,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 # Error handling structures
 class HealthError(TypedDict):
@@ -338,7 +340,7 @@ class WorkerStatsCollector:
                 results.append((worker_name, performance))
             except Exception as e:
                 # Log error but continue with other providers
-                print(f"Error collecting from worker {getattr(provider, 'service_name', 'unknown')}: {e}")
+                LOGGER.error(f"Error collecting from worker {getattr(provider, 'service_name', 'unknown')}: {e}")
         return results
 
     def get_healthy_worker_count(self) -> int:
@@ -362,7 +364,7 @@ class WorkerStatsCollector:
                 performance = provider.get_worker_performance()
                 worker_times[worker_name] = performance["timestamp"]
             except Exception as e:
-                print(f"Error getting processed time from {getattr(provider, 'service_name', 'unknown')}: {e}")
+                LOGGER.error(f"Error getting processed time from {getattr(provider, 'service_name', 'unknown')}: {e}")
 
         return WorkerProcessedTimesData(worker_times=worker_times)
 
@@ -398,7 +400,7 @@ class QueueStatsCollector:
                 stats = provider.get_queue_stats()
                 results.append((queue_name, stats))
             except Exception as e:
-                print(f"Error collecting from queue {getattr(provider, 'service_name', 'unknown')}: {e}")
+                LOGGER.error(f"Error collecting from queue {getattr(provider, 'service_name', 'unknown')}: {e}")
         return results
 
     def get_total_capacity_utilization(self) -> float:
@@ -420,3 +422,61 @@ class QueueStatsCollector:
                 continue
 
         return sum(utilizations) / len(utilizations) if utilizations else 0.0
+
+
+@runtime_checkable
+class APIHealthProvider(Protocol):
+    """Protocol for health providers that can serve API requests.
+
+    This protocol defines the interface that health providers must implement
+    to be compatible with the Health API Server. Both the real HealthService
+    and test mock providers should implement these methods.
+    """
+
+    def get_health_status(self) -> dict[str, Any]:
+        """Get basic health status information.
+
+        Returns:
+            dict: Basic health status with at least 'status' and 'timestamp' keys
+        """
+        ...
+
+    def get_detailed_health_status(self) -> dict[str, Any]:
+        """Get detailed health status information.
+
+        Returns:
+            dict: Detailed health information including system, workers, queues, services
+        """
+        ...
+
+    def get_health_metrics(self) -> Any:
+        """Get health metrics for Prometheus export.
+
+        Returns:
+            HealthMetrics object or compatible data structure
+        """
+        ...
+
+    def get_worker_status(self) -> dict[str, Any]:
+        """Get worker status information.
+
+        Returns:
+            dict: Worker status with 'workers' and 'summary' keys
+        """
+        ...
+
+    def get_queue_status(self) -> dict[str, Any]:
+        """Get queue status information.
+
+        Returns:
+            dict: Queue status with 'queues' and 'summary' keys
+        """
+        ...
+
+    def get_system_status(self) -> dict[str, Any]:
+        """Get system status information.
+
+        Returns:
+            dict: System status with 'system' and 'timestamp' keys
+        """
+        ...

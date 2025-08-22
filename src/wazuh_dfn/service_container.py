@@ -10,6 +10,7 @@ This module provides a dependency injection container that:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
@@ -22,6 +23,9 @@ from .health.protocols import (
 )
 
 T = TypeVar("T")
+
+# Logging
+LOGGER = logging.getLogger(__name__)
 
 
 class ServiceContainer:
@@ -40,7 +44,6 @@ class ServiceContainer:
 
     def __init__(self) -> None:
         """Initialize the service container."""
-        self.logger = logging.getLogger(f"{__name__}.ServiceContainer")
         self._services: dict[str, Any] = {}
         self._service_factories: dict[str, Callable[[], Any]] = {}
         self._worker_providers: dict[str, WorkerMetricsProvider] = {}
@@ -56,7 +59,7 @@ class ServiceContainer:
             service: Service instance
         """
         self._services[name] = service
-        self.logger.debug(f"Registered service: {name}")
+        LOGGER.debug(f"Registered service: {name}")
 
     def register_service_factory(self, name: str, factory: Callable[[], Any]) -> None:
         """Register a service factory for lazy initialization.
@@ -66,7 +69,7 @@ class ServiceContainer:
             factory: Factory function that creates the service
         """
         self._service_factories[name] = factory
-        self.logger.debug(f"Registered service factory: {name}")
+        LOGGER.debug(f"Registered service factory: {name}")
 
     def get_service(self, name: str, service_type: type[T] | None = None) -> T | None:  # noqa: PLR0911
         """Get a service by name.
@@ -86,7 +89,7 @@ class ServiceContainer:
             elif isinstance(service, service_type):
                 return service
             else:
-                self.logger.warning(f"Service {name} is not of type {service_type}")
+                LOGGER.warning(f"Service {name} is not of type {service_type}")
                 return None
 
         # Try service factories
@@ -100,13 +103,13 @@ class ServiceContainer:
                 elif isinstance(service, service_type):
                     return service
                 else:
-                    self.logger.warning(f"Factory service {name} is not of type {service_type}")
+                    LOGGER.warning(f"Factory service {name} is not of type {service_type}")
                     return None
             except Exception as e:
-                self.logger.error(f"Error creating service {name} from factory: {e}")
+                LOGGER.error(f"Error creating service {name} from factory: {e}")
                 return None
 
-        self.logger.debug(f"Service not found: {name}")
+        LOGGER.debug(f"Service not found: {name}")
         return None
 
     def register_worker_provider(self, name: str, provider: WorkerMetricsProvider) -> None:
@@ -117,7 +120,7 @@ class ServiceContainer:
             provider: Worker metrics provider
         """
         self._worker_providers[name] = provider
-        self.logger.debug(f"Registered worker provider: {name}")
+        LOGGER.debug(f"Registered worker provider: {name}")
 
     def register_queue_provider(self, name: str, provider: QueueMetricsProvider) -> None:
         """Register a queue metrics provider.
@@ -127,7 +130,7 @@ class ServiceContainer:
             provider: Queue metrics provider
         """
         self._queue_providers[name] = provider
-        self.logger.debug(f"Registered queue provider: {name}")
+        LOGGER.debug(f"Registered queue provider: {name}")
 
     def register_kafka_provider(self, name: str, provider: KafkaMetricsProvider) -> None:
         """Register a Kafka metrics provider.
@@ -137,7 +140,7 @@ class ServiceContainer:
             provider: Kafka metrics provider
         """
         self._kafka_providers[name] = provider
-        self.logger.debug(f"Registered Kafka provider: {name}")
+        LOGGER.debug(f"Registered Kafka provider: {name}")
 
     def register_health_provider(self, name: str, provider: HealthMetricsProvider) -> None:
         """Register a health metrics provider.
@@ -147,7 +150,7 @@ class ServiceContainer:
             provider: Health metrics provider
         """
         self._health_providers[name] = provider
-        self.logger.debug(f"Registered health provider: {name}")
+        LOGGER.debug(f"Registered health provider: {name}")
 
     def get_worker_providers(self) -> dict[str, WorkerMetricsProvider]:
         """Get all registered worker metrics providers.
@@ -227,55 +230,61 @@ class ServiceContainer:
         self._queue_providers.clear()
         self._kafka_providers.clear()
         self._health_providers.clear()
-        self.logger.debug("Container cleared")
+        LOGGER.debug("Container cleared")
 
     async def start_all_services(self) -> None:
         """Start all registered services in proper order."""
-        # 1. Start HealthEventService first (lightweight, no dependencies)
-        health_event_service = self._services.get("health_event")
-        if health_event_service and hasattr(health_event_service, "start"):
-            try:
-                self.logger.debug("Starting service: health_event")
-                await health_event_service.start()
-                self.logger.info("Service health_event started successfully")
-            except Exception as e:
-                self.logger.error(f"Failed to start service health_event: {e}")
-                raise
+        async with asyncio.TaskGroup() as tg:
+            # 1. Start services with start method except health services
+            #    (health service is started last to ensure it can subscribe to events)
+            other_services = []
+            for name, service in self._services.items():
+                if hasattr(service, "start") and name not in ("health_event", "health"):
+                    other_services.append((name, service))
 
-        # 2. Start other services (they can immediately push to HealthEventService)
-        other_services = []
-        for name, service in self._services.items():
-            if name not in ("health_event", "health") and hasattr(service, "start"):
-                other_services.append((name, service))
+            for name, service in other_services:
+                try:
+                    LOGGER.info(f"Starting service: {name}")
+                    tg.create_task(service.start(), name=name)
+                    LOGGER.info(f"Service {name} started successfully")
+                except Exception as e:
+                    LOGGER.error(f"Failed to start service {name}: {e}")
+                    raise
 
-        for name, service in other_services:
-            try:
-                self.logger.debug(f"Starting service: {name}")
-                await service.start()
-                self.logger.info(f"Service {name} started successfully")
-            except Exception as e:
-                self.logger.error(f"Failed to start service {name}: {e}")
-                raise
+            # Give the other services a moment to initialize
+            await asyncio.sleep(10)
 
-        # 3. Start HealthService last (subscribes to events + pulls from providers)
-        health_service = self._services.get("health")
-        if health_service and hasattr(health_service, "start"):
-            try:
-                self.logger.debug("Starting service: health")
-                await health_service.start()
-                self.logger.info("Service health started successfully")
-            except Exception as e:
-                self.logger.error(f"Failed to start service health: {e}")
-                raise
+            # 2. Start HealthService last (subscribes to events + pulls from providers)
+            health_service = self._services.get("health")
+            if health_service and hasattr(health_service, "start"):
+                try:
+                    LOGGER.info("Starting service: health")
+                    tg.create_task(health_service.start(), name="health")
+                    LOGGER.info("Service health started successfully")
+                except Exception as e:
+                    LOGGER.error(f"Failed to start service health: {e}")
+                    raise
+
+            # 3. Start Health Api Server if enabled
+            if self._services.get("health_api"):
+                health_api_server = self._services.get("health_api")
+                if health_api_server and hasattr(health_api_server, "start"):
+                    try:
+                        LOGGER.info("Starting service: health_api")
+                        tg.create_task(health_api_server.start(), name="health_api")
+                        LOGGER.info("Service health_api started successfully")
+                    except Exception as e:
+                        LOGGER.error(f"Failed to start service health_api: {e}")
+                        raise
 
     async def stop_all_services(self) -> None:
         """Stop all registered services that have a stop() method."""
         for name, service in reversed(list(self._services.items())):
             if hasattr(service, "stop"):
                 try:
-                    self.logger.debug(f"Stopping service: {name}")
+                    LOGGER.info(f"Stopping service: {name}")
                     await service.stop()
-                    self.logger.info(f"Service {name} stopped successfully")
+                    LOGGER.info(f"Service {name} stopped successfully")
                 except Exception as e:
-                    self.logger.error(f"Failed to stop service {name}: {e}")
+                    LOGGER.error(f"Failed to stop service {name}: {e}")
                     # Continue stopping other services even if one fails

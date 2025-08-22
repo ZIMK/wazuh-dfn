@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from wazuh_dfn.health.models import (
+    HealthStatus,
     KafkaInternalStatsData,
     QueueStatsData,
     WorkerPerformanceData,
@@ -40,10 +41,10 @@ def test_health_error_structure():
 
 def test_health_response_success():
     """Test HealthResponse TypedDict for success case."""
-    response: HealthResponse = {"success": True, "data": {"status": "healthy"}, "error": None}
+    response: HealthResponse = {"success": True, "data": {"status": HealthStatus.HEALTHY}, "error": None}
 
     assert response["success"] is True
-    assert response["data"] == {"status": "healthy"}
+    assert response["data"] == {"status": HealthStatus.HEALTHY}
     assert response["error"] is None
 
 

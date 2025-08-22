@@ -144,6 +144,36 @@ Settings for logging and statistics:
     # Path to log file
     file_path = "/var/log/wazuh-dfn.log"
 
+Health Configuration
+^^^^^^^^^^^^^^^^^^^^
+
+The new health monitoring system replaces the legacy periodic LoggingService's statistics collection. See :doc:`health` for full documentation including configuration, usage, and migration steps.
+
+Key option (example):
+
+.. code-block:: toml
+
+    [health]
+    stats_interval = 600
+    # To enable the optional HTTP API server
+    [health.api]
+    enabled = false
+
+Miscellaneous Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Other service settings:
+
+.. code-block:: toml
+
+    [misc]
+    # Number of worker tasks (for asyncio worker pool)
+    num_workers = 10
+    
+    # Own network CIDR notation (optional)
+    # Use this to identify "internal" IPs that should be ignored
+    own_network = "192.168.0.0/16"
+
 Miscellaneous Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

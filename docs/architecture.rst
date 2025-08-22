@@ -96,12 +96,13 @@ Alert Processing Services
 Auxiliary Services
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- **LoggingService**: Handles logging and statistics
+-- **HealthService**: Runtime health monitoring and optional REST API
 
-  - Configures logging
-  - Periodically logs statistics
-  - Monitors system resources using psutil
-  - Reports queue sizes and processing rates
+  - Collects bounded, periodic health statistics (CPU, memory, worker performance, queue stats)
+  - Stores short-term history with configurable retention and maximum entries
+  - Exposes an optional HTTP API (when enabled) for querying health and metrics
+  - Supports bearer-token authentication, IP allowlists, rate limiting, and HTTPS
+  - Designed to replace the legacy LoggingService's periodic statistics reporting
 
 Specialized Handlers
 ~~~~~~~~~~~~~~~~~~~~
