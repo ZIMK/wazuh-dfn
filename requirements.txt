@@ -30,12 +30,12 @@ propcache==0.3.2
 psutil==7.0.0
 pycparser==2.22; platform_python_implementation != "PyPy"
 pydantic==2.11.7
-pydantic-core==2.33.2
+pydantic-core==2.39.0
 pygments==2.19.2
 pyright==1.1.404
 pytest==8.4.1
 pytest-aiohttp==1.1.0
-pytest-asyncio==0.26.0
+pytest-asyncio==1.1.0
 pytest-cov==6.2.1
 pytest-mock==3.14.1
 pytest-sugar==1.1.0
