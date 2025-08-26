@@ -128,6 +128,11 @@ class QueueStatsBuilder:
         self._data["max_queue_size"] = max_size
         return self
 
+    def with_config_max_queue_size(self, max_size: int) -> QueueStatsBuilder:
+        """Set configured maximum queue size."""
+        self._data["config_max_queue_size"] = max_size
+        return self
+
     def with_queue_full_count(self, full_count: int) -> QueueStatsBuilder:
         """Set number of times queue was full."""
         self._data["queue_full_count"] = full_count
@@ -139,13 +144,14 @@ class QueueStatsBuilder:
         return self
 
     def with_queue_metrics(
-        self, total_processed: int, max_size: int, full_count: int, last_size: int
+        self, total_processed: int, max_size: int, config_max_size: int, full_count: int, last_size: int
     ) -> QueueStatsBuilder:
         """Set all queue metrics at once (batch setter)."""
         self._data.update(
             {
                 "total_processed": total_processed,
                 "max_queue_size": max_size,
+                "config_max_queue_size": config_max_size,
                 "queue_full_count": full_count,
                 "last_queue_size": last_size,
             }
@@ -154,7 +160,13 @@ class QueueStatsBuilder:
 
     def build(self) -> QueueStatsData:
         """Build the final QueueStatsData."""
-        required_fields = {"total_processed", "max_queue_size", "queue_full_count", "last_queue_size"}
+        required_fields = {
+            "total_processed",
+            "max_queue_size",
+            "config_max_queue_size",
+            "queue_full_count",
+            "last_queue_size",
+        }
         missing_fields = required_fields - set(self._data.keys())
         if missing_fields:
             raise ValueError(f"Missing required fields: {missing_fields}")
@@ -170,7 +182,14 @@ class QueueStatsBuilder:
     @classmethod
     def create_with_defaults(cls) -> QueueStatsBuilder:
         """Factory method with sensible defaults."""
-        return cls().with_total_processed(0).with_max_queue_size(0).with_queue_full_count(0).with_last_queue_size(0)
+        return (
+            cls()
+            .with_total_processed(0)
+            .with_max_queue_size(0)
+            .with_config_max_queue_size(0)
+            .with_queue_full_count(0)
+            .with_last_queue_size(0)
+        )
 
 
 class KafkaPerformanceBuilder:

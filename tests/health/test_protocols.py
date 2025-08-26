@@ -122,6 +122,7 @@ class MockQueueMetricsProvider(MockHealthMetricsProvider):
         self.queue_stats: QueueStatsData = {
             "total_processed": 500,
             "max_queue_size": 100,
+            "config_max_queue_size": 1000,
             "queue_full_count": 1,
             "last_queue_size": 10,
         }

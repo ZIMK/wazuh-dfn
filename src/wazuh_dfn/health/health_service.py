@@ -608,13 +608,14 @@ class HealthService:
 
                 # Get current queue size
                 current_size = queue_stats.get("last_queue_size", 0)
-                max_size = queue_stats.get("max_queue_size", 1000)
-                utilization = (current_size / max_size * 100) if max_size > 0 else 0.0
+                config_max_size = queue_stats.get("config_max_queue_size", 1000)
+                utilization = (current_size / config_max_size * 100) if config_max_size > 0 else 0.0
 
                 queue = QueueHealth(
                     queue_name="alert_queue",
                     current_size=current_size,
-                    max_size=max_size,
+                    max_size=queue_stats.get("max_queue_size", 1000),
+                    config_max_size=config_max_size,
                     utilization_percentage=utilization,
                     total_processed=queue_stats.get("total_processed", 0),
                     processing_rate=50.0,  # Placeholder - would calculate from recent metrics
@@ -708,22 +709,27 @@ class HealthService:
                 try:
                     stats = provider.get_queue_stats()
                     queue_size = stats.get("last_queue_size", 0)
-                    max_size = stats.get("max_queue_size", 100)
+                    config_max_size = stats.get("config_max_queue_size", 100)
 
-                    fill_percentage = (queue_size / max_size) * 100 if max_size > 0 else 0
+                    fill_percentage = (queue_size / config_max_size) * 100 if config_max_size > 0 else 0
 
                     if fill_percentage > self._critical_fill_threshold:
                         LOGGER.error(
-                            f"CRITICAL: Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})!"
+                            f"CRITICAL: Queue {queue_name} is {fill_percentage:.1f}% full"
+                            f" ({queue_size}/{config_max_size})!"
                         )
                     elif fill_percentage > self._warning_fill_threshold:
-                        LOGGER.warning(f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})!")
+                        LOGGER.warning(
+                            f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{config_max_size})!"
+                        )
                     else:
-                        LOGGER.info(f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{max_size})")
+                        LOGGER.info(
+                            f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{config_max_size})"
+                        )
 
                     LOGGER.info(
                         f"Queue {queue_name} stats: {stats.get('total_processed', 0)} total processed, "
-                        f"max size reached: {max_size}, "
+                        f"max size reached: {stats.get('max_queue_size', 0)}, "
                         f"queue full warnings: {stats.get('queue_full_count', 0)}"
                     )
                 except Exception as e:
@@ -1007,8 +1013,8 @@ class HealthService:
             try:
                 stats = provider.get_queue_stats()
                 current_size = stats.get("last_queue_size", 0)
-                max_size = stats.get("max_queue_size", 100)
-                utilization = (current_size / max_size) * 100 if max_size > 0 else 0.0
+                config_max_size = stats.get("config_max_queue_size", 100)
+                utilization = (current_size / config_max_size) * 100 if config_max_size > 0 else 0.0
 
                 status = HealthStatus.HEALTHY
                 if utilization > 90:
@@ -1019,7 +1025,8 @@ class HealthService:
                 queues[name] = QueueHealth(
                     queue_name=name,
                     current_size=current_size,
-                    max_size=max_size,
+                    max_size=stats.get("max_queue_size", 100),
+                    config_max_size=config_max_size,
                     utilization_percentage=utilization,
                     total_processed=stats.get("total_processed", 0),
                     processing_rate=1.0,
@@ -1033,6 +1040,7 @@ class HealthService:
                     queue_name=name,
                     current_size=0,
                     max_size=100,
+                    config_max_size=100,
                     utilization_percentage=0.0,
                     total_processed=0,
                     processing_rate=0.0,

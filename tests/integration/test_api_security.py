@@ -66,6 +66,7 @@ class MockSecureHealthProvider:
                 queue_name="test_queue",
                 current_size=5,
                 max_size=100,
+                config_max_size=1000,
                 utilization_percentage=5.0,
                 total_processed=50,
                 processing_rate=2.0,

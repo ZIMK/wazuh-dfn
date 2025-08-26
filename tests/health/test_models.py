@@ -83,6 +83,7 @@ def test_queue_stats_data_structure():
     data: QueueStatsData = {
         "total_processed": 1000,
         "max_queue_size": 50,
+        "config_max_queue_size": 1000,
         "queue_full_count": 5,
         "last_queue_size": 10,
     }
@@ -251,6 +252,7 @@ def test_queue_health_model():
         queue_name="alert_queue",
         current_size=10,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=10.0,
         total_processed=1000,
         processing_rate=2.5,
@@ -338,6 +340,7 @@ def test_health_metrics_model():
         queue_name="alert_queue",
         current_size=10,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=10.0,
         total_processed=1000,
         processing_rate=5.5,
@@ -433,6 +436,7 @@ def test_determine_queue_status_function():
         queue_name="test_queue",
         current_size=50,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=50.0,
         total_processed=1000,
         processing_rate=5.0,
@@ -447,6 +451,7 @@ def test_determine_queue_status_function():
         queue_name="test_queue",
         current_size=75,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=75.0,  # Above warning threshold (70%)
         total_processed=1000,
         processing_rate=5.0,
@@ -461,6 +466,7 @@ def test_determine_queue_status_function():
         queue_name="test_queue",
         current_size=95,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=95.0,  # Above critical threshold (90%)
         total_processed=1000,
         processing_rate=5.0,
@@ -601,6 +607,7 @@ def test_determine_overall_status_function():
         queue_name="test_queue",
         current_size=30,
         max_size=100,
+        config_max_size=1000,
         utilization_percentage=30.0,
         total_processed=1000,
         processing_rate=5.0,
@@ -740,6 +747,7 @@ def test_model_validation_edge_cases():
         queue_name="test_queue",
         current_size=0,
         max_size=1,  # Minimum valid value (gt=0)
+        config_max_size=1000,
         utilization_percentage=0.0,
         total_processed=0,
         processing_rate=0.0,

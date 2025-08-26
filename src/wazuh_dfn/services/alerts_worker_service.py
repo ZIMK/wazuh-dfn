@@ -63,6 +63,7 @@ class AlertsWorkerService:
             "total_processed": 0,
             "last_queue_size": 0,
             "max_queue_size": 0,
+            "config_max_queue_size": alert_queue.maxsize,
             "queue_full_count": 0,
             "last_queue_check": int(datetime.now().timestamp()),  # Convert to int
         }
@@ -139,7 +140,8 @@ class AlertsWorkerService:
         """
         return {
             "total_processed": self._queue_stats.get("total_processed", 0),
-            "max_queue_size": self.alert_queue.maxsize,
+            "max_queue_size": self._queue_stats.get("max_queue_size", 0),
+            "config_max_queue_size": self._queue_stats.get("config_max_queue_size", 0),
             "queue_full_count": self._queue_stats.get("queue_full_count", 0),
             "last_queue_size": self.alert_queue.qsize(),
         }

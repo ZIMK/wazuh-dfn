@@ -70,6 +70,7 @@ class HealthEventService:
             "total_processed": 0,
             "last_queue_size": 0,
             "max_queue_size": 0,
+            "config_max_queue_size": self._event_queue.maxsize,
             "queue_full_count": 0,
             "last_queue_check": int(datetime.now().timestamp()),
         }
@@ -259,7 +260,8 @@ class HealthEventService:
         """
         return {
             "total_processed": self._queue_stats.get("total_processed", 0),
-            "max_queue_size": self._event_queue.maxsize,
+            "max_queue_size": self._queue_stats.get("max_queue_size", 0),
+            "config_max_queue_size": self._queue_stats.get("config_max_queue_size", 0),
             "queue_full_count": self._queue_stats.get("queue_full_count", 0),
             "last_queue_size": self._event_queue.qsize(),
         }

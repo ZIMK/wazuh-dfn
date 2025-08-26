@@ -74,7 +74,8 @@ def mock_health_provider():
                 "alert_queue": QueueHealth(
                     queue_name="alert_queue",
                     current_size=23,
-                    max_size=1000,
+                    max_size=100,
+                    config_max_size=1000,
                     utilization_percentage=2.3,
                     total_processed=5678,
                     processing_rate=10.5,

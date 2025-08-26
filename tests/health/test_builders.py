@@ -145,6 +145,7 @@ def test_queue_stats_builder():
     data = (
         builder.with_total_processed(1000)
         .with_max_queue_size(50)
+        .with_config_max_queue_size(1000)
         .with_queue_full_count(5)
         .with_last_queue_size(10)
         .build()
@@ -153,6 +154,7 @@ def test_queue_stats_builder():
     assert isinstance(data, dict)
     assert data["total_processed"] == 1000
     assert data["max_queue_size"] == 50
+    assert data["config_max_queue_size"] == 1000
     assert data["queue_full_count"] == 5
     assert data["last_queue_size"] == 10
 

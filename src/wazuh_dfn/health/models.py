@@ -92,6 +92,7 @@ class QueueStatsData(TypedDict):
 
     total_processed: int
     max_queue_size: int
+    config_max_queue_size: int
     queue_full_count: int
     last_queue_size: int
 
@@ -403,6 +404,8 @@ class QueueHealth(BaseHealthModel):
     queue_name: str = Field(..., description="Queue identifier")
     current_size: int = Field(ge=0, description="Current number of items in queue")
     max_size: int = Field(gt=0, description="Maximum queue capacity")
+
+    config_max_size: int = Field(gt=0, description="Configured maximum queue capacity")
 
     # Utilization metrics
     utilization_percentage: float = Field(ge=0.0, le=100.0, description="Queue utilization as percentage")

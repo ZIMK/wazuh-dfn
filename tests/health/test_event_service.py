@@ -67,7 +67,7 @@ async def test_health_event_service_with_custom_queue(health_config, shutdown_ev
     service = HealthEventService(health_config, shutdown_event)
 
     assert service._event_queue is not None
-    assert service.event_queue.maxsize == 50  # Bounded queue from config
+    assert service.event_queue.maxsize == 100000  # Bounded queue from config
 
 
 @pytest.mark.asyncio
@@ -391,12 +391,14 @@ def test_get_queue_stats(health_event_service):
     # Verify structure matches QueueStatsData TypedDict
     assert "total_processed" in queue_stats
     assert "max_queue_size" in queue_stats
+    assert "config_max_queue_size" in queue_stats
     assert "queue_full_count" in queue_stats
     assert "last_queue_size" in queue_stats
 
     # Verify initial values
     assert queue_stats["total_processed"] == 0
-    assert queue_stats["max_queue_size"] == 50  # From config
+    assert queue_stats["max_queue_size"] == 0
+    assert queue_stats["config_max_queue_size"] == 100000  # From default config
     assert queue_stats["queue_full_count"] == 0
     assert queue_stats["last_queue_size"] == 0
 

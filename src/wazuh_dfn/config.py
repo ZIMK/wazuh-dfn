@@ -936,7 +936,7 @@ class HealthConfig(BaseModel):
         gt=0,
     )
     event_queue_size: int = Field(
-        default=50,
+        default=100000,
         description="Health event queue maximum size to prevent memory issues",
         json_schema_extra={
             "env_var": "HEALTH_EVENT_QUEUE_SIZE",
