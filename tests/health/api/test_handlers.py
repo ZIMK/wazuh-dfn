@@ -246,7 +246,6 @@ async def test_api_info_handler(aiohttp_client, aiohttp_app):
     assert resp.status == 200
 
     data = await resp.json()
-    assert data["api_version"] == "2.1"
     assert data["server"] == "Wazuh DFN Health API"
     assert "capabilities" in data
 

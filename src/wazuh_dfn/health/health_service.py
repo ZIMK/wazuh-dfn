@@ -313,7 +313,7 @@ class HealthService:
         metrics = await self._collect_health_metrics()
 
         return {
-            "overall_status": metrics.overall_status.value,
+            "overall_status": metrics.overall_status,
             "health_score": metrics.health_score,
             "timestamp": metrics.timestamp.isoformat(),
             "components": {
@@ -1013,7 +1013,7 @@ class HealthService:
             try:
                 stats = provider.get_queue_stats()
                 current_size = stats.get("last_queue_size", 0)
-                config_max_size = stats.get("config_max_queue_size", 100)
+                config_max_size = stats.get("config_max_queue_size", 1000)
                 utilization = (current_size / config_max_size) * 100 if config_max_size > 0 else 0.0
 
                 status = HealthStatus.HEALTHY
@@ -1025,8 +1025,8 @@ class HealthService:
                 queues[name] = QueueHealth(
                     queue_name=name,
                     current_size=current_size,
-                    max_size=stats.get("max_queue_size", 100),
-                    config_max_size=config_max_size,
+                    max_size=stats.get("max_queue_size", 1000),
+                    config_max_size=stats.get("config_max_queue_size", 1000),
                     utilization_percentage=utilization,
                     total_processed=stats.get("total_processed", 0),
                     processing_rate=1.0,
@@ -1039,8 +1039,8 @@ class HealthService:
                 queues[name] = QueueHealth(
                     queue_name=name,
                     current_size=0,
-                    max_size=100,
-                    config_max_size=100,
+                    max_size=1000,
+                    config_max_size=1000,
                     utilization_percentage=0.0,
                     total_processed=0,
                     processing_rate=0.0,
@@ -1214,7 +1214,7 @@ class HealthService:
 
             # Convert HealthMetrics to dict format expected by API
             detailed_health = {
-                "overall_status": metrics.overall_status.value,
+                "overall_status": metrics.overall_status,
                 "health_score": metrics.health_score,
                 "timestamp": datetime.now().isoformat(),
                 "system": {
@@ -1240,7 +1240,7 @@ class HealthService:
                     "workers": {
                         name: {
                             "worker_name": worker.worker_name,
-                            "status": worker.status.value,
+                            "status": worker.status,
                             "alerts_processed": worker.alerts_processed,
                             "processing_rate": worker.processing_rate,
                             "avg_processing_time": worker.avg_processing_time,
@@ -1260,9 +1260,10 @@ class HealthService:
                     "queues": {
                         name: {
                             "queue_name": queue.queue_name,
-                            "status": queue.status.value,
+                            "status": queue.status,
                             "current_size": queue.current_size,
                             "max_size": queue.max_size,
+                            "config_max_size": queue.config_max_size,
                             "utilization_percentage": queue.utilization_percentage,
                             "total_processed": queue.total_processed,
                             "processing_rate": queue.processing_rate,
@@ -1281,7 +1282,7 @@ class HealthService:
                         name: {
                             "service_name": service.service_name,
                             "service_type": service.service_type,
-                            "status": service.status.value,
+                            "status": service.status,
                             "is_connected": service.is_connected,
                             "connection_latency": service.connection_latency,
                             "total_operations": service.total_operations,
@@ -1317,10 +1318,11 @@ class HealthService:
                         "name": queue_name,
                         "current_size": queue_health.current_size,
                         "max_size": queue_health.max_size,
+                        "config_max_size": queue_health.config_max_size,
                         "utilization_percentage": queue_health.utilization_percentage,
                         "total_processed": queue_health.total_processed,
                         "processing_rate": queue_health.processing_rate,
-                        "status": queue_health.status.value,
+                        "status": queue_health.status,
                         "is_healthy": queue_health.is_healthy,
                     }
                 )
@@ -1368,7 +1370,7 @@ class HealthService:
                     "resource_pressure": metrics.system.resource_pressure,
                 },
                 "timestamp": datetime.now().isoformat(),
-                "overall_health": metrics.overall_status.value,
+                "overall_health": metrics.overall_status,
                 "health_score": metrics.health_score,
             }
 
@@ -1412,7 +1414,7 @@ class HealthService:
                 "ready": is_ready,
                 "timestamp": datetime.now().isoformat(),
                 "checks": {
-                    "overall_health": metrics.overall_status.value,
+                    "overall_health": metrics.overall_status,
                     "workers_available": len(metrics.workers) > 0,
                     "system_healthy": metrics.system.is_healthy if metrics.system else False,
                 },

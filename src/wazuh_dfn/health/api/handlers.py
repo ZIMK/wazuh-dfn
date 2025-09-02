@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 from wazuh_dfn.health.models import HealthMetrics, HealthStatus
@@ -79,7 +80,7 @@ class HealthHandlers:
             return web.json_response(health_data, status=status_code)
 
         except Exception as e:
-            LOGGER.error(f"Error in basic health check: {e}")
+            LOGGER.exception(f"Error in basic health check: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "Health check failed", "timestamp": ""}, status=500
             )
@@ -105,7 +106,7 @@ class HealthHandlers:
             return web.json_response(health_data, status=status_code)
 
         except Exception as e:
-            LOGGER.error(f"Error in detailed health check: {e}")
+            LOGGER.exception(f"Error in detailed health check: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "Detailed health check failed", "timestamp": ""}, status=500
             )
@@ -126,7 +127,7 @@ class HealthHandlers:
             return web.Response(text=prometheus_metrics, content_type="text/plain")
 
         except Exception as e:
-            LOGGER.error(f"Error in metrics endpoint: {e}")
+            LOGGER.exception(f"Error in metrics endpoint: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "Metrics collection failed", "timestamp": ""}, status=500
             )
@@ -144,7 +145,7 @@ class HealthHandlers:
             return web.json_response(worker_data, status=200)
 
         except Exception as e:
-            LOGGER.error(f"Error in worker status endpoint: {e}")
+            LOGGER.exception(f"Error in worker status endpoint: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "Worker status check failed", "timestamp": ""}, status=500
             )
@@ -162,7 +163,7 @@ class HealthHandlers:
             return web.json_response(queue_data, status=200)
 
         except Exception as e:
-            LOGGER.error(f"Error in queue status endpoint: {e}")
+            LOGGER.exception(f"Error in queue status endpoint: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "Queue status check failed", "timestamp": ""}, status=500
             )
@@ -180,7 +181,7 @@ class HealthHandlers:
             return web.json_response(system_data, status=200)
 
         except Exception as e:
-            LOGGER.error(f"Error in system status endpoint: {e}")
+            LOGGER.exception(f"Error in system status endpoint: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "System status check failed", "timestamp": ""}, status=500
             )
@@ -193,7 +194,7 @@ class HealthHandlers:
         """
         try:
             api_info = {
-                "api_version": "2.1",
+                "api_version": version("wazuh-dfn"),
                 "server": "Wazuh DFN Health API",
                 "capabilities": [
                     "health_checks",
@@ -217,7 +218,7 @@ class HealthHandlers:
             return web.json_response(api_info, status=200)
 
         except Exception as e:
-            LOGGER.error(f"Error in API info endpoint: {e}")
+            LOGGER.exception(f"Error in API info endpoint: {e}", exc_info=True)
             return web.json_response(
                 {"status": HealthStatus.ERROR, "message": "API info request failed", "timestamp": ""}, status=500
             )

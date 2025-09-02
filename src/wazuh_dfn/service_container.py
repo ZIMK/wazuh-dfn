@@ -239,7 +239,7 @@ class ServiceContainer:
             #    (health service is started last to ensure it can subscribe to events)
             other_services = []
             for name, service in self._services.items():
-                if hasattr(service, "start") and name not in ("health_event", "health"):
+                if hasattr(service, "start") and name not in ("health_event", "health", "health_api"):
                     other_services.append((name, service))
 
             for name, service in other_services:

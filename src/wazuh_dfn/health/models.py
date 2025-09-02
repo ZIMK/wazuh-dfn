@@ -415,9 +415,9 @@ class QueueHealth(BaseHealthModel):
     # Core queue metrics
     queue_name: str = Field(..., description="Queue identifier")
     current_size: int = Field(ge=0, description="Current number of items in queue")
-    max_size: int = Field(gt=0, description="Maximum queue capacity")
+    max_size: int = Field(ge=0, description="Maximum queue capacity")
 
-    config_max_size: int = Field(gt=0, description="Configured maximum queue capacity")
+    config_max_size: int = Field(ge=0, description="Configured maximum queue capacity")
 
     # Utilization metrics
     utilization_percentage: float = Field(ge=0.0, le=100.0, description="Queue utilization as percentage")
@@ -523,7 +523,7 @@ class SystemHealth(BaseHealthModel):
 
     # File system metrics
     open_files_count: int = Field(ge=0, description="Number of open file descriptors")
-    max_open_files: int = Field(gt=0, description="Maximum allowed open files")
+    max_open_files: int = Field(ge=0, description="Maximum allowed open files")
 
     # Runtime metrics
     uptime_seconds: float = Field(ge=0.0, description="Process uptime in seconds")
