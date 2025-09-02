@@ -14,6 +14,7 @@ from typing import Any, Protocol, TypedDict, runtime_checkable
 from .models import (
     FileMonitorStatsData,
     HealthEvent,
+    HealthMetrics,
     KafkaInternalStatsData,
     KafkaPerformanceEvent,
     QueueStatsData,
@@ -449,7 +450,7 @@ class APIHealthProvider(Protocol):
         """
         ...
 
-    def get_health_metrics(self) -> Any:
+    def get_health_metrics(self) -> HealthMetrics:
         """Get health metrics for Prometheus export.
 
         Returns:

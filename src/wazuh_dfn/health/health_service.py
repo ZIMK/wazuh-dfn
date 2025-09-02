@@ -1397,7 +1397,7 @@ class HealthService:
         """API compatibility alias for get_detailed_health()."""
         return self.get_detailed_health()
 
-    async def get_readiness_status(self) -> dict[str, Any]:
+    def get_readiness_status(self) -> dict[str, Any]:
         """Get readiness status for Kubernetes-style health checks."""
         try:
             metrics = self.get_health_metrics()
@@ -1421,7 +1421,7 @@ class HealthService:
             LOGGER.error(f"Error getting readiness status: {e}")
             return {"ready": False, "timestamp": datetime.now().isoformat(), "error": str(e)}
 
-    async def get_liveness_status(self) -> dict[str, Any]:
+    def get_liveness_status(self) -> dict[str, Any]:
         """Get liveness status for Kubernetes-style health checks."""
         try:
             metrics = self.get_health_metrics()

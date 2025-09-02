@@ -414,9 +414,10 @@ async def setup_service(config: Config) -> None:
             health_service = None
 
         # Register health api server
-        if config.health.api and config.health.api.enabled:
+        if config.health.api and config.health.api.enabled and health_service:
             try:
                 health_api_server = HealthAPIServer(
+                    health_provider=health_service,
                     config=config.health.api,
                     shutdown_event=shutdown_event,
                 )

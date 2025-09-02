@@ -193,7 +193,7 @@ def test_server_initialization(mock_api_config, mock_health_provider):
 
     server = HealthAPIServer(mock_health_provider, mock_api_config)
 
-    assert server.api_config == mock_api_config
+    assert server.config == mock_api_config
     assert server.health_provider == mock_health_provider
     assert server.app is None
     assert server.runner is None
@@ -442,9 +442,9 @@ def test_parametrized_server_configs(host, port, https):
     config = MockAPIConfig(host=host, port=port, https_enabled=https)
     server = HealthAPIServer(MockHealthProvider(), config)  # type: ignore[arg-type]
 
-    assert server.api_config.host == host
-    assert server.api_config.port == port
-    assert server.api_config.https_enabled == https
+    assert server.config.host == host
+    assert server.config.port == port
+    assert server.config.https_enabled == https
 
 
 @pytest.mark.skipif(AIOHTTP_AVAILABLE, reason="Testing import error handling")

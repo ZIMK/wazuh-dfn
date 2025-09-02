@@ -131,7 +131,7 @@ class HealthHandlers:
                 {"status": HealthStatus.ERROR, "message": "Metrics collection failed", "timestamp": ""}, status=500
             )
 
-    async def worker_status_handler(self, request: Request) -> Response:
+    def worker_status_handler(self, request: Request) -> Response:
         """Handle worker status endpoint.
 
         Returns:

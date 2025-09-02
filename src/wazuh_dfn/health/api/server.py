@@ -34,7 +34,7 @@ class HealthAPIServer:
     def __init__(
         self,
         health_provider: APIHealthProvider,
-        api_config: APIConfig,
+        config: APIConfig,
         shutdown_event: asyncio.Event | None = None,
     ):
         """Initialize the Health API Server.
@@ -51,7 +51,7 @@ class HealthAPIServer:
 
         # Store the provider directly - handlers will use its interface
         self.health_provider = health_provider
-        self.api_config = api_config
+        self.config = config
         self.shutdown_event = shutdown_event or asyncio.Event()
         self.app = None
         self.runner = None
@@ -59,7 +59,7 @@ class HealthAPIServer:
 
         # Initialize components
         self.handlers = HealthHandlers(self.health_provider)
-        self.security = SecurityMiddleware(api_config)
+        self.security = SecurityMiddleware(config)
         self.rate_limiter = self.security.rate_limiter  # Reference for server info
 
     def _create_ssl_context(self):
@@ -68,7 +68,7 @@ class HealthAPIServer:
         Returns:
             SSL context configured for secure connections, or None if HTTPS disabled
         """
-        if not self.api_config.https_enabled:
+        if not self.config.https_enabled:
             return None
 
         try:
@@ -79,7 +79,7 @@ class HealthAPIServer:
             context.set_ciphers("HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!SRP:!CAMELLIA")
 
             # Load certificate and key
-            context.load_cert_chain(str(self.api_config.cert_file), str(self.api_config.key_file))
+            context.load_cert_chain(str(self.config.cert_file), str(self.config.key_file))
 
             LOGGER.info("SSL context created successfully")
             return context
@@ -133,15 +133,13 @@ class HealthAPIServer:
             ssl_context = self._create_ssl_context()
 
             # Create site
-            self.site = web.TCPSite(
-                self.runner, host=self.api_config.host, port=self.api_config.port, ssl_context=ssl_context
-            )
+            self.site = web.TCPSite(self.runner, host=self.config.host, port=self.config.port, ssl_context=ssl_context)
 
             LOGGER.debug("Starting Health API Server...")
             await self.site.start()
 
             protocol = "https" if ssl_context else "http"
-            LOGGER.info(f"Health API Server started at {protocol}://{self.api_config.host}: {self.api_config.port}")
+            LOGGER.info(f"Health API Server started at {protocol}://{self.config.host}: {self.config.port}")
 
             # Keep running until shutdown
             await self.shutdown_event.wait()
@@ -185,11 +183,11 @@ class HealthAPIServer:
             Dictionary with server configuration details
         """
         return {
-            "host": self.api_config.host,
-            "port": self.api_config.port,
-            "https_enabled": self.api_config.https_enabled,
-            "authentication_enabled": bool(self.api_config.auth_token),
+            "host": self.config.host,
+            "port": self.config.port,
+            "https_enabled": self.config.https_enabled,
+            "authentication_enabled": bool(self.config.auth_token),
             "rate_limiting_enabled": bool(self.rate_limiter),
-            "ip_allowlist_enabled": set(self.api_config.allowed_ips) != {"127.0.0.1", "::1"},
+            "ip_allowlist_enabled": set(self.config.allowed_ips) != {"127.0.0.1", "::1"},
             "is_running": self.is_running(),
         }

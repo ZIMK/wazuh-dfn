@@ -41,6 +41,18 @@ class HealthStatus(StrEnum):
     CRITICAL = "CRITICAL"
     ERROR = "ERROR"
 
+    def __eq__(self, other) -> bool:
+        """Case-insensitive equality comparison for HealthStatus."""
+        if isinstance(other, str):
+            return self.value.lower() == other.lower()
+        elif isinstance(other, HealthStatus):
+            return self.value.lower() == other.value.lower()
+        return False
+
+    def __hash__(self) -> int:
+        """Ensure hash consistency with case-insensitive equality."""
+        return hash(self.value.lower())
+
 
 class WorkerStatus(StrEnum):
     """Worker-specific status."""
