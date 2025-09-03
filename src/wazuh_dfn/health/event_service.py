@@ -24,6 +24,8 @@ from .models import (
     HealthEvent,
     KafkaPerformanceEvent,
     QueueStatsData,
+    ServicePerformanceData,
+    ServicePerformanceEvent,
     WorkerLastProcessedData,
     WorkerLastProcessedEvent,
     WorkerPerformanceData,
@@ -84,8 +86,8 @@ class HealthEventService:
         """Access to the event queue for testing and health service polling."""
         return self._event_queue
 
-    async def push_worker_performance(self, worker_name: str, performance_data: WorkerPerformanceData) -> None:
-        """Real-time push from AlertsWorkerService (replaces record_worker_performance).
+    async def emit_worker_performance(self, worker_name: str, performance_data: WorkerPerformanceData) -> None:
+        """Real-time emission from AlertsWorkerService (replaces record_worker_performance).
 
         Type-safe: Uses WorkerPerformanceData instead of unsafe dict[str, Any]
 
@@ -117,7 +119,7 @@ class HealthEventService:
                     self._queue_stats["queue_full_count"] += 1
 
         except Exception as e:
-            self._last_error = f"Failed to push worker performance event: {e}"
+            self._last_error = f"Failed to emit worker performance event: {e}"
             LOGGER.error(self._last_error)
             raise
 
@@ -129,8 +131,8 @@ class HealthEventService:
         ):
             self._emit_immediate_alert(event)
 
-    async def push_worker_last_processed(self, worker_name: str, info: WorkerLastProcessedData) -> None:
-        """Real-time push from AlertsWorkerService (replaces update_worker_last_processed).
+    async def emit_worker_last_processed(self, worker_name: str, info: WorkerLastProcessedData) -> None:
+        """Real-time emission from AlertsWorkerService (replaces update_worker_last_processed).
 
         Type-safe: Uses WorkerLastProcessedData instead of unsafe dict[str, Any]
 
@@ -162,12 +164,12 @@ class HealthEventService:
                     self._queue_stats["queue_full_count"] += 1
 
         except Exception as e:
-            self._last_error = f"Failed to push worker last processed event: {e}"
+            self._last_error = f"Failed to emit worker last processed event: {e}"
             LOGGER.error(self._last_error)
             raise
 
-    async def push_kafka_performance(self, operation_data: KafkaPerformanceData) -> None:
-        """Real-time push from KafkaService (replaces record_kafka_performance).
+    async def emit_kafka_performance(self, operation_data: KafkaPerformanceData) -> None:
+        """Real-time emission from KafkaService (replaces record_kafka_performance).
 
         Type-safe: Uses KafkaPerformanceData TypedDict
 
@@ -197,7 +199,7 @@ class HealthEventService:
                     self._queue_stats["queue_full_count"] += 1
 
         except Exception as e:
-            self._last_error = f"Failed to push kafka performance event: {e}"
+            self._last_error = f"Failed to emit kafka performance event: {e}"
             LOGGER.error(self._last_error)
             raise
 
@@ -205,6 +207,45 @@ class HealthEventService:
         # Safe access: Use .get() since TypedDict has total=False
         total_time = operation_data.get("total_time", 0.0)
         if total_time > self._extremely_slow_threshold:
+            self._emit_immediate_alert(event)
+
+    async def emit_service_performance(self, performance_data: ServicePerformanceData) -> None:
+        """Real-time emission from any service (general service performance tracking).
+
+        Type-safe: Uses ServicePerformanceData TypedDict for general service metrics
+
+        Args:
+            performance_data: Service performance data including connection and operation metrics
+        """
+        timestamp = time.time()
+        event: ServicePerformanceEvent = {
+            "event_type": "service_performance",
+            "timestamp": timestamp,
+            "data": performance_data,
+        }
+
+        # Add to queue for polling by HealthService
+        try:
+            await self._event_queue.put(event)
+
+            # Update queue statistics
+            async with self._stats_lock:
+                self._queue_stats["total_processed"] += 1
+                current_size = self._event_queue.qsize()
+                self._queue_stats["last_queue_size"] = current_size
+                self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
+
+                # Check if queue is getting full
+                if self._event_queue.full():
+                    self._queue_stats["queue_full_count"] += 1
+
+        except Exception as e:
+            self._last_error = f"Failed to emit service performance event: {e}"
+            LOGGER.error(self._last_error)
+            raise
+
+        # Immediate alerting for high error rates or slow responses
+        if performance_data["error_rate"] > 10.0 or performance_data["avg_response_time"] > 2.0:
             self._emit_immediate_alert(event)
 
     def _emit_immediate_alert(self, event: HealthEvent) -> None:

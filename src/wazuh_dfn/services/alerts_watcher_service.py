@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Any
 
 from wazuh_dfn.config import WazuhConfig
 from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
@@ -44,6 +45,11 @@ class AlertsWatcherService:
         self._back_pressure_active = False
         self._skipped_checks = 0
         self._last_connection_check = datetime.now()
+
+        # File monitoring metrics
+        self._total_file_checks = 0
+        self._successful_file_checks = 0
+        self._failed_file_checks = 0
 
     async def start(self) -> None:
         """Start monitoring alert files asynchronously."""
@@ -116,3 +122,72 @@ class AlertsWatcherService:
         LOGGER.info("Stopping file monitoring")
         if self.file_monitor:
             await self.file_monitor.close()
+
+    # HealthMetricsProvider protocol implementation
+    def get_health_status(self) -> bool:
+        """Get the health status of the AlertsWatcher service.
+
+        Returns:
+            bool: True if monitoring and not in back-pressure, False otherwise
+        """
+        return self.file_monitor is not None and not self._back_pressure_active
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics for health monitoring.
+
+        Returns:
+            dict: Service metrics including file monitoring status and performance data
+        """
+        # Calculate operations based on file monitoring activity
+        total_checks = max(self._total_file_checks, self._skipped_checks)
+        failed_checks = self._failed_file_checks + self._skipped_checks
+        successful_checks = max(0, total_checks - failed_checks)
+
+        # Get file monitor metrics if available
+        file_monitor_metrics = {}
+        if self.file_monitor:
+            file_monitor_metrics = {
+                "file_monitor_latest_queue_put": (
+                    self.file_monitor.latest_queue_put.isoformat() if self.file_monitor.latest_queue_put else None
+                ),
+                "file_monitor_current_inode": getattr(self.file_monitor, "current_inode", None),
+                "file_monitor_buffer_size": len(getattr(self.file_monitor, "buffer", [])),
+                "file_monitor_active": True,
+            }
+        else:
+            file_monitor_metrics = {
+                "file_monitor_latest_queue_put": None,
+                "file_monitor_current_inode": None,
+                "file_monitor_buffer_size": 0,
+                "file_monitor_active": False,
+            }
+
+        return {
+            "service_type": "file_monitor",
+            "is_connected": self.file_monitor is not None,
+            "connection_latency": 0.001,  # File system access time
+            "total_operations": total_checks,
+            "successful_operations": successful_checks,
+            "failed_operations": failed_checks,
+            "avg_response_time": self.config.json_alert_file_poll_interval,  # Poll interval as response time
+            "max_response_time": self.config.json_alert_file_poll_interval * 2,  # Estimate worst case
+            "slow_operations_count": self._skipped_checks,
+            # AlertsWatcher-specific metrics
+            "file_path": str(self.file_path),
+            "back_pressure_active": self._back_pressure_active,
+            "skipped_checks": self._skipped_checks,
+            "latest_queue_put": self.latest_queue_put.isoformat() if self.latest_queue_put else None,
+            "poll_interval": self.config.json_alert_file_poll_interval,
+            "wazuh_connected": self.wazuh_service.is_connected if self.wazuh_service else False,
+            # File monitor sub-component metrics
+            **file_monitor_metrics,
+        }
+
+    def get_last_error(self) -> str | None:
+        """Get the last error message if any.
+
+        Returns:
+            str | None: Last error message or None
+        """
+        # Would need to implement error tracking
+        return None

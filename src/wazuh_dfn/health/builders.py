@@ -66,6 +66,12 @@ class WorkerPerformanceBuilder:
         self._data["last_alert_id"] = alert_id
         return self
 
+    def with_worker_counts(self, worker_count: int, active_worker_count: int) -> WorkerPerformanceBuilder:
+        """Set worker count information."""
+        self._data["worker_count"] = worker_count
+        self._data["active_worker_count"] = active_worker_count
+        return self
+
     def build(self) -> WorkerPerformanceData:
         """Build the final type-safe WorkerPerformanceData.
 
@@ -84,6 +90,8 @@ class WorkerPerformanceBuilder:
             "extremely_slow_alerts",
             "last_processing_time",
             "last_alert_id",
+            "worker_count",
+            "active_worker_count",
         }
 
         missing_fields = required_fields - set(self._data.keys())
@@ -109,6 +117,7 @@ class WorkerPerformanceBuilder:
             .with_processing_times(avg=0.0, recent_avg=0.0, min_time=0.0, max_time=0.0)
             .with_slow_alerts(slow=0, extremely_slow=0)
             .with_last_alert(processing_time=0.0, alert_id="")
+            .with_worker_counts(worker_count=1, active_worker_count=1)
         )
 
 

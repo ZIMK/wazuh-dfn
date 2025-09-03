@@ -435,7 +435,7 @@ class KafkaService:
             )
 
             if self._health_event_service:
-                await self._health_event_service.push_kafka_performance(performance_data)
+                await self._health_event_service.emit_kafka_performance(performance_data)
             elif self._logging_service:
                 await self._logging_service.record_kafka_performance(performance_data)
 

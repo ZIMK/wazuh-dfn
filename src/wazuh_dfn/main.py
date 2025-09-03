@@ -439,6 +439,12 @@ async def setup_service(config: Config) -> None:
         service_container.register_queue_provider(health_event_service.get_queue_name(), health_event_service)
         service_container.register_kafka_provider("kafka", kafka_service)
 
+        # Register services as health providers for detailed health information
+        LOGGER.info("Registering health providers...")
+        service_container.register_health_provider("wazuh", wazuh_service)
+        service_container.register_health_provider("kafka", kafka_service)
+        service_container.register_health_provider("alerts_watcher", alerts_watcher_service)
+
         # Set up signal handlers for clean shutdown
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

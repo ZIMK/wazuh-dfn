@@ -100,6 +100,8 @@ class MockWorkerMetricsProvider(MockHealthMetricsProvider):
             "extremely_slow_alerts": 0,
             "last_processing_time": datetime.now().timestamp(),
             "last_alert_id": "test-alert-123",
+            "worker_count": 4,
+            "active_worker_count": 3,
         }
         self.processing = True
 

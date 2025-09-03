@@ -54,6 +54,34 @@ class HealthMetricsProvider(Protocol):
 
     The @runtime_checkable decorator allows isinstance() checks for
     protocol compliance at runtime.
+
+    Suggested metrics for get_service_metrics():
+
+    Core metrics (recommended for all services):
+    - service_type: str - Type of service (e.g., "kafka", "wazuh", "http_api", "file_monitor")
+    - is_connected: bool - Connection status (if applicable)
+
+    Operation metrics (include if service tracks operations):
+    - total_operations: int - Total operations performed since start
+    - successful_operations: int - Successfully completed operations
+    - failed_operations: int - Failed operations (only if monitored)
+
+    Performance metrics (include if service measures performance):
+    - connection_latency: float - Connection latency in seconds (if applicable)
+    - avg_response_time: float - Average response time in seconds
+    - max_response_time: float - Maximum response time in seconds
+    - slow_operations_count: int - Count of operations exceeding slow threshold
+
+    Service-specific metrics:
+    Each service can include additional metrics relevant to its functionality.
+    For example:
+    - Kafka: topic_name, partition_count, consumer_lag
+    - File Monitor: files_processed, parse_errors, queue_puts
+    - HTTP API: request_count, 2xx_responses, 4xx_responses, 5xx_responses
+    - Worker: alerts_processed, processing_rate, worker_count
+
+    Note: Services should only include metrics they actually monitor.
+    Don't provide default/placeholder values for unmonitored metrics.
     """
 
     def get_health_status(self) -> bool:
@@ -68,7 +96,9 @@ class HealthMetricsProvider(Protocol):
         """Get service-specific metrics as a dictionary.
 
         Returns:
-            dict[str, Any]: Service metrics in key-value format
+            dict[str, Any]: Service metrics in key-value format.
+                           Only include metrics that are actually monitored.
+                           See class docstring for suggested metric names.
         """
         ...
 
@@ -479,5 +509,21 @@ class APIHealthProvider(Protocol):
 
         Returns:
             dict: System status with 'system' and 'timestamp' keys
+        """
+        ...
+
+    def get_readiness_status(self) -> dict[str, Any]:
+        """Get readiness status for Kubernetes-style health checks.
+
+        Returns:
+            dict: Readiness status with 'ready' and 'timestamp' keys
+        """
+        ...
+
+    def get_liveness_status(self) -> dict[str, Any]:
+        """Get liveness status for Kubernetes-style health checks.
+
+        Returns:
+            dict: Liveness status with 'alive' and 'timestamp' keys
         """
         ...

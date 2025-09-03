@@ -12,7 +12,6 @@ from wazuh_dfn.health.models import (
     HealthMetrics,
     HealthStatus,
     QueueHealth,
-    ServiceHealth,
     SystemHealth,
     WorkerHealth,
     WorkerStatus,
@@ -120,22 +119,23 @@ class MockHealthProvider:
                 )
             },
             services={
-                "service-1": ServiceHealth(
-                    service_name="service-1",
-                    service_type="test",
-                    is_connected=True,
-                    connection_latency=0.01,
-                    last_successful_connection=datetime.now(),
-                    total_operations=1000,
-                    successful_operations=990,
-                    failed_operations=10,
-                    avg_response_time=0.01,
-                    max_response_time=0.1,
-                    slow_operations_count=5,
-                    status=HealthStatus.HEALTHY,
-                    error_rate=1.0,
-                    timestamp=datetime.now(),
-                )
+                "service-1": {
+                    "service_name": "service-1",
+                    "service_type": "test",
+                    "is_healthy": True,
+                    "status": HealthStatus.HEALTHY,
+                    "is_connected": True,
+                    "connection_latency": 0.01,
+                    "last_successful_connection": datetime.now().isoformat(),
+                    "total_operations": 1000,
+                    "successful_operations": 990,
+                    "failed_operations": 10,
+                    "avg_response_time": 0.01,
+                    "max_response_time": 0.1,
+                    "slow_operations_count": 5,
+                    "error_rate": 1.0,
+                    "timestamp": datetime.now().isoformat(),
+                }
             },
         )
 

@@ -77,23 +77,24 @@ class MockSecureHealthProvider:
             )
         }
 
-        services = {
-            "test_service": ServiceHealth(
-                service_name="test_service",
-                service_type="test",
-                is_connected=True,
-                connection_latency=0.001,
-                last_successful_connection=datetime.now(),
-                total_operations=100,
-                successful_operations=100,
-                failed_operations=0,
-                avg_response_time=0.001,
-                max_response_time=0.002,
-                slow_operations_count=0,
-                status=HealthStatus.HEALTHY,
-                error_rate=0.0,
-                timestamp=datetime.now(),
-            )
+        services: dict[str, ServiceHealth] = {
+            "test_service": {
+                "service_name": "test_service",
+                "service_type": "test",
+                "is_healthy": True,
+                "status": HealthStatus.HEALTHY,
+                "is_connected": True,
+                "connection_latency": 0.001,
+                "last_successful_connection": datetime.now().isoformat(),
+                "total_operations": 100,
+                "successful_operations": 100,
+                "failed_operations": 0,
+                "avg_response_time": 0.001,
+                "max_response_time": 0.002,
+                "slow_operations_count": 0,
+                "error_rate": 0.0,
+                "timestamp": datetime.now().isoformat(),
+            }
         }
 
         return HealthMetrics(

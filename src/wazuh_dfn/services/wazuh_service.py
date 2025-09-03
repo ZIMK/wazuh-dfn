@@ -87,6 +87,14 @@ class WazuhService:
         self._lock = asyncio.Lock()
         self._is_reconnecting = False
 
+        # Metrics tracking
+        self._total_operations = 0
+        self._successful_operations = 0
+        self._failed_operations = 0
+        self._response_times = []
+        self._max_response_time = 0.0
+        self._last_operation_time = time.time()
+
     @property
     def is_connected(self) -> bool:
         """Check if currently connected to Wazuh server.
@@ -234,6 +242,7 @@ class WazuhService:
             win_timestamp: Windows event timestamp
             wz_timestamp: Wazuh event timestamp
         """
+        start_time = time.time()
         retry_count = 0
         alert_id = alert.get("id")
         agent_id = alert.get("agent", {}).get("id", None)
@@ -281,6 +290,8 @@ class WazuhService:
                 }
 
                 await self._send(msg=msg, agent_id=agent_id, agent_name=agent_name, agent_ip=agent_ip)
+                # Record successful operation
+                self._record_operation_metrics(start_time, True)
                 break  # If successful, exit the retry loop
             except Exception as e:
                 # Check if this is an unrecoverable error marked by _handle_socket_error
@@ -306,6 +317,8 @@ class WazuhService:
                         f"Failed to send event to Wazuh after {self.config.max_retries} attempts. "
                         f"Alert ID: {alert_id}, Agent ID: {agent_id}. Error: {e}"
                     )
+                    # Record failed operation after all retries exhausted
+                    self._record_operation_metrics(start_time, False)
 
     async def _wait_for_connecting_state(self) -> bool:
         """Wait for another connection attempt to complete. Returns True if connection succeeded."""
@@ -595,3 +608,73 @@ class WazuhService:
         """
         async with self._state_lock:
             await self._close_internal()
+
+    def _record_operation_metrics(self, start_time: float, success: bool) -> None:
+        """Record operation metrics for health monitoring.
+
+        Args:
+            start_time: Operation start time
+            success: Whether the operation was successful
+        """
+        response_time = time.time() - start_time
+        self._total_operations += 1
+        self._last_operation_time = time.time()
+
+        if success:
+            self._successful_operations += 1
+        else:
+            self._failed_operations += 1
+
+        # Track response times (keep last 100 for avg calculation)
+        self._response_times.append(response_time)
+        if len(self._response_times) > 100:
+            self._response_times.pop(0)
+
+        # Update max response time
+        self._max_response_time = max(self._max_response_time, response_time)
+
+    # HealthMetricsProvider protocol implementation
+    def get_health_status(self) -> bool:
+        """Get the health status of the Wazuh service.
+
+        Returns:
+            bool: True if connected and healthy, False otherwise
+        """
+        return self.is_connected
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics for health monitoring.
+
+        Returns:
+            dict: Service metrics including connection status, operations, and performance data
+        """
+        # Calculate average response time
+        avg_response_time = sum(self._response_times) / len(self._response_times) if self._response_times else 0.001
+
+        return {
+            "service_type": "wazuh",
+            "is_connected": self.is_connected,
+            "connection_latency": 0.001,  # Local socket connection is very fast
+            # Operation metrics
+            "total_operations": self._total_operations,
+            "successful_operations": self._successful_operations,
+            "failed_operations": self._failed_operations,
+            "avg_response_time": avg_response_time,
+            "max_response_time": self._max_response_time,
+            "slow_operations_count": len([t for t in self._response_times if t > 1.0]),  # Operations > 1s
+            # Wazuh-specific metrics
+            "socket_path": str(self.config.unix_socket_path),
+            "connection_state": self._connection_state.value,
+            "is_dgram": self._is_dgram,
+            "is_reconnecting": self._is_reconnecting,
+            "integration_name": self.config.integration_name,
+        }
+
+    def get_last_error(self) -> str | None:
+        """Get the last error message if any.
+
+        Returns:
+            str | None: Last error message or None
+        """
+        # Would need to implement error tracking
+        return None

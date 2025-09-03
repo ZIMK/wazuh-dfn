@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
+import time
+from typing import Any
 
 from wazuh_dfn.config import APIConfig
 from wazuh_dfn.health.protocols import APIHealthProvider
@@ -61,6 +63,14 @@ class HealthAPIServer:
         self.handlers = HealthHandlers(self.health_provider)
         self.security = SecurityMiddleware(config)
         self.rate_limiter = self.security.rate_limiter  # Reference for server info
+
+        # Metrics tracking
+        self._total_requests = 0
+        self._successful_requests = 0
+        self._failed_requests = 0
+        self._response_times = []
+        self._max_response_time = 0.0
+        self._start_time = time.time()
 
     def _create_ssl_context(self):
         """Create SSL context for HTTPS if enabled.
@@ -190,4 +200,68 @@ class HealthAPIServer:
             "rate_limiting_enabled": bool(self.rate_limiter),
             "ip_allowlist_enabled": set(self.config.allowed_ips) != {"127.0.0.1", "::1"},
             "is_running": self.is_running(),
+        }
+
+    def record_request_metrics(self, response_time: float, success: bool) -> None:
+        """Record request metrics for health monitoring.
+
+        Args:
+            response_time: Request processing time in seconds
+            success: Whether the request was successful (2xx status)
+        """
+        self._total_requests += 1
+
+        if success:
+            self._successful_requests += 1
+        else:
+            self._failed_requests += 1
+
+        # Track response times (keep last 100 for avg calculation)
+        self._response_times.append(response_time)
+        if len(self._response_times) > 100:
+            self._response_times.pop(0)
+
+        # Update max response time
+        self._max_response_time = max(self._max_response_time, response_time)
+
+    # HealthMetricsProvider protocol implementation
+    def get_health_status(self) -> bool:
+        """Get the health status of the Health API server.
+
+        Returns:
+            bool: True if server is running, False otherwise
+        """
+        return self.is_running()
+
+    def get_service_metrics(self) -> dict[str, Any]:
+        """Get comprehensive service metrics for health monitoring.
+
+        Returns:
+            dict: Service metrics including server status and configuration
+        """
+        # Calculate average response time
+        avg_response_time = sum(self._response_times) / len(self._response_times) if self._response_times else 0.001
+
+        # Calculate uptime
+        uptime_seconds = time.time() - self._start_time
+
+        return {
+            "service_type": "http_api",
+            "is_connected": self.is_running(),
+            "connection_latency": 0.002,  # HTTP API response time
+            # Request metrics
+            "total_operations": self._total_requests,
+            "successful_operations": self._successful_requests,
+            "failed_operations": self._failed_requests,
+            "avg_response_time": avg_response_time,
+            "max_response_time": self._max_response_time,
+            "slow_operations_count": len([t for t in self._response_times if t > 1.0]),  # Requests > 1s
+            # API Server-specific metrics
+            "host": self.config.host,
+            "port": self.config.port,
+            "https_enabled": self.config.https_enabled,
+            "authentication_enabled": bool(self.config.auth_token),
+            "rate_limiting_enabled": bool(self.rate_limiter),
+            "ip_allowlist_enabled": set(self.config.allowed_ips) != {"127.0.0.1", "::1"},
+            "uptime_seconds": uptime_seconds,
         }

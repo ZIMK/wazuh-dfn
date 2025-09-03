@@ -935,6 +935,15 @@ class HealthConfig(BaseModel):
         },
         gt=0,
     )
+    cache_ttl: int = Field(
+        default=5,
+        description="Health metrics cache TTL in seconds. Use 0 or -1 to disable caching",
+        json_schema_extra={
+            "env_var": "HEALTH_CACHE_TTL",
+            "cli": "--health-cache-ttl",
+        },
+        ge=-1,
+    )
     event_queue_size: int = Field(
         default=100000,
         description="Health event queue maximum size to prevent memory issues",

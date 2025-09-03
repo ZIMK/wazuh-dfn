@@ -16,7 +16,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Self, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, computed_field, field_validator
 
 
 # Kafka Performance Data (moved from kafka_service.py to avoid circular imports)
@@ -30,6 +30,47 @@ class KafkaPerformanceData(TypedDict, total=False):
     stage_times: dict[str, float]  # Keys include 'prep', 'encode', 'send', 'connect'
     message_size: int
     topic: str
+
+
+# Service health type with mandatory fields and flexible additional data
+class ServiceHealthBase(TypedDict):
+    """Base service health data with mandatory fields."""
+
+    service_name: str
+    is_healthy: bool
+    status: str  # HealthStatus value
+
+
+class ServiceHealthExtended(ServiceHealthBase, total=False):
+    """Extended service health data with optional fields."""
+
+    # Common optional fields
+    service_type: str
+    is_connected: bool
+    connection_latency: float
+    last_successful_connection: str  # ISO timestamp
+
+    # Performance metrics
+    total_operations: int
+    successful_operations: int
+    failed_operations: int
+    error_rate: float
+    success_rate: float
+
+    # Timing metrics
+    avg_response_time: float
+    max_response_time: float
+    slow_operations_count: int
+
+    # Timestamp
+    timestamp: str  # ISO timestamp
+
+    # Any additional service-specific metrics
+    metrics: dict[str, Any]
+
+
+# Type alias for service health data (replaces rigid ServiceHealth model)
+ServiceHealth = ServiceHealthExtended
 
 
 # Status Enums (using StrEnum for better serialization)
@@ -90,6 +131,8 @@ class WorkerPerformanceData(TypedDict):
     extremely_slow_alerts: int
     last_processing_time: float
     last_alert_id: str
+    worker_count: int  # Total configured worker count
+    active_worker_count: int  # Currently active worker count
 
 
 class WorkerLastProcessedData(TypedDict):
@@ -135,6 +178,23 @@ class FileMonitorStatsData(TypedDict):
     replaced_count: int
 
 
+class ServicePerformanceData(TypedDict):
+    """Type-safe definition for general service performance data (for events)."""
+
+    service_name: str
+    service_type: str
+    timestamp: float
+    total_operations: int
+    successful_operations: int
+    failed_operations: int
+    avg_response_time: float
+    max_response_time: float
+    slow_operations_count: int
+    error_rate: float
+    is_connected: bool
+    connection_latency: float
+
+
 # Event structures for real-time pushing
 class HealthEvent(TypedDict):
     """Base health event structure."""
@@ -167,6 +227,14 @@ class KafkaPerformanceEvent(TypedDict):
     event_type: str  # "kafka_performance"
     timestamp: float
     data: KafkaPerformanceData
+
+
+class ServicePerformanceEvent(TypedDict):
+    """Service performance event structure."""
+
+    event_type: str  # "service_performance"
+    timestamp: float
+    data: ServicePerformanceData
 
 
 class FileMonitorStatsEvent(TypedDict):
@@ -452,57 +520,6 @@ class QueueHealth(BaseHealthModel):
             return "LOW"
 
 
-class ServiceHealth(BaseHealthModel):
-    """Enhanced service health model for external service monitoring.
-
-    Tracks health of external services like Kafka, databases, APIs, etc.
-    with connection status and performance metrics.
-    """
-
-    model_config: ClassVar[ConfigDict] = BaseHealthModel.model_config.copy()
-
-    # Service identification
-    service_name: str = Field(..., description="Service identifier")
-    service_type: str = Field(..., description="Type of service (kafka, database, etc.)")
-
-    # Connection status
-    is_connected: bool = Field(description="Current connection status")
-    connection_latency: float = Field(ge=0.0, description="Connection latency in seconds")
-    last_successful_connection: datetime | None = Field(
-        default=None, description="Timestamp of last successful connection"
-    )
-
-    # Performance metrics
-    total_operations: int = Field(ge=0, description="Total operations performed")
-    successful_operations: int = Field(ge=0, description="Successful operations")
-    failed_operations: int = Field(ge=0, description="Failed operations")
-
-    # Timing metrics
-    avg_response_time: float = Field(ge=0.0, description="Average response time")
-    max_response_time: float = Field(ge=0.0, description="Maximum response time observed")
-    slow_operations_count: int = Field(ge=0, description="Count of slow operations")
-
-    # Health assessment
-    status: HealthStatus = Field(default=HealthStatus.HEALTHY)
-    error_rate: float = Field(ge=0.0, le=100.0, description="Error rate percentage")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
-
-    @computed_field
-    @property
-    def is_healthy(self) -> bool:
-        """Computed field: True if service is healthy."""
-        return self.is_connected and self.status == HealthStatus.HEALTHY and self.error_rate < 5.0
-
-    @computed_field
-    @property
-    def success_rate(self) -> float:
-        """Computed field: Success rate percentage."""
-        total = self.total_operations
-        if total == 0:
-            return 100.0
-        return (self.successful_operations / total) * 100.0
-
-
 class SystemHealth(BaseHealthModel):
     """Enhanced system health model with resource monitoring.
 
@@ -575,12 +592,48 @@ class HealthMetrics(BaseHealthModel):
     system: SystemHealth = Field(description="System resource health")
     workers: dict[str, WorkerHealth] = Field(default_factory=dict, description="Worker health by worker name")
     queues: dict[str, QueueHealth] = Field(default_factory=dict, description="Queue health by queue name")
-    services: dict[str, ServiceHealth] = Field(
-        default_factory=dict, description="External service health by service name"
+    services: SkipValidation[dict[str, ServiceHealth]] = Field(
+        default_factory=dict,
+        description="External service health by service name (ServiceHealth-compatible with flexible fields)",
     )
 
-    # Optional components
-    kafka_health: ServiceHealth | None = Field(default=None, description="Kafka-specific health metrics")
+    @field_validator("services")
+    @classmethod
+    def validate_services(cls, v: dict[str, ServiceHealth]) -> dict[str, ServiceHealth]:
+        """Validate that each service has required ServiceHealthBase fields, allow extra fields.
+
+        Ensures compatibility with ServiceHealth structure while allowing additional service-specific fields.
+        """
+        if not isinstance(v, dict):
+            raise ValueError("Services must be a dictionary")
+
+        validated_services = {}
+
+        for service_name, service_data in v.items():
+            if not isinstance(service_data, dict):
+                raise ValueError(f"Service '{service_name}' must be a dictionary")
+
+            # Check required ServiceHealthBase fields
+            required_fields = {"service_name", "is_healthy", "status"}
+            missing_fields = required_fields - set(service_data.keys())
+
+            if missing_fields:
+                raise ValueError(f"Service '{service_name}' missing required fields: {missing_fields}")
+
+            # Validate required field types
+            if not isinstance(service_data["service_name"], str):
+                raise ValueError(f"Service '{service_name}' field 'service_name' must be a string")
+
+            if not isinstance(service_data["is_healthy"], bool):
+                raise ValueError(f"Service '{service_name}' field 'is_healthy' must be a boolean")
+
+            if not isinstance(service_data["status"], str):
+                raise ValueError(f"Service '{service_name}' field 'status' must be a string")
+
+            # All validation passed, keep the service data as-is (including extra fields)
+            validated_services[service_name] = service_data
+
+        return validated_services
 
     @computed_field
     @property
@@ -594,7 +647,7 @@ class HealthMetrics(BaseHealthModel):
         """Computed field: Count of healthy/unhealthy components."""
         healthy_workers = sum(1 for w in self.workers.values() if w.is_healthy)
         healthy_queues = sum(1 for q in self.queues.values() if q.is_healthy)
-        healthy_services = sum(1 for s in self.services.values() if s.is_healthy)
+        healthy_services = sum(1 for s in self.services.values() if s["is_healthy"])
 
         total_workers = len(self.workers)
         total_queues = len(self.queues)
@@ -614,11 +667,6 @@ class HealthMetrics(BaseHealthModel):
     def create_bounded_history(cls, max_entries: int = 1000) -> collections.deque[Self]:
         """Create bounded history container to prevent memory leaks."""
         return collections.deque(maxlen=max_entries)
-
-
-# Legacy aliases for backward compatibility
-KafkaHealth = ServiceHealth  # Kafka is just a special case of ServiceHealth
-FileMonitorHealth = ServiceHealth  # File monitor is also a service
 
 
 # Health Status Classification Functions
@@ -695,25 +743,33 @@ def determine_service_status(  # noqa: PLR0911
     Returns:
         HealthStatus enum value (HEALTHY, DEGRADED, CRITICAL)
     """
-    # Check connection status first
-    if not service_health.is_connected:
+    # Check if service has health status indicator
+    if not service_health["is_healthy"]:
         return HealthStatus.CRITICAL
 
-    # Check error rate
-    if service_health.error_rate >= thresholds.service_error_rate_critical:
+    # Check connection status
+    if not service_health.get("is_connected", True):
         return HealthStatus.CRITICAL
-    elif service_health.error_rate >= thresholds.service_error_rate_warning:
+
+    # Check error rate if available
+    error_rate = service_health.get("error_rate", 0.0)
+    if error_rate >= thresholds.service_error_rate_critical:
+        return HealthStatus.CRITICAL
+    elif error_rate >= thresholds.service_error_rate_warning:
         return HealthStatus.DEGRADED
 
     # Check response times for Kafka services
-    if service_health.service_type == "kafka":
-        if service_health.avg_response_time >= thresholds.kafka_extremely_slow_seconds:
+    service_type = service_health.get("service_type", "unknown")
+    if service_type == "kafka":
+        avg_response_time = service_health.get("avg_response_time", 0.0)
+        if avg_response_time >= thresholds.kafka_extremely_slow_seconds:
             return HealthStatus.CRITICAL
-        elif service_health.avg_response_time >= thresholds.kafka_slow_operation_seconds:
+        elif avg_response_time >= thresholds.kafka_slow_operation_seconds:
             return HealthStatus.DEGRADED
 
-    # Check connection latency
-    if service_health.connection_latency > thresholds.service_connection_timeout_seconds:
+    # Check connection latency if available
+    connection_latency = service_health.get("connection_latency", 0.0)
+    if connection_latency > thresholds.service_connection_timeout_seconds:
         return HealthStatus.DEGRADED
 
     return HealthStatus.HEALTHY

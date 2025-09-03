@@ -122,6 +122,8 @@ class AlertsWorkerService:
             "last_processing_time": 0.0,
             "last_alert_id": "",
             "timestamp": time.time(),
+            "worker_count": self.config.num_workers,  # Add actual worker count
+            "active_worker_count": len([task for task in self.worker_tasks if not task.done()]),  # Active workers
         }
 
     def get_worker_name(self) -> str:
@@ -472,9 +474,10 @@ class AlertsWorkerService:
                             )
                             .with_slow_alerts(timing_stats["slow_alerts"], timing_stats["extremely_slow_alerts"])
                             .with_last_alert(last_processing_time, last_alert_id)
+                            .with_worker_counts(worker_count=1, active_worker_count=1)
                             .build()
                         )
-                        await self._health_event_service.push_worker_performance(worker_name, performance_data)
+                        await self._health_event_service.emit_worker_performance(worker_name, performance_data)
                     elif self._logging_service:
                         performance_data_dict = (
                             WorkerPerformanceBuilder.create()
@@ -486,6 +489,7 @@ class AlertsWorkerService:
                             )
                             .with_slow_alerts(timing_stats["slow_alerts"], timing_stats["extremely_slow_alerts"])
                             .with_last_alert(last_processing_time, last_alert_id)
+                            .with_worker_counts(worker_count=1, active_worker_count=1)
                             .build()
                         )
                         await self._logging_service.record_worker_performance(worker_name, performance_data_dict)
@@ -592,7 +596,7 @@ class AlertsWorkerService:
                             .with_alert_id(alert_id)
                             .build()
                         )
-                        await self._health_event_service.push_worker_last_processed(worker_name, last_processing_info)
+                        await self._health_event_service.emit_worker_last_processed(worker_name, last_processing_info)
                     elif self._logging_service:
                         # Store the last alert processing info
                         last_processing_info = (

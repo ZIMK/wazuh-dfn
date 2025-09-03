@@ -55,6 +55,8 @@ def test_worker_performance_data_structure():
         "extremely_slow_alerts": 1,
         "last_processing_time": timestamp,
         "last_alert_id": "alert-123",
+        "worker_count": 4,
+        "active_worker_count": 3,
     }
 
     # Verify all required fields are present and accessible
@@ -295,27 +297,28 @@ def test_system_health_model():
 
 
 def test_service_health_model():
-    """Test ServiceHealth Pydantic model."""
-    service_health = ServiceHealth(
-        service_name="kafka_service",
-        service_type="kafka",
-        is_connected=True,
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=990,
-        failed_operations=10,
-        avg_response_time=0.025,
-        max_response_time=0.15,
-        slow_operations_count=5,
-        error_rate=1.0,
-        status=HealthStatus.HEALTHY,
-    )
+    """Test ServiceHealth TypedDict structure."""
+    service_health: ServiceHealth = {
+        "service_name": "kafka_service",
+        "service_type": "kafka",
+        "is_healthy": True,
+        "status": HealthStatus.HEALTHY,
+        "is_connected": True,
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 990,
+        "failed_operations": 10,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.15,
+        "slow_operations_count": 5,
+        "error_rate": 1.0,
+    }
 
-    assert service_health.service_name == "kafka_service"
-    assert service_health.service_type == "kafka"
-    assert service_health.status == HealthStatus.HEALTHY
-    assert service_health.is_connected
-    assert service_health.error_rate == 1.0
+    assert service_health["service_name"] == "kafka_service"
+    assert service_health["service_type"] == "kafka"
+    assert service_health["status"] == HealthStatus.HEALTHY.value
+    assert service_health["is_connected"]
+    assert service_health["error_rate"] == 1.0
 
 
 def test_health_metrics_model():
@@ -532,53 +535,59 @@ def test_determine_service_status_function():
     thresholds = HealthThresholds()
 
     # Test HEALTHY status
-    service_health = ServiceHealth(
-        service_name="test_service",
-        service_type="database",
-        is_connected=True,
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=995,
-        failed_operations=5,
-        avg_response_time=0.025,
-        max_response_time=0.150,
-        slow_operations_count=10,
-        error_rate=0.5,  # Low error rate
-    )
+    service_health: ServiceHealth = {
+        "service_name": "test_service",
+        "service_type": "database",
+        "is_healthy": True,
+        "status": HealthStatus.HEALTHY,
+        "is_connected": True,
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 995,
+        "failed_operations": 5,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.150,
+        "slow_operations_count": 10,
+        "error_rate": 0.5,  # Low error rate
+    }
     status = determine_service_status(service_health, thresholds)
     assert status == HealthStatus.HEALTHY
 
     # Test CRITICAL status (disconnected)
-    service_health_critical = ServiceHealth(
-        service_name="test_service",
-        service_type="database",
-        is_connected=False,  # Disconnected
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=995,
-        failed_operations=5,
-        avg_response_time=0.025,
-        max_response_time=0.150,
-        slow_operations_count=10,
-        error_rate=0.5,
-    )
+    service_health_critical: ServiceHealth = {
+        "service_name": "test_service",
+        "service_type": "database",
+        "is_healthy": False,  # Not healthy
+        "status": HealthStatus.CRITICAL,
+        "is_connected": False,  # Disconnected
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 995,
+        "failed_operations": 5,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.150,
+        "slow_operations_count": 10,
+        "error_rate": 0.5,
+    }
     status = determine_service_status(service_health_critical, thresholds)
     assert status == HealthStatus.CRITICAL
 
     # Test DEGRADED status (high error rate)
-    service_health_degraded = ServiceHealth(
-        service_name="test_service",
-        service_type="database",
-        is_connected=True,
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=995,
-        failed_operations=5,
-        avg_response_time=0.025,
-        max_response_time=0.150,
-        slow_operations_count=10,
-        error_rate=10.0,  # Above warning threshold (5.0%)
-    )
+    service_health_degraded: ServiceHealth = {
+        "service_name": "test_service",
+        "service_type": "database",
+        "is_healthy": True,
+        "status": HealthStatus.DEGRADED,
+        "is_connected": True,
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 995,
+        "failed_operations": 5,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.150,
+        "slow_operations_count": 10,
+        "error_rate": 10.0,  # Above warning threshold (5.0%)
+    }
     status = determine_service_status(service_health_degraded, thresholds)
     assert status == HealthStatus.DEGRADED
 
@@ -615,19 +624,21 @@ def test_determine_overall_status_function():
         avg_wait_time=0.01,
     )
 
-    service_health = ServiceHealth(
-        service_name="test_service",
-        service_type="database",
-        is_connected=True,
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=995,
-        failed_operations=5,
-        avg_response_time=0.025,
-        max_response_time=0.150,
-        slow_operations_count=10,
-        error_rate=0.5,
-    )
+    service_health: ServiceHealth = {
+        "service_name": "test_service",
+        "service_type": "database",
+        "is_healthy": True,
+        "status": HealthStatus.HEALTHY,
+        "is_connected": True,
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 995,
+        "failed_operations": 5,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.150,
+        "slow_operations_count": 10,
+        "error_rate": 0.5,
+    }
 
     system_health = SystemHealth(
         process_id=1234,
@@ -675,19 +686,21 @@ def test_determine_overall_status_function():
     assert score == 0.0  # Known to be exactly 0.0 for critical
 
     # Test DEGRADED when some components degraded
-    service_health_degraded = ServiceHealth(
-        service_name="test_service",
-        service_type="database",
-        is_connected=True,
-        connection_latency=0.05,
-        total_operations=1000,
-        successful_operations=900,
-        failed_operations=100,
-        avg_response_time=0.025,
-        max_response_time=0.150,
-        slow_operations_count=10,
-        error_rate=10.0,  # High error rate (degraded)
-    )
+    service_health_degraded: ServiceHealth = {
+        "service_name": "test_service",
+        "service_type": "database",
+        "is_healthy": True,
+        "status": HealthStatus.DEGRADED,
+        "is_connected": True,
+        "connection_latency": 0.05,
+        "total_operations": 1000,
+        "successful_operations": 900,
+        "failed_operations": 100,
+        "avg_response_time": 0.025,
+        "max_response_time": 0.150,
+        "slow_operations_count": 10,
+        "error_rate": 10.0,  # High error rate (degraded)
+    }
     status, score = determine_overall_status(
         workers=[worker_health],
         queues=[queue_health],

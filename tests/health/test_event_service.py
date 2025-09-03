@@ -5,9 +5,24 @@ This module tests the HealthEventService implementation including:
 - Real-time event dispatch and collection
 - Thread-safe event handling
 - Performance tracking and metrics collection
-- Integration with health service architecture
-
-Tests follow Python 3.12+ best practices with function-based approach and modern pytest features.
+- Integration with health service archi    await service.emit_worker_performance(
+        "worker2",
+        {
+            "timestamp": time.time(),
+            "alerts_processed": 50,
+            "rate": 2.5,
+            "avg_processing": 0.050,
+            "recent_avg": 0.045,
+            "min_time": 0.005,
+            "max_time": 0.200,
+            "slow_alerts": 5,
+            "extremely_slow_alerts": 2,
+            "last_processing_time": time.time(),
+            "last_alert_id": "alert-456",
+            "worker_count": 4,
+            "active_worker_count": 3,
+        },
+    ) follow Python 3.12+ best practices with function-based approach and modern pytest features.
 """
 
 import asyncio
@@ -71,8 +86,8 @@ async def test_health_event_service_with_custom_queue(health_config, shutdown_ev
 
 
 @pytest.mark.asyncio
-async def test_push_worker_performance_event(health_event_service):
-    """Test pushing worker performance events."""
+async def test_emit_worker_performance_event(health_event_service):
+    """Test emitting worker performance events."""
     worker_name = "test_worker"
     performance_data: WorkerPerformanceData = {
         "timestamp": time.time(),
@@ -86,10 +101,12 @@ async def test_push_worker_performance_event(health_event_service):
         "extremely_slow_alerts": 1,
         "last_processing_time": time.time(),
         "last_alert_id": "alert-123",
+        "worker_count": 4,
+        "active_worker_count": 3,
     }
 
-    # Push event
-    await health_event_service.push_worker_performance(worker_name, performance_data)
+    # Emit event
+    await health_event_service.emit_worker_performance(worker_name, performance_data)
 
     # Verify event was queued
     assert health_event_service._event_queue.qsize() == 1
@@ -102,8 +119,8 @@ async def test_push_worker_performance_event(health_event_service):
 
 
 @pytest.mark.asyncio
-async def test_push_kafka_performance_event(health_event_service):
-    """Test pushing Kafka performance events."""
+async def test_emit_kafka_performance_event(health_event_service):
+    """Test emitting Kafka performance events."""
     kafka_data: KafkaPerformanceData = {
         "total_time": 1.5,
         "stage_times": {
@@ -116,8 +133,8 @@ async def test_push_kafka_performance_event(health_event_service):
         "topic": "test-topic",
     }
 
-    # Push event
-    await health_event_service.push_kafka_performance(kafka_data)
+    # Emit event
+    await health_event_service.emit_kafka_performance(kafka_data)
 
     # Verify event was queued
     assert health_event_service.event_queue.qsize() == 1
@@ -129,8 +146,8 @@ async def test_push_kafka_performance_event(health_event_service):
 
 
 @pytest.mark.asyncio
-async def test_push_kafka_performance_with_stage_times(health_event_service):
-    """Test pushing kafka performance events."""
+async def test_emit_kafka_performance_with_stage_times(health_event_service):
+    """Test emitting kafka performance events."""
     kafka_data = {
         "total_time": 0.125,
         "stage_times": {"prep": 0.025, "send": 0.1},
@@ -138,8 +155,8 @@ async def test_push_kafka_performance_with_stage_times(health_event_service):
         "topic": "system-alerts",
     }
 
-    # Push event
-    await health_event_service.push_kafka_performance(kafka_data)
+    # Emit event
+    await health_event_service.emit_kafka_performance(kafka_data)
 
     # Verify event was queued
     assert health_event_service.event_queue.qsize() == 1
@@ -151,16 +168,16 @@ async def test_push_kafka_performance_with_stage_times(health_event_service):
 
 
 @pytest.mark.asyncio
-async def test_push_worker_last_processed_event(health_event_service):
-    """Test pushing worker last processed events."""
+async def test_emit_worker_last_processed_event(health_event_service):
+    """Test emitting worker last processed events."""
     worker_name = "worker_1"
     last_processed_data = {
         "last_processing_time": time.time(),
         "last_alert_id": "alert-12345",
     }
 
-    # Push event
-    await health_event_service.push_worker_last_processed(worker_name, last_processed_data)
+    # Emit event
+    await health_event_service.emit_worker_last_processed(worker_name, last_processed_data)
 
     # Verify event was queued
     assert health_event_service.event_queue.qsize() == 1
@@ -181,8 +198,8 @@ async def test_event_queue_overflow_behavior(health_config):
     service._event_queue = AsyncMaxSizeQueue(maxsize=2)
 
     # Fill queue to capacity
-    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
-    await service.push_kafka_performance({"total_time": 0.2, "topic": "test2"})
+    await service.emit_kafka_performance({"total_time": 0.1, "topic": "test1"})
+    await service.emit_kafka_performance({"total_time": 0.2, "topic": "test2"})
 
     assert service.event_queue.qsize() == 2
     assert service.event_queue.full()
@@ -191,7 +208,7 @@ async def test_event_queue_overflow_behavior(health_config):
     # This should not block or raise exceptions
     with contextlib.suppress(TimeoutError):
         # Use asyncio.wait_for to prevent hanging if queue blocks
-        await asyncio.wait_for(service.push_kafka_performance({"total_time": 0.3, "topic": "test3"}), timeout=0.1)
+        await asyncio.wait_for(service.emit_kafka_performance({"total_time": 0.3, "topic": "test3"}), timeout=0.1)
 
 
 @pytest.mark.asyncio
@@ -215,8 +232,10 @@ async def test_concurrent_event_pushing(health_config):
                 "extremely_slow_alerts": 0,
                 "last_processing_time": time.time(),
                 "last_alert_id": f"alert-{worker_id}-{i}",
+                "worker_count": 3,
+                "active_worker_count": 3,
             }
-            await service.push_worker_performance(f"worker_{worker_id}", performance_data)
+            await service.emit_worker_performance(f"worker_{worker_id}", performance_data)
 
     # Run concurrent tasks
     tasks = [push_events(i) for i in range(3)]
@@ -248,7 +267,7 @@ async def test_event_processing_integration(health_config):
     processor_task = asyncio.create_task(mock_processor())
 
     # Push some events
-    await service.push_worker_performance(
+    await service.emit_worker_performance(
         "worker1",
         {
             "timestamp": time.time(),
@@ -262,10 +281,12 @@ async def test_event_processing_integration(health_config):
             "extremely_slow_alerts": 1,
             "last_processing_time": time.time(),
             "last_alert_id": "alert-123",
+            "worker_count": 4,
+            "active_worker_count": 3,
         },
     )
 
-    await service.push_kafka_performance(
+    await service.emit_kafka_performance(
         {"total_time": 0.05, "stage_times": {"prep": 0.01, "send": 0.04}, "message_size": 1024, "topic": "test-topic"}
     )
 
@@ -294,7 +315,7 @@ async def test_event_data_integrity(health_config):
     }
 
     # Push and retrieve event
-    await service.push_kafka_performance(complex_data)
+    await service.emit_kafka_performance(complex_data)
     event = await service.event_queue.get()
 
     # Verify data integrity
@@ -310,7 +331,7 @@ async def test_event_metadata(health_config):
     service = HealthEventService(health_config, shutdown_event)
 
     before_time = time.time()
-    await service.push_worker_performance(
+    await service.emit_worker_performance(
         "test_worker",
         {
             "timestamp": time.time(),
@@ -324,6 +345,8 @@ async def test_event_metadata(health_config):
             "extremely_slow_alerts": 0,
             "last_processing_time": time.time(),
             "last_alert_id": "alert-test",
+            "worker_count": 4,
+            "active_worker_count": 3,
         },
     )
     after_time = time.time()
@@ -348,8 +371,8 @@ async def test_queue_task_done_integration(health_config):
     service = HealthEventService(health_config, shutdown_event)
 
     # Push some events
-    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
-    await service.push_kafka_performance({"total_time": 0.2, "topic": "test2"})
+    await service.emit_kafka_performance({"total_time": 0.1, "topic": "test1"})
+    await service.emit_kafka_performance({"total_time": 0.2, "topic": "test2"})
 
     # Start a task that processes events
     async def process_events():
@@ -475,7 +498,7 @@ async def test_queue_stats_tracking(health_event_service):
     assert initial_stats["last_queue_size"] == 0
 
     # Push some events and verify stats update
-    await health_event_service.push_worker_performance(
+    await health_event_service.emit_worker_performance(
         "test_worker",
         {
             "timestamp": time.time(),
@@ -489,10 +512,12 @@ async def test_queue_stats_tracking(health_event_service):
             "extremely_slow_alerts": 0,
             "last_processing_time": time.time(),
             "last_alert_id": "alert-test",
+            "worker_count": 4,
+            "active_worker_count": 3,
         },
     )
 
-    await health_event_service.push_kafka_performance({"total_time": 0.1, "topic": "test"})
+    await health_event_service.emit_kafka_performance({"total_time": 0.1, "topic": "test"})
 
     # Check stats updated
     updated_stats = health_event_service.get_queue_stats()
@@ -517,8 +542,8 @@ async def test_queue_full_tracking(health_config):
     service._event_queue = AsyncMaxSizeQueue(maxsize=2)
 
     # Fill queue to capacity
-    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
-    await service.push_kafka_performance({"total_time": 0.2, "topic": "test2"})
+    await service.emit_kafka_performance({"total_time": 0.1, "topic": "test1"})
+    await service.emit_kafka_performance({"total_time": 0.2, "topic": "test2"})
 
     # Verify queue is full
     assert service._event_queue.full()
@@ -530,8 +555,8 @@ async def test_queue_full_tracking(health_config):
 
 
 @pytest.mark.asyncio
-async def test_error_tracking_in_push_methods(health_config):
-    """Test that errors are properly tracked during push operations."""
+async def test_error_tracking_in_emit_methods(health_config):
+    """Test that errors are properly tracked during emit operations."""
     shutdown_event = asyncio.Event()
     service = HealthEventService(health_config, shutdown_event)
 
@@ -539,7 +564,7 @@ async def test_error_tracking_in_push_methods(health_config):
     service._event_queue = AsyncMaxSizeQueue(maxsize=1)
 
     # Fill the queue
-    await service.push_kafka_performance({"total_time": 0.1, "topic": "test1"})
+    await service.emit_kafka_performance({"total_time": 0.1, "topic": "test1"})
 
     # Verify initial state
     assert service.get_last_error() is None
@@ -548,7 +573,7 @@ async def test_error_tracking_in_push_methods(health_config):
     # and not raise exceptions, so last_error should remain None
     with contextlib.suppress(TimeoutError):
         # This might block or handle gracefully depending on implementation
-        await asyncio.wait_for(service.push_kafka_performance({"total_time": 0.2, "topic": "test2"}), timeout=0.1)
+        await asyncio.wait_for(service.emit_kafka_performance({"total_time": 0.2, "topic": "test2"}), timeout=0.1)
 
     # The error handling is implementation-specific
     # Our current implementation should not set errors for queue full conditions

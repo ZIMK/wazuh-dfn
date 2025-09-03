@@ -86,23 +86,24 @@ def mock_health_provider():
                 )
             }
 
-            services = {
-                "kafka": ServiceHealth(
-                    service_name="kafka",
-                    service_type="message_broker",
-                    is_connected=True,
-                    connection_latency=0.025,
-                    last_successful_connection=datetime.now(),
-                    total_operations=2340,
-                    successful_operations=2335,
-                    failed_operations=5,
-                    avg_response_time=0.045,
-                    max_response_time=0.200,
-                    slow_operations_count=15,
-                    status=HealthStatus.HEALTHY,
-                    error_rate=0.21,
-                    timestamp=datetime.now(),
-                )
+            services: dict[str, ServiceHealth] = {
+                "kafka": {
+                    "service_name": "kafka",
+                    "service_type": "message_broker",
+                    "is_healthy": True,
+                    "status": HealthStatus.HEALTHY,
+                    "is_connected": True,
+                    "connection_latency": 0.025,
+                    "last_successful_connection": datetime.now().isoformat(),
+                    "total_operations": 2340,
+                    "successful_operations": 2335,
+                    "failed_operations": 5,
+                    "avg_response_time": 0.045,
+                    "max_response_time": 0.200,
+                    "slow_operations_count": 15,
+                    "error_rate": 0.21,
+                    "timestamp": datetime.now().isoformat(),
+                }
             }
 
             return HealthMetrics(

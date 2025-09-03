@@ -50,6 +50,8 @@ class HealthHandlers:
         # Phase 2.1 Basic API routes
         app.router.add_get("/health", self.health_basic_handler)
         app.router.add_get("/health/detailed", self.health_detailed_handler)
+        app.router.add_get("/health/ready", self.readiness_handler)
+        app.router.add_get("/health/live", self.liveness_handler)
         app.router.add_get("/metrics", self.metrics_handler)
         app.router.add_get("/status/workers", self.worker_status_handler)
         app.router.add_get("/status/queue", self.queue_status_handler)
@@ -65,6 +67,12 @@ class HealthHandlers:
         try:
             # Get basic health status
             health_data = self.health_service.get_health_status()
+
+            health_data = {
+                "status": health_data.get("status"),
+                "timestamp": health_data.get("timestamp"),
+                "health_score": health_data.get("health_score", 0.0),
+            }
 
             LOGGER.debug(f"Health check successful: {health_data}")
 
@@ -92,7 +100,7 @@ class HealthHandlers:
             JSON response with detailed health metrics
         """
         try:
-            # Get detailed health metrics
+            # Get detailed health status
             health_data = self.health_service.get_detailed_health_status()
 
             # Determine status code based on health
@@ -186,6 +194,50 @@ class HealthHandlers:
                 {"status": HealthStatus.ERROR, "message": "System status check failed", "timestamp": ""}, status=500
             )
 
+    def readiness_handler(self, request: Request) -> Response:
+        """Handle readiness check endpoint for Kubernetes-style health checks.
+
+        Returns:
+            JSON response with readiness status
+        """
+        try:
+            # Get readiness status from health service
+            readiness_data = self.health_service.get_readiness_status()
+
+            # Determine status code based on readiness
+            if readiness_data.get("ready", False):
+                status_code = 200
+            else:
+                status_code = 503
+
+            return web.json_response(readiness_data, status=status_code)
+
+        except Exception as e:
+            LOGGER.exception(f"Error in readiness check: {e}", exc_info=True)
+            return web.json_response({"ready": False, "timestamp": "", "error": "Readiness check failed"}, status=500)
+
+    def liveness_handler(self, request: Request) -> Response:
+        """Handle liveness check endpoint for Kubernetes-style health checks.
+
+        Returns:
+            JSON response with liveness status
+        """
+        try:
+            # Get liveness status from health service
+            liveness_data = self.health_service.get_liveness_status()
+
+            # Determine status code based on liveness
+            if liveness_data.get("alive", False):
+                status_code = 200
+            else:
+                status_code = 503
+
+            return web.json_response(liveness_data, status=status_code)
+
+        except Exception as e:
+            LOGGER.exception(f"Error in liveness check: {e}", exc_info=True)
+            return web.json_response({"alive": False, "timestamp": "", "error": "Liveness check failed"}, status=500)
+
     def api_info_handler(self, request: Request) -> Response:
         """Handle API information endpoint.
 
@@ -200,6 +252,8 @@ class HealthHandlers:
                     "health_checks",
                     "detailed_metrics",
                     "prometheus_metrics",
+                    "readiness_checks",
+                    "liveness_checks",
                     "worker_status",
                     "queue_status",
                     "system_status",
@@ -207,6 +261,8 @@ class HealthHandlers:
                 "endpoints": {
                     "health": "/health",
                     "detailed_health": "/health/detailed",
+                    "readiness": "/health/ready",
+                    "liveness": "/health/live",
                     "metrics": "/metrics",
                     "worker_status": "/status/workers",
                     "queue_status": "/status/queue",
@@ -312,24 +368,22 @@ class HealthHandlers:
         lines.append("# HELP service_is_connected Service connection status")
         lines.append("# TYPE service_is_connected gauge")
         for service_name, service in metrics_data.services.items():
-            connection_value = 1 if service.is_connected else 0
-            lines.append(
-                f'service_is_connected{{service="{service_name}",' f'type="{service.service_type}"}} {connection_value}'
-            )
+            connection_value = 1 if service.get("is_connected", False) else 0
+            service_type = service.get("service_type", "unknown")
+            lines.append(f'service_is_connected{{service="{service_name}",type="{service_type}"}} {connection_value}')
 
         lines.append("# HELP service_total_operations Total service operations")
         lines.append("# TYPE service_total_operations counter")
         for service_name, service in metrics_data.services.items():
-            lines.append(
-                f'service_total_operations{{service="{service_name}",'
-                f'type="{service.service_type}"}} {service.total_operations}'
-            )
+            service_type = service.get("service_type", "unknown")
+            total_ops = service.get("total_operations", 0)
+            lines.append(f'service_total_operations{{service="{service_name}",type="{service_type}"}} {total_ops}')
 
         lines.append("# HELP service_error_rate Service error rate percentage")
         lines.append("# TYPE service_error_rate gauge")
         for service_name, service in metrics_data.services.items():
-            lines.append(
-                f'service_error_rate{{service="{service_name}"' f',type="{service.service_type}"}} {service.error_rate}'
-            )
+            service_type = service.get("service_type", "unknown")
+            error_rate = service.get("error_rate", 0.0)
+            lines.append(f'service_error_rate{{service="{service_name}",type="{service_type}"}} {error_rate}')
 
         return "\n".join(lines) + "\n"

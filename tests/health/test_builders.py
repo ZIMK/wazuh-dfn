@@ -6,21 +6,8 @@ This module tests the builder pattern implementations including:
 - QueueStatsBuilder for queue statistics construction
 - FileMonitorStatsBuilder for file monitoring data
 - Builder validation and fluent API functionality
-    for i in range(5):
-        builder_instance = WorkerPerformanceBuilder()  # New builder for each snapshot
-        snapshot = (builder_instance
-                   .with_timestamp(base_timestamp + i * 60)  # Every minute
-                   .with_alerts_processed(100 + i * 50)      # Increasing processing
-                   .with_rate(2.0 + i * 0.5)                # Increasing rate
-                   .with_processing_times(
-                       avg=0.020 + i * 0.005,              # Slightly increasing time
-                       recent_avg=0.015 + i * 0.003,       # Recent improvements
-                       min_time=0.001,                     # Consistent minimum
-                       max_time=0.100 + i * 0.020          # Increasing maximum
-                   )
-                   .with_slow_alerts(slow=i, extremely_slow=0)  # Some slow alerts
-                   .with_last_alert(processing_time=0.020 + i * 0.005, alert_id=f"alert-{100+i}")
-                   .build())Python 3.12+ best practices with function-based approach and modern pytest features.
+
+Follows Python 3.12+ best practices with function-based approach and modern pytest features.
 """
 
 import time
@@ -49,6 +36,7 @@ def test_worker_performance_builder_basic():
         .with_processing_times(avg=0.025, recent_avg=0.015, min_time=0.001, max_time=0.150)
         .with_slow_alerts(slow=3, extremely_slow=1)
         .with_last_alert(processing_time=0.020, alert_id="alert-123")
+        .with_worker_counts(worker_count=4, active_worker_count=3)
         .build()
     )
 
@@ -114,6 +102,7 @@ def test_worker_performance_builder_reset():
         .with_processing_times(avg=0.02, recent_avg=0.015, min_time=0.005, max_time=0.08)
         .with_slow_alerts(slow=1, extremely_slow=0)
         .with_last_alert(processing_time=0.02, alert_id="alert-200")
+        .with_worker_counts(worker_count=4, active_worker_count=3)
         .build()
     )
 
@@ -272,6 +261,7 @@ def test_builder_type_safety():
         .with_processing_times(avg=0.025, recent_avg=0.015, min_time=0.001, max_time=0.150)
         .with_slow_alerts(slow=3, extremely_slow=1)
         .with_last_alert(processing_time=0.025, alert_id="alert-123")
+        .with_worker_counts(worker_count=4, active_worker_count=3)
         .build()
     )
 
@@ -293,6 +283,7 @@ def test_builder_validation_edge_cases():
         .with_processing_times(avg=0.0, recent_avg=0.0, min_time=0.0, max_time=0.0)
         .with_slow_alerts(slow=0, extremely_slow=0)
         .with_last_alert(processing_time=0.0, alert_id="")
+        .with_worker_counts(worker_count=1, active_worker_count=1)
         .build()
     )
 
@@ -314,6 +305,7 @@ def test_builder_reusability():
         .with_processing_times(avg=0.02, recent_avg=0.015, min_time=0.005, max_time=0.08)
         .with_slow_alerts(slow=2, extremely_slow=0)
         .with_last_alert(processing_time=0.02, alert_id="alert-100")
+        .with_worker_counts(worker_count=2, active_worker_count=2)
         .build()
     )
 
@@ -326,6 +318,7 @@ def test_builder_reusability():
         .with_processing_times(avg=0.015, recent_avg=0.012, min_time=0.003, max_time=0.06)
         .with_slow_alerts(slow=1, extremely_slow=0)
         .with_last_alert(processing_time=0.015, alert_id="alert-200")
+        .with_worker_counts(worker_count=3, active_worker_count=2)
         .build()
     )
 
@@ -350,6 +343,7 @@ def test_builder_immutability():
         .with_processing_times(avg=0.02, recent_avg=0.015, min_time=0.005, max_time=0.08)
         .with_slow_alerts(slow=2, extremely_slow=0)
         .with_last_alert(processing_time=0.02, alert_id="alert-100")
+        .with_worker_counts(worker_count=2, active_worker_count=2)
         .build()
     )
 
@@ -362,6 +356,7 @@ def test_builder_immutability():
         .with_processing_times(avg=0.015, recent_avg=0.012, min_time=0.003, max_time=0.06)
         .with_slow_alerts(slow=1, extremely_slow=0)
         .with_last_alert(processing_time=0.015, alert_id="alert-200")
+        .with_worker_counts(worker_count=3, active_worker_count=2)
         .build()
     )
 
@@ -385,6 +380,7 @@ def test_multiple_builders_independence():
         .with_processing_times(avg=0.02, recent_avg=0.015, min_time=0.005, max_time=0.08)
         .with_slow_alerts(slow=2, extremely_slow=0)
         .with_last_alert(processing_time=0.02, alert_id="alert-100")
+        .with_worker_counts(worker_count=2, active_worker_count=2)
         .build()
     )
 
@@ -395,6 +391,7 @@ def test_multiple_builders_independence():
         .with_processing_times(avg=0.015, recent_avg=0.012, min_time=0.003, max_time=0.06)
         .with_slow_alerts(slow=1, extremely_slow=0)
         .with_last_alert(processing_time=0.015, alert_id="alert-200")
+        .with_worker_counts(worker_count=3, active_worker_count=2)
         .build()
     )
 
@@ -445,6 +442,7 @@ def test_complex_builder_scenarios():
             )
             .with_slow_alerts(slow=i, extremely_slow=max(0, i - 2))  # Some slow alerts
             .with_last_alert(processing_time=0.020 + i * 0.005, alert_id=f"alert-{i:03d}")
+            .with_worker_counts(worker_count=3 + i, active_worker_count=2 + i)
             .build()
         )
 
