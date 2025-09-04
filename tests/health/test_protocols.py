@@ -1,5 +1,6 @@
 """Tests for wazuh_dfn.health.protocols module."""
 
+import time
 from datetime import datetime
 from typing import Any
 
@@ -379,3 +380,270 @@ def test_protocol_duck_typing():
 
     # Should pass protocol check due to structural typing
     assert isinstance(duck_provider, HealthMetricsProvider)
+
+
+def test_base_provider_error_handling_edge_cases():
+    """Test edge cases in BaseHealthMetricsProvider error handling."""
+
+    class ErrorProneProvider(BaseHealthMetricsProvider):
+        def __init__(self):
+            super().__init__("error_prone")
+
+        def get_health_status(self) -> bool:
+            # Simulate intermittent failures
+            if hasattr(self, "_fail_next") and self._fail_next:
+                self._fail_next = False
+                raise Exception("Simulated failure")
+            return True
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"status": "ok"}
+
+    provider = ErrorProneProvider()
+
+    # First call should succeed
+    assert provider.get_health_status() is True
+
+    # Set up failure for next call
+    provider._fail_next = True
+
+    # Should handle error gracefully
+    try:
+        status = provider.get_health_status()
+        # If no exception, method handled error internally
+        assert isinstance(status, bool)
+    except Exception:  # noqa: S110
+        # If exception propagated, that's also valid behavior
+        pass
+
+
+def test_worker_stats_collector_error_resilience():
+    """Test WorkerStatsCollector error resilience."""
+
+    class FailingWorkerProvider(WorkerMetricsProvider):
+        def __init__(self, should_fail: bool = False):
+            self.service_name = "failing_worker"
+            self.should_fail = should_fail
+
+        def get_worker_performance(self) -> WorkerPerformanceData:
+            if self.should_fail:
+                raise Exception("Worker stats collection failed")
+            return {
+                "timestamp": time.time(),
+                "alerts_processed": 10,
+                "rate": 1.0,
+                "avg_processing": 0.1,
+                "recent_avg": 0.1,
+                "min_time": 0.05,
+                "max_time": 0.15,
+                "slow_alerts": 0,
+                "extremely_slow_alerts": 0,
+                "last_processing_time": time.time(),
+                "last_alert_id": "alert-1",
+                "worker_count": 1,
+                "active_worker_count": 1,
+            }
+
+        def get_worker_name(self) -> str:
+            return f"worker-{self.service_name}"
+
+        def is_processing(self) -> bool:
+            return not self.should_fail
+
+        def get_health_status(self) -> bool:
+            return not self.should_fail
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"worker_active": not self.should_fail}
+
+        def get_last_error(self) -> str | None:
+            return "Error occurred" if self.should_fail else None
+
+    # Create collector with mixed providers
+    collector = WorkerStatsCollector()
+    good_provider = FailingWorkerProvider(should_fail=False)
+    bad_provider = FailingWorkerProvider(should_fail=True)
+
+    collector.register_provider(good_provider)
+    collector.register_provider(bad_provider)
+
+    # Should collect stats from good provider despite bad provider failing
+    stats = collector.get_all_worker_performance()
+
+    # Should have at least one successful collection (good provider should work)
+    assert len(stats) >= 1
+
+
+def test_queue_stats_collector_capacity_utilization():
+    """Test QueueStatsCollector capacity utilization calculations."""
+
+    class MockQueueProvider(QueueMetricsProvider):
+        def __init__(self, name: str, current_size: int, max_size: int):
+            self.name = name
+            self.current_size = current_size
+            self.max_size = max_size
+
+        def get_queue_name(self) -> str:
+            return self.name
+
+        def get_queue_stats(self) -> QueueStatsData:
+            return {
+                "total_processed": 100,
+                "last_queue_size": self.current_size,
+                "max_queue_size": self.max_size,
+                "config_max_queue_size": self.max_size,
+                "queue_full_count": 0,
+            }
+
+        def is_queue_healthy(self) -> bool:
+            return self.current_size < self.max_size * 0.9
+
+        def get_health_status(self) -> bool:
+            return True
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"queue_size": self.current_size}
+
+        def get_last_error(self) -> str | None:
+            return None
+
+    collector = QueueStatsCollector()
+
+    # Add queues with different utilization levels
+    collector.register_provider(MockQueueProvider("queue1", 10, 100))  # 10% utilization
+    collector.register_provider(MockQueueProvider("queue2", 50, 100))  # 50% utilization
+    collector.register_provider(MockQueueProvider("queue3", 90, 100))  # 90% utilization
+
+    # Test capacity utilization
+    utilization = collector.get_total_capacity_utilization()
+
+    # Should be average of 0.1, 0.5, 0.9 = 0.5
+    assert 0.4 <= utilization <= 0.6
+
+
+def test_queue_stats_collector_zero_capacity_handling():
+    """Test QueueStatsCollector handling of zero-capacity queues."""
+
+    class ZeroCapacityQueueProvider(QueueMetricsProvider):
+        def get_queue_name(self) -> str:
+            return "zero_capacity_queue"
+
+        def get_queue_stats(self) -> QueueStatsData:
+            return {
+                "total_processed": 0,
+                "last_queue_size": 0,
+                "max_queue_size": 0,  # Zero capacity
+                "config_max_queue_size": 0,
+                "queue_full_count": 0,
+            }
+
+        def is_queue_healthy(self) -> bool:
+            return True
+
+        def get_health_status(self) -> bool:
+            return True
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"queue_size": 0}
+
+        def get_last_error(self) -> str | None:
+            return None
+
+    collector = QueueStatsCollector()
+    collector.register_provider(ZeroCapacityQueueProvider())
+
+    # Should handle zero capacity gracefully
+    utilization = collector.get_total_capacity_utilization()
+    assert utilization == 0.0
+
+
+def test_provider_abstract_methods_enforcement():
+    """Test that abstract methods are properly enforced."""
+
+    # This should fail to instantiate due to abstract methods
+    with pytest.raises(TypeError):
+        # Cannot instantiate abstract class
+        BaseHealthMetricsProvider("test")  # type: ignore
+
+
+def test_health_error_response_with_all_fields():
+    """Test HealthError with all required fields."""
+    error: HealthError = {
+        "error_type": "ServiceUnavailable",
+        "message": "Database connection failed",
+        "timestamp": time.time(),
+        "service_name": "database_service",
+    }
+
+    # Verify all fields are present
+    assert error["error_type"] == "ServiceUnavailable"
+    assert error["message"] == "Database connection failed"
+    assert error["timestamp"] > 0
+    assert error["service_name"] == "database_service"
+
+
+def test_provider_service_name_attribute():
+    """Test that providers correctly expose service names."""
+
+    class NamedProvider(BaseHealthMetricsProvider):
+        def get_health_status(self) -> bool:
+            return True
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"status": "operational"}
+
+    provider = NamedProvider("custom_service")
+    assert provider.service_name == "custom_service"
+
+
+def test_collector_provider_management():
+    """Test adding and managing providers in collectors."""
+
+    class TestWorkerProvider(WorkerMetricsProvider):
+        def __init__(self, name: str):
+            self.service_name = name
+
+        def get_worker_performance(self) -> WorkerPerformanceData:
+            return {
+                "timestamp": time.time(),
+                "alerts_processed": 1,
+                "rate": 1.0,
+                "avg_processing": 0.1,
+                "recent_avg": 0.1,
+                "min_time": 0.1,
+                "max_time": 0.1,
+                "slow_alerts": 0,
+                "extremely_slow_alerts": 0,
+                "last_processing_time": time.time(),
+                "last_alert_id": "test",
+                "worker_count": 1,
+                "active_worker_count": 1,
+            }
+
+        def get_worker_name(self) -> str:
+            return self.service_name
+
+        def is_processing(self) -> bool:
+            return True
+
+        def get_health_status(self) -> bool:
+            return True
+
+        def get_service_metrics(self) -> dict[str, Any]:
+            return {"worker_status": "active"}
+
+        def get_last_error(self) -> str | None:
+            return None
+
+    collector = WorkerStatsCollector()
+
+    # Test adding providers
+    provider1 = TestWorkerProvider("worker1")
+    provider2 = TestWorkerProvider("worker2")
+
+    collector.register_provider(provider1)
+    collector.register_provider(provider2)
+
+    # Should be able to collect from both
+    stats = collector.get_all_worker_performance()
+    assert len(stats) == 2

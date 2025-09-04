@@ -10,6 +10,7 @@ This module tests the health models implementation including:
 Tests follow Python 3.12+ best practices with function-based approach and modern pytest features.
 """
 
+import os
 import time
 from datetime import datetime
 
@@ -182,6 +183,156 @@ def test_status_enums():
     assert ServiceStatus.ERROR == "ERROR"
 
 
+def test_health_status_case_insensitive_equality():
+    """Test HealthStatus case-insensitive equality and hashing."""
+    # Test case-insensitive equality with strings
+    assert HealthStatus.HEALTHY == "healthy"
+    assert HealthStatus.HEALTHY == "HEALTHY"
+    assert HealthStatus.HEALTHY == "Healthy"
+
+    # Test equality with other HealthStatus instances
+    healthy1 = HealthStatus.HEALTHY
+    healthy2 = HealthStatus.HEALTHY
+    assert healthy1 == healthy2
+
+    # Test inequality
+    assert HealthStatus.HEALTHY != "error"
+    assert HealthStatus.HEALTHY != HealthStatus.ERROR
+    assert HealthStatus.HEALTHY != 123  # Non-string, non-HealthStatus
+
+    # Test hash consistency for case-insensitive equality
+    assert hash(HealthStatus.HEALTHY) == hash(HealthStatus.HEALTHY)
+
+    # Test that equal values have the same hash (case-insensitive)
+    status1 = HealthStatus.HEALTHY
+    status2 = HealthStatus.HEALTHY
+    assert status1 == status2
+    assert hash(status1) == hash(status2)
+
+    # Test comparison with non-HealthStatus enum - covers line 91 (return False)
+    assert HealthStatus.HEALTHY != WorkerStatus.ACTIVE  # Different enum type
+    assert HealthStatus.HEALTHY != 42  # Different type entirely
+    assert HealthStatus.HEALTHY != []  # List type
+    assert HealthStatus.HEALTHY != {"status": "healthy"}  # Dict type
+
+
+def test_queue_health_computed_properties():
+    """Test QueueHealth computed properties."""
+    # Test healthy queue with low utilization - covers is_optimal and risk_level
+    healthy_queue = QueueHealth(
+        queue_name="test_queue",
+        current_size=10,
+        max_size=100,
+        config_max_size=1000,
+        utilization_percentage=10.0,
+        total_processed=1000,
+        processing_rate=2.5,
+        queue_full_events=0,
+        avg_wait_time=0.1,
+        status=HealthStatus.HEALTHY,
+    )
+
+    # Test is_optimal property (line 509) - from missing line analysis
+    assert healthy_queue.is_healthy  # healthy and < 80% utilization
+
+    # Test risk_level property (lines 515-520)
+    assert healthy_queue.risk_level == "LOW"  # < 70%
+
+    # Test warning level queue
+    warning_queue = QueueHealth(
+        queue_name="warning_queue",
+        current_size=75,
+        max_size=100,
+        config_max_size=1000,
+        utilization_percentage=75.0,
+        total_processed=2000,
+        processing_rate=1.5,
+        queue_full_events=2,
+        avg_wait_time=0.5,
+        status=HealthStatus.DEGRADED,
+    )
+
+    assert not warning_queue.is_healthy  # degraded status
+    assert warning_queue.risk_level == "WARNING"  # >= 70%
+
+    # Test critical level queue
+    critical_queue = QueueHealth(
+        queue_name="critical_queue",
+        current_size=95,
+        max_size=100,
+        config_max_size=1000,
+        utilization_percentage=95.0,
+        total_processed=5000,
+        processing_rate=0.5,
+        queue_full_events=10,
+        avg_wait_time=2.0,
+        status=HealthStatus.CRITICAL,
+    )
+
+    assert not critical_queue.is_healthy  # critical status
+    assert critical_queue.risk_level == "CRITICAL"  # >= 90%
+
+
+def test_system_health_computed_properties():
+    """Test SystemHealth computed properties."""
+    # Test healthy system with low resource pressure
+    healthy_system = SystemHealth(
+        process_id=1234,
+        process_name="wazuh-dfn",
+        cpu_percent=50.0,
+        memory_percent=60.0,
+        memory_usage_mb=512.0,
+        open_files_count=50,
+        max_open_files=1024,
+        uptime_seconds=3600,
+        threads_count=4,
+        load_average=[1.0, 1.1, 1.2],
+        status=HealthStatus.HEALTHY,
+    )
+
+    # Test is_healthy property - covers missing lines
+    assert healthy_system.is_healthy  # cpu < 80, memory < 85, status healthy
+
+    # Test resource_pressure property - covers "LOW" condition
+    assert healthy_system.resource_pressure == "LOW"
+
+    # Test medium pressure system
+    medium_pressure_system = SystemHealth(
+        process_id=1234,
+        process_name="wazuh-dfn",
+        cpu_percent=75.0,  # > 70%
+        memory_percent=85.0,  # > 80%
+        memory_usage_mb=1024.0,
+        open_files_count=200,
+        max_open_files=1024,
+        uptime_seconds=7200,
+        threads_count=8,
+        load_average=[2.0, 2.1, 2.2],
+        status=HealthStatus.DEGRADED,
+    )
+
+    assert not medium_pressure_system.is_healthy  # not healthy status
+    assert medium_pressure_system.resource_pressure == "MEDIUM"  # cpu > 70 or memory > 80
+
+    # Test high pressure system
+    high_pressure_system = SystemHealth(
+        process_id=1234,
+        process_name="wazuh-dfn",
+        cpu_percent=95.0,  # > 90%
+        memory_percent=98.0,  # > 95%
+        memory_usage_mb=2048.0,
+        open_files_count=800,
+        max_open_files=1024,
+        uptime_seconds=14400,
+        threads_count=16,
+        load_average=[5.0, 5.1, 5.2],
+        status=HealthStatus.CRITICAL,
+    )
+
+    assert not high_pressure_system.is_healthy  # cpu > 80 and memory > 85
+    assert high_pressure_system.resource_pressure == "HIGH"  # cpu > 90 or memory > 95
+
+
 def test_health_thresholds_model():
     """Test HealthThresholds Pydantic model."""
     # Test with default values
@@ -219,6 +370,77 @@ def test_health_thresholds_validation():
 
     with pytest.raises(ValidationError):
         HealthThresholds(system_cpu_warning_percentage=-1.0)  # < 0
+
+
+def test_health_thresholds_validation_errors():
+    """Test HealthThresholds computed validation_errors property."""
+    # Test valid thresholds - no validation errors
+    valid_thresholds = HealthThresholds()
+    assert len(valid_thresholds.validation_errors) == 0
+
+    # Test queue threshold validation errors
+    invalid_queue_thresholds = HealthThresholds(
+        queue_warning_percentage=95.0,  # Greater than critical (90.0 default)
+        queue_recovery_percentage=80.0,  # Greater than high_throughput (70.0 default)
+    )
+    errors = invalid_queue_thresholds.validation_errors
+    assert "queue_warning_percentage must be less than queue_critical_percentage" in errors
+    assert "queue_recovery_percentage must be less than queue_high_throughput_percentage" in errors
+
+    # Test system threshold validation errors
+    invalid_system_thresholds = HealthThresholds(
+        system_cpu_warning_percentage=96.0,  # Greater than critical (95.0 default)
+        system_memory_warning_percentage=96.0,  # Greater than critical (95.0 default)
+        system_disk_warning_percentage=96.0,  # Greater than critical (95.0 default)
+    )
+    errors = invalid_system_thresholds.validation_errors
+    assert "cpu warning threshold must be less than critical threshold" in errors
+    assert "memory warning threshold must be less than critical threshold" in errors
+    assert "disk warning threshold must be less than critical threshold" in errors
+
+    # Test worker threshold validation errors
+    invalid_worker_thresholds = HealthThresholds(
+        worker_slow_processing_threshold=10.0,  # Equal to extremely slow (10.0 default) - should trigger error
+    )
+    errors = invalid_worker_thresholds.validation_errors
+    assert "slow processing threshold must be less than extremely slow threshold" in errors
+
+    # Test service threshold validation errors
+    invalid_service_thresholds = HealthThresholds(
+        service_error_rate_warning=15.0,  # Equal to critical (15.0 default) - should trigger error
+        kafka_slow_operation_seconds=5.0,  # Equal to extremely slow (5.0 default) - should trigger error
+    )
+    errors = invalid_service_thresholds.validation_errors
+    assert "service error rate warning must be less than critical" in errors
+    assert "kafka slow threshold must be less than extremely slow threshold" in errors
+
+
+def test_health_thresholds_from_environment():
+    """Test HealthThresholds.from_environment class method."""
+    # Save original environment
+    original_env = dict(os.environ)
+
+    try:
+        # Set test environment variables
+        os.environ["HEALTH_THRESHOLD_QUEUE_WARNING_PERCENTAGE"] = "65.0"
+        os.environ["HEALTH_THRESHOLD_QUEUE_CRITICAL_PERCENTAGE"] = "85.0"
+        os.environ["HEALTH_THRESHOLD_INVALID_VALUE"] = "not_a_number"  # Should be ignored
+        os.environ["NOT_A_HEALTH_THRESHOLD"] = "50.0"  # Should be ignored
+
+        # Create thresholds from environment
+        thresholds = HealthThresholds.from_environment()
+
+        # Check that valid environment variables were applied
+        assert thresholds.queue_warning_percentage == 65.0
+        assert thresholds.queue_critical_percentage == 85.0
+
+        # Check that other fields use defaults (approximately, to avoid float comparison)
+        assert 79.0 < thresholds.system_cpu_warning_percentage < 81.0  # Should be 80.0
+
+    finally:
+        # Restore original environment
+        os.environ.clear()
+        os.environ.update(original_env)
 
 
 def test_worker_health_model():

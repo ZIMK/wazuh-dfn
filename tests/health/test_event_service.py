@@ -33,7 +33,7 @@ import pytest
 
 from wazuh_dfn.config import HealthConfig
 from wazuh_dfn.health.event_service import HealthEventService
-from wazuh_dfn.health.models import KafkaPerformanceData, WorkerPerformanceData
+from wazuh_dfn.health.models import HealthEvent, KafkaPerformanceData, WorkerPerformanceData
 from wazuh_dfn.health.protocols import QueueMetricsProvider
 from wazuh_dfn.max_size_queue import AsyncMaxSizeQueue
 
@@ -609,3 +609,319 @@ async def test_health_status_integration_with_queue_health(health_event_service)
     metrics = health_event_service.get_service_metrics()
     assert metrics["health_status"] is False
     assert metrics["is_queue_healthy"] is False
+
+
+@pytest.mark.asyncio
+async def test_emit_worker_performance_with_queue_full(health_config):
+    """Test emit_worker_performance when queue is full."""
+    shutdown_event = asyncio.Event()
+    # Create config with very small queue to test full behavior
+    small_queue_config = health_config.model_copy()
+    small_queue_config.event_queue_size = 1
+    service = HealthEventService(small_queue_config, shutdown_event)
+
+    # Fill the queue to capacity
+    await service.emit_worker_performance(
+        "worker1",
+        {
+            "timestamp": time.time(),
+            "alerts_processed": 10,
+            "rate": 1.0,
+            "avg_processing": 0.1,
+            "recent_avg": 0.1,
+            "min_time": 0.05,
+            "max_time": 0.15,
+            "slow_alerts": 0,
+            "extremely_slow_alerts": 0,
+            "last_processing_time": time.time(),
+            "last_alert_id": "alert-1",
+            "worker_count": 1,
+            "active_worker_count": 1,
+        },
+    )
+
+    # Queue should now be full
+    assert service.event_queue.full()
+
+    # Try to add another event - should handle queue full scenario
+    await service.emit_worker_performance(
+        "worker2",
+        {
+            "timestamp": time.time(),
+            "alerts_processed": 5,
+            "rate": 0.5,
+            "avg_processing": 0.2,
+            "recent_avg": 0.2,
+            "min_time": 0.1,
+            "max_time": 0.3,
+            "slow_alerts": 0,
+            "extremely_slow_alerts": 0,
+            "last_processing_time": time.time(),
+            "last_alert_id": "alert-2",
+            "worker_count": 1,
+            "active_worker_count": 1,
+        },
+    )
+
+    # Verify queue full count was incremented
+    stats = service.get_queue_stats()
+    assert stats["queue_full_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_emit_worker_performance_extremely_slow_alert(health_config):
+    """Test immediate alert for extremely slow worker operations."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the immediate alert method
+    alert_called = False
+    _original_emit = service._emit_immediate_alert
+
+    def mock_emit_alert(event):
+        nonlocal alert_called
+        alert_called = True
+
+    service._emit_immediate_alert = mock_emit_alert
+
+    # Emit worker performance with extremely slow alerts
+    await service.emit_worker_performance(
+        "slow_worker",
+        {
+            "timestamp": time.time(),
+            "alerts_processed": 10,
+            "rate": 1.0,
+            "avg_processing": 0.1,
+            "recent_avg": 0.1,
+            "min_time": 0.05,
+            "max_time": 0.15,
+            "slow_alerts": 5,
+            "extremely_slow_alerts": 3,  # > 0
+            "last_processing_time": 6.0,  # > 5.0 threshold
+            "last_alert_id": "alert-slow",
+            "worker_count": 1,
+            "active_worker_count": 1,
+        },
+    )
+
+    # Verify immediate alert was triggered
+    assert alert_called
+
+
+@pytest.mark.asyncio
+async def test_emit_worker_last_processed_error_handling(health_config):
+    """Test error handling in emit_worker_last_processed."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the queue's put method to fail
+    async def failing_put(item):
+        raise Exception("Queue put failed")
+
+    service._event_queue.put = failing_put
+
+    # Should raise exception and set error
+    with pytest.raises(Exception, match="Queue put failed"):
+        await service.emit_worker_last_processed(
+            "worker1",
+            {
+                "last_processing_time": time.time(),
+                "last_alert_id": "alert-123",
+            },
+        )
+
+    # Verify error was recorded
+    assert "Failed to emit worker last processed event" in str(service.get_last_error())
+
+
+@pytest.mark.asyncio
+async def test_emit_kafka_performance_extremely_slow_alert(health_config):
+    """Test immediate alert for extremely slow Kafka operations."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the immediate alert method
+    alert_called = False
+
+    def mock_emit_alert(event):
+        nonlocal alert_called
+        alert_called = True
+
+    service._emit_immediate_alert = mock_emit_alert
+
+    # Emit Kafka performance with slow operation
+    await service.emit_kafka_performance(
+        {
+            "total_time": 6.0,  # > 5.0 threshold
+            "stage_times": {"prep": 1.0, "encode": 1.0, "send": 1.0},
+            "message_size": 1024,
+            "topic": "test-topic",
+        }
+    )
+
+    # Verify immediate alert was triggered
+    assert alert_called
+
+
+@pytest.mark.asyncio
+async def test_emit_service_performance(health_config):
+    """Test emit_service_performance method."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Emit service performance event
+    await service.emit_service_performance(
+        {
+            "service_name": "test_service",
+            "service_type": "test_service",
+            "timestamp": time.time(),
+            "error_rate": 5.0,
+            "avg_response_time": 1.0,
+            "total_operations": 100,
+            "failed_operations": 5,
+            "successful_operations": 95,
+            "max_response_time": 2.0,
+            "slow_operations_count": 10,
+            "is_connected": True,
+            "connection_latency": 0.1,
+        }
+    )
+
+    # Verify event was queued
+    event = await service.get_next_event()
+    assert event is not None
+    assert event["event_type"] == "service_performance"
+
+
+@pytest.mark.asyncio
+async def test_emit_service_performance_high_error_rate_alert(health_config):
+    """Test immediate alert for high error rate service performance."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the immediate alert method
+    alert_called = False
+
+    def mock_emit_alert(event):
+        nonlocal alert_called
+        alert_called = True
+
+    service._emit_immediate_alert = mock_emit_alert
+
+    # Emit service performance with high error rate
+    await service.emit_service_performance(
+        {
+            "service_name": "failing_service",
+            "service_type": "failing_service",
+            "timestamp": time.time(),
+            "error_rate": 15.0,  # > 10.0 threshold
+            "avg_response_time": 1.0,
+            "total_operations": 100,
+            "failed_operations": 15,
+            "successful_operations": 95,
+            "max_response_time": 2.0,
+            "slow_operations_count": 10,
+            "is_connected": True,
+            "connection_latency": 0.1,
+        }
+    )
+
+    # Verify immediate alert was triggered
+    assert alert_called
+
+
+@pytest.mark.asyncio
+async def test_emit_service_performance_slow_response_alert(health_config):
+    """Test immediate alert for slow response time service performance."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the immediate alert method
+    alert_called = False
+
+    def mock_emit_alert(event):
+        nonlocal alert_called
+        alert_called = True
+
+    service._emit_immediate_alert = mock_emit_alert
+
+    # Emit service performance with slow response time
+    await service.emit_service_performance(
+        {
+            "service_name": "slow_service",
+            "service_type": "slow_service",
+            "timestamp": time.time(),
+            "error_rate": 2.0,
+            "avg_response_time": 3.0,  # > 2.0 threshold
+            "total_operations": 100,
+            "failed_operations": 2,
+            "successful_operations": 98,
+            "max_response_time": 4.0,
+            "slow_operations_count": 20,
+            "is_connected": True,
+            "connection_latency": 0.1,
+        }
+    )
+
+    # Verify immediate alert was triggered
+    assert alert_called
+
+
+@pytest.mark.asyncio
+async def test_event_service_error_handling_in_emit_methods(health_config):
+    """Test error handling in various emit methods."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Mock the queue's put method to fail
+    async def failing_put(item):
+        raise Exception("Queue operation failed")
+
+    service._event_queue.put = failing_put
+
+    # Test kafka performance error
+    with pytest.raises(Exception):  # noqa: B017
+        await service.emit_kafka_performance(
+            {"total_time": 1.0, "stage_times": {"prep": 0.5, "send": 0.5}, "message_size": 1024, "topic": "test"}
+        )
+
+    assert "Failed to emit kafka performance event" in str(service.get_last_error())
+
+    # Test service performance error
+    with pytest.raises(Exception):  # noqa: B017
+        await service.emit_service_performance(
+            {
+                "service_name": "test",
+                "service_type": "test",
+                "timestamp": time.time(),
+                "error_rate": 1.0,
+                "avg_response_time": 0.5,
+                "total_operations": 10,
+                "failed_operations": 1,
+                "successful_operations": 95,
+                "max_response_time": 2.0,
+                "slow_operations_count": 10,
+                "is_connected": True,
+                "connection_latency": 0.1,
+            }
+        )
+
+    assert "Failed to emit service performance event" in str(service.get_last_error())
+
+
+@pytest.mark.asyncio
+async def test_event_service_immediate_alert_method(health_config):
+    """Test the _emit_immediate_alert method."""
+    shutdown_event = asyncio.Event()
+    service = HealthEventService(health_config, shutdown_event)
+
+    # Create a test event
+    test_event: HealthEvent = {
+        "event_type": "worker_performance",
+        "timestamp": time.time(),
+    }
+
+    # Should not raise exception (currently just logs)
+    service._emit_immediate_alert(test_event)
+
+    # Method should be callable without errors

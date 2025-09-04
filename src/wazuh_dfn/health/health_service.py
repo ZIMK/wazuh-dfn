@@ -57,8 +57,8 @@ class HealthService:
         self,
         container: ServiceContainer,
         config: HealthConfig,
-        event_queue: asyncio.Queue[dict[str, Any]],
         shutdown_event: asyncio.Event,
+        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
     ) -> None:
         """Initialize health service.
 
@@ -111,6 +111,7 @@ class HealthService:
             LOGGER.info("No event queue provided - running without real-time events")
 
         # Start periodic logging (LoggingService compatibility)
+        # This will block until shutdown - service runs as background task
         await self._start_periodic_logging()
 
     async def stop(self) -> None:
@@ -167,6 +168,10 @@ class HealthService:
                 await self._handle_worker_last_processed_event(event)
             elif event_type == "kafka_performance":
                 await self._handle_kafka_performance_event(event)
+            elif event_type:
+                LOGGER.warning(f"Unknown event type: {event_type}")
+            else:
+                LOGGER.warning("Event missing event_type field")
 
         except Exception as e:
             LOGGER.error(f"Error processing event: {e}")

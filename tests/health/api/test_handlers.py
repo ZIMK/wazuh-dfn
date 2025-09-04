@@ -1,5 +1,6 @@
 """Tests for wazuh_dfn.health.api.handlers module."""
 
+import json
 from datetime import datetime
 from unittest.mock import patch
 
@@ -382,6 +383,242 @@ async def test_handler_error_handling(mock_health_provider):
     with patch.object(mock_health_provider, "get_health_status", side_effect=Exception("Test error")):
         response = handlers.health_basic_handler(request)
         assert response.status == 500
+
+
+@pytest.mark.asyncio
+async def test_health_basic_handler_exception(mock_health_provider):
+    """Test health basic handler exception handling."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/health")
+
+    # Test exception in get_health_status
+    with patch.object(mock_health_provider, "get_health_status", side_effect=Exception("Health check failed")):
+        response = handlers.health_basic_handler(request)
+        assert response.status == 500
+        data = json.loads(str(response.text))
+        assert "message" in data
+        assert data["status"] == HealthStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_health_detailed_handler_exception(mock_health_provider):
+    """Test health detailed handler exception handling."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/health/detailed")
+
+    # Test exception in get_detailed_health_status
+    with patch.object(
+        mock_health_provider, "get_detailed_health_status", side_effect=Exception("Detailed health check failed")
+    ):
+        response = handlers.health_detailed_handler(request)
+        assert response.status == 500
+        data = json.loads(str(response.text))
+        assert "message" in data
+        assert data["status"] == HealthStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_health_detailed_degraded_status(mock_health_provider):
+    """Test detailed health endpoint with degraded status."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+
+    # Mock degraded health status for detailed endpoint
+    degraded_status = {
+        "overall_status": HealthStatus.DEGRADED,
+        "health_score": 65.0,
+        "timestamp": datetime.now().isoformat(),
+        "system": {
+            "status": HealthStatus.DEGRADED,
+            "cpu_usage": 85.7,
+            "memory_usage": 92.4,
+            "uptime_seconds": 7200.5,
+        },
+        "workers": {"status": HealthStatus.DEGRADED, "active": 1, "idle": 2, "total": 3},
+        "queues": {"status": HealthStatus.HEALTHY, "pending_tasks": 12, "processing_tasks": 3},
+        "services": {
+            "status": HealthStatus.DEGRADED,
+            "database": {"status": HealthStatus.DEGRADED, "response_time": 2.5},
+            "monitoring": {"status": HealthStatus.HEALTHY},
+        },
+    }
+
+    with patch.object(mock_health_provider, "get_detailed_health_status", return_value=degraded_status):
+        request = make_mocked_request("GET", "/health/detailed")
+        response = handlers.health_detailed_handler(request)
+        assert response.status == 200  # Still 200 for degraded status
+        data = json.loads(str(response.text))
+        assert data["overall_status"] == HealthStatus.DEGRADED
+
+
+@pytest.mark.asyncio
+async def test_health_detailed_error_status(mock_health_provider):
+    """Test detailed health endpoint with error status."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+
+    # Mock error health status for detailed endpoint
+    error_status = {
+        "overall_status": HealthStatus.ERROR,
+        "health_score": 15.0,
+        "timestamp": datetime.now().isoformat(),
+        "system": {
+            "status": HealthStatus.ERROR,
+            "cpu_usage": 95.7,
+            "memory_usage": 98.4,
+            "uptime_seconds": 7200.5,
+        },
+        "workers": {"status": HealthStatus.ERROR, "active": 0, "idle": 0, "total": 3},
+        "queues": {"status": HealthStatus.ERROR, "pending_tasks": 500, "processing_tasks": 0},
+        "services": {
+            "status": HealthStatus.ERROR,
+            "database": {"status": HealthStatus.ERROR, "response_time": 10.0},
+            "monitoring": {"status": HealthStatus.ERROR},
+        },
+    }
+
+    with patch.object(mock_health_provider, "get_detailed_health_status", return_value=error_status):
+        request = make_mocked_request("GET", "/health/detailed")
+        response = handlers.health_detailed_handler(request)
+        assert response.status == 503  # Service unavailable for error status
+        data = json.loads(str(response.text))
+        assert data["overall_status"] == HealthStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_readiness_handler_exception(mock_health_provider):
+    """Test readiness handler exception handling."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/ready")
+
+    # Test exception in get_readiness_status
+    with patch.object(mock_health_provider, "get_readiness_status", side_effect=Exception("Readiness check failed")):
+        response = handlers.readiness_handler(request)
+        assert response.status == 500
+        data = json.loads(str(response.text))
+        assert "ready" in data
+        assert data["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_liveness_handler_exception(mock_health_provider):
+    """Test liveness handler exception handling."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/live")
+
+    # Test exception in get_liveness_status
+    with patch.object(mock_health_provider, "get_liveness_status", side_effect=Exception("Liveness check failed")):
+        response = handlers.liveness_handler(request)
+        assert response.status == 500
+        data = json.loads(str(response.text))
+        assert "alive" in data
+        assert data["alive"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_degraded_status(mock_health_provider):
+    """Test health endpoints with degraded status."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+
+    # Mock degraded health status
+    degraded_status = {
+        "status": HealthStatus.DEGRADED,
+        "health_score": 65.0,
+        "timestamp": datetime.now().isoformat(),
+        "message": "System degraded",
+    }
+
+    with patch.object(mock_health_provider, "get_health_status", return_value=degraded_status):
+        request = make_mocked_request("GET", "/health")
+        response = handlers.health_basic_handler(request)
+        assert response.status == 200  # Still 200 but with degraded status
+        data = json.loads(str(response.text))
+        assert data["status"] == HealthStatus.DEGRADED
+
+
+@pytest.mark.asyncio
+async def test_health_error_status(mock_health_provider):
+    """Test health endpoints with error status."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+
+    # Mock error health status
+    error_status = {
+        "status": HealthStatus.ERROR,
+        "health_score": 25.0,
+        "timestamp": datetime.now().isoformat(),
+        "message": "System error",
+    }
+
+    with patch.object(mock_health_provider, "get_health_status", return_value=error_status):
+        request = make_mocked_request("GET", "/health")
+        response = handlers.health_basic_handler(request)
+        assert response.status == 503  # Service unavailable for error status
+        data = json.loads(str(response.text))
+        assert data["status"] == HealthStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_readiness_not_ready(mock_health_provider):
+    """Test readiness endpoint when not ready."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/ready")
+
+    # Mock not ready status
+    not_ready_status = {
+        "ready": False,
+        "timestamp": datetime.now().isoformat(),
+        "checks": {"database_connection": False, "queue_accessible": True},
+    }
+
+    with patch.object(mock_health_provider, "get_readiness_status", return_value=not_ready_status):
+        response = handlers.readiness_handler(request)
+        assert response.status == 503  # Service unavailable when not ready
+        data = json.loads(str(response.text))
+        assert data["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_liveness_not_alive(mock_health_provider):
+    """Test liveness endpoint when not alive."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    handlers = HealthHandlers(mock_health_provider)
+    request = make_mocked_request("GET", "/live")
+
+    # Mock not alive status
+    not_alive_status = {"alive": False, "timestamp": datetime.now().isoformat(), "uptime": 7200.5}
+
+    with patch.object(mock_health_provider, "get_liveness_status", return_value=not_alive_status):
+        response = handlers.liveness_handler(request)
+        assert response.status == 503  # Service unavailable when not alive
+        data = json.loads(str(response.text))
+        assert data["alive"] is False
 
 
 @pytest.mark.skipif(AIOHTTP_AVAILABLE, reason="Testing import error handling")

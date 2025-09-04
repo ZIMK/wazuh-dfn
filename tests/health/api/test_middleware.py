@@ -1,6 +1,6 @@
 """Tests for wazuh_dfn.health.api.middleware module."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -224,6 +224,199 @@ async def test_security_headers_middleware(aiohttp_client, aiohttp_app):
     assert "X-Frame-Options" in resp.headers
     assert "X-XSS-Protection" in resp.headers
     # Note: Strict-Transport-Security only added when HTTPS is enabled
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_security_headers_middleware_https():
+    """Test security headers middleware with HTTPS scheme - covers line 112."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    config = MockAPIConfig()
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request with HTTPS scheme
+    mock_request = MagicMock()
+    mock_request.scheme = "https"
+
+    mock_response = MagicMock()
+    mock_response.headers = {}
+
+    mock_handler = AsyncMock(return_value=mock_response)
+
+    # Test the security headers middleware directly
+    result = await middleware.security_headers_middleware(mock_request, mock_handler)
+
+    # Verify HSTS header is added for HTTPS
+    assert "Strict-Transport-Security" in result.headers
+    assert result.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_ip_allowlist_middleware_forbidden():
+    """Test IP allowlist middleware blocking forbidden IP - covers lines 120-130."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with restricted IP allowlist (not just localhost)
+    config = MockAPIConfig(allowed_ips=["192.168.1.0/24"])
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request from a blocked IP
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = None
+    mock_request.remote = "10.0.0.100"  # Not in allowlist
+
+    mock_handler = AsyncMock()
+
+    # Test should raise HTTPForbidden
+    with pytest.raises(web.HTTPForbidden):
+        await middleware.ip_allowlist_middleware(mock_request, mock_handler)
+
+    # Handler should not be called
+    mock_handler.assert_not_called()
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_ip_allowlist_middleware_allowed_ip():
+    """Test IP allowlist middleware allowing valid IP - covers line 130."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with restricted IP allowlist
+    config = MockAPIConfig(allowed_ips=["192.168.1.0/24"])
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request from an allowed IP
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = None
+    mock_request.remote = "192.168.1.100"  # In allowlist
+
+    mock_response = MagicMock()
+    mock_handler = AsyncMock(return_value=mock_response)
+
+    # Test should allow request through
+    result = await middleware.ip_allowlist_middleware(mock_request, mock_handler)
+
+    # Handler should be called and response returned
+    mock_handler.assert_called_once_with(mock_request)
+    assert result == mock_response
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_ip_allowlist_middleware_localhost_bypass():
+    """Test IP allowlist middleware bypassing localhost check - covers line 122."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with only localhost (default behavior)
+    config = MockAPIConfig(allowed_ips=["127.0.0.1", "::1"])
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request from any IP
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = None
+    mock_request.remote = "10.0.0.100"  # Any IP should work
+
+    mock_response = MagicMock()
+    mock_handler = AsyncMock(return_value=mock_response)
+
+    # Test should bypass allowlist check (localhost config)
+    result = await middleware.ip_allowlist_middleware(mock_request, mock_handler)
+
+    # Handler should be called and response returned
+    mock_handler.assert_called_once_with(mock_request)
+    assert result == mock_response
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_rate_limiting_middleware_allowed():
+    """Test rate limiting middleware allowing request - covers line 136."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with rate limit
+    config = MockAPIConfig(rate_limit=10)
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = None
+    mock_request.remote = "127.0.0.1"
+
+    mock_response = MagicMock()
+    mock_handler = AsyncMock(return_value=mock_response)
+
+    # Test should allow request through (under rate limit)
+    result = await middleware.rate_limiting_middleware(mock_request, mock_handler)
+
+    # Handler should be called and response returned
+    mock_handler.assert_called_once_with(mock_request)
+    assert result == mock_response
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_authentication_middleware_allowed():
+    """Test authentication middleware allowing valid token - covers line 159."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with auth token
+    config = MockAPIConfig(auth_token="valid-token")  # noqa: S106
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request with valid auth
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = "Bearer valid-token"
+
+    mock_response = MagicMock()
+    mock_handler = AsyncMock(return_value=mock_response)
+
+    # Test should allow request through
+    result = await middleware.authentication_middleware(mock_request, mock_handler)
+
+    # Handler should be called and response returned
+    mock_handler.assert_called_once_with(mock_request)
+    assert result == mock_response
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
+@pytest.mark.asyncio
+async def test_rate_limiting_middleware_exceeded():
+    """Test rate limiting middleware when limit exceeded - covers lines 135-153."""
+    if not AIOHTTP_AVAILABLE:
+        pytest.skip("aiohttp not available")
+
+    # Configure with very low rate limit
+    config = MockAPIConfig(rate_limit=1)
+    middleware = SecurityMiddleware(config)
+
+    # Create a mock request
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = None
+    mock_request.remote = "127.0.0.1"
+
+    mock_handler = AsyncMock()
+
+    # First request should be allowed
+    await middleware.rate_limiting_middleware(mock_request, mock_handler)
+
+    # Second request should be rate limited
+    with pytest.raises(web.HTTPTooManyRequests) as exc_info:
+        await middleware.rate_limiting_middleware(mock_request, mock_handler)
+
+    # Check rate limit headers are set
+    response = exc_info.value
+    assert "X-RateLimit-Limit" in response.headers
+    assert "X-RateLimit-Remaining" in response.headers
+    assert "X-RateLimit-Reset" in response.headers
+    assert "Retry-After" in response.headers
 
 
 @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not available")
