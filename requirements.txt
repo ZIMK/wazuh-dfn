@@ -24,18 +24,18 @@ mypy-extensions==1.1.0
 nodeenv==1.9.1
 packaging==25.0
 pathspec==0.12.1
-platformdirs==4.3.8
+platformdirs==4.4.0
 pluggy==1.6.0
 propcache==0.3.2
 psutil==7.0.0
 pycparser==2.22; platform_python_implementation != "PyPy"
 pydantic==2.11.7
-pydantic-core==2.33.2
+pydantic-core==2.39.0
 pygments==2.19.2
 pyright==1.1.405
 pytest==8.4.2
 pytest-aiohttp==1.1.0
-pytest-asyncio==0.26.0
+pytest-asyncio==1.1.0
 pytest-cov==6.2.1
 pytest-mock==3.15.0
 pytest-sugar==1.1.1
@@ -48,7 +48,7 @@ termcolor==3.1.0
 types-aiofiles==24.1.0.20250822
 types-psutil==7.0.0.20250822
 types-pyyaml==6.0.12.20250822
-typing-extensions==4.14.1
+typing-extensions==4.15.0
 typing-inspection==0.4.1
 yarl==1.20.1
 zipp==3.23.0
