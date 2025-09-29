@@ -9,14 +9,14 @@ aiosignal==1.4.0
 annotated-types==0.7.0
 async-timeout==5.0.1
 attrs==25.3.0
-black==25.1.0
-cffi==1.17.1; platform_python_implementation != "PyPy"
-click==8.2.1
+black==25.9.0
+cffi==2.0.0; platform_python_implementation != "PyPy"
+click==8.3.0
 colorama==0.4.6; sys_platform == "win32" or platform_system == "Windows"
-coverage[toml]==7.10.6
-cryptography==45.0.7
+coverage[toml]==7.10.7
+cryptography==46.0.1
 frozenlist==1.7.0
-hypothesis==6.138.14
+hypothesis==6.140.2
 idna==3.10
 iniconfig==2.1.0
 multidict==6.6.4
@@ -24,31 +24,31 @@ mypy-extensions==1.1.0
 nodeenv==1.9.1
 packaging==25.0
 pathspec==0.12.1
-platformdirs==4.3.8
+platformdirs==4.4.0
 pluggy==1.6.0
 propcache==0.3.2
-psutil==7.0.0
-pycparser==2.22; platform_python_implementation != "PyPy"
-pydantic==2.11.7
-pydantic-core==2.33.2
+psutil==7.1.0
+pycparser==2.23; platform_python_implementation != "PyPy"
+pydantic==2.11.9
+pydantic-core==2.39.0
 pygments==2.19.2
 pyright==1.1.405
 pytest==8.4.2
 pytest-aiohttp==1.1.0
-pytest-asyncio==0.26.0
-pytest-cov==6.2.1
-pytest-mock==3.15.0
+pytest-asyncio==1.2.0
+pytest-cov==7.0.0
+pytest-mock==3.15.1
 pytest-sugar==1.1.1
 pytest-timeout==2.4.0
 python-dotenv==1.1.1
-pyyaml==6.0.2
-ruff==0.12.12
+pyyaml==6.0.3
+ruff==0.13.2
 sortedcontainers==2.4.0
 termcolor==3.1.0
 types-aiofiles==24.1.0.20250822
 types-psutil==7.0.0.20250822
-types-pyyaml==6.0.12.20250822
-typing-extensions==4.14.1
+types-pyyaml==6.0.12.20250915
+typing-extensions==4.15.0
 typing-inspection==0.4.1
 yarl==1.20.1
 zipp==3.23.0
