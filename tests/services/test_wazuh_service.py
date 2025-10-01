@@ -921,7 +921,7 @@ async def test_write_timeout_datagram_socket(timeout_config):
 
         # Verify wait_for was called with the correct timeout
         mock_wait_for.assert_called()
-        args, kwargs = mock_wait_for.call_args
+        _args, kwargs = mock_wait_for.call_args
         assert kwargs["timeout"] == pytest.approx(timeout_config.write_timeout)
 
 
