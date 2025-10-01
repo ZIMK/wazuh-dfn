@@ -1,14 +1,14 @@
 <!doctype html>
 <html class="no-js" lang="en" data-content_root="./">
-  <head>
-<meta charset="utf-8">
+  <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="color-scheme" content="light dark"><link rel="author" title="About these documents" href="about.html"><link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="#">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="author" title="About these documents" href="about.html"><link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Troubleshooting" href="troubleshooting.html"><link rel="prev" title="Wazuh-DFN Usage Guide" href="usage.html">
         <link rel="prefetch" href="_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="_static/favicon.ico"><!-- Generated with Sphinx 8.2.3 and Furo 2025.09.25 -->
-<meta name="robots" content="noindex" />
-<title>Search - wazuh-dfn</title><link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
+        <title>Health Monitoring - wazuh-dfn</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=2847780d" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=580074bf" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
@@ -205,7 +205,7 @@
           <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
         </button>
       </div>
-      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
         <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
       </label>
     </div>
@@ -220,19 +220,19 @@
   
   <span class="sidebar-brand-text">wazuh-dfn</span>
   
-</a><form class="sidebar-search-container" method="get" action="#" role="search">
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
   <input type="hidden" name="check_keywords" value="yes">
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="about.html">About</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="configuration.html">Configuration</a></li>
 <li class="toctree-l1"><a class="reference internal" href="usage.html">Wazuh-DFN Usage Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="health.html">Health Monitoring</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Health Monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Architecture</span></p>
@@ -269,30 +269,144 @@
               <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
             </button>
           </div>
-          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
             <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          
-<noscript>
-<div class="admonition error">
-  <p class="admonition-title">Error</p>
-  <p>
-    Please activate JavaScript to enable the search functionality.
-  </p>
+          <section id="health-monitoring">
+<h1>Health Monitoring<a class="headerlink" href="#health-monitoring" title="Link to this heading">¶</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>The HealthService replaces the legacy LoggingService for periodic runtime statistics. It provides:</p>
+<ul class="simple">
+<li><p>Periodic, bounded health statistics collection (CPU, memory, worker performance, queue stats)</p></li>
+<li><p>A small optional HTTP REST API to query current health and metrics</p></li>
+<li><p>Configurable thresholds, retention, and rate limiting</p></li>
+<li><p>Secure access via bearer token and IP allowlists</p></li>
+</ul>
+</section>
+<section id="configuration">
+<h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h2>
+<p>The health system is configured via the <cite>health</cite> section in the main configuration file or via environment variables.</p>
+<p>Key configuration options:</p>
+<ul class="simple">
+<li><p><cite>health.stats_interval</cite> (int): Health statistics collection interval in seconds. Environment variable: <cite>HEALTH_STATS_INTERVAL</cite>. Default: 600</p></li>
+<li><p><cite>health.history_retention</cite> (int): Period (in seconds) to keep history entries. Environment variable: <cite>HEALTH_HISTORY_RETENTION</cite>. Default: 3600</p></li>
+<li><p><cite>health.max_history_entries</cite> (int): Maximum number of history entries to prevent unbounded growth. Environment variable: <cite>HEALTH_MAX_HISTORY_ENTRIES</cite>. Default: 1000</p></li>
+<li><p><cite>health.cache_ttl</cite> (int): Health metrics cache TTL in seconds. Use 0 or -1 to disable caching. Environment variable: <cite>HEALTH_CACHE_TTL</cite>. Default: 5</p></li>
+<li><p><cite>health.event_queue_size</cite> (int): Maximum queued health events. Environment variable: <cite>HEALTH_EVENT_QUEUE_SIZE</cite>. Default: 50</p></li>
+</ul>
+<p>API server configuration (optional):</p>
+<ul class="simple">
+<li><p><cite>health.api.enabled</cite> (bool): Master flag to enable HTTP server. Environment variable: <cite>HEALTH_HTTP_SERVER_ENABLED</cite>. Default: false</p></li>
+<li><p><cite>health.api.host</cite> (str): Host to bind to (default <cite>127.0.0.1</cite>) — recommended for security</p></li>
+<li><p><cite>health.api.port</cite> (int): Port to bind to (default 8080)</p></li>
+<li><p><cite>health.api.auth_token</cite> (str): Optional bearer token for API access. Environment variable: <cite>HEALTH_API_AUTH_TOKEN</cite></p></li>
+<li><p><cite>health.api.allowed_ips</cite> (list): Optional IP allowlist (CIDR supported). Environment variable: <cite>HEALTH_API_ALLOWED_IPS</cite></p></li>
+<li><p><cite>health.api.rate_limit</cite> (int): Requests per minute rate limit. Environment variable: <cite>HEALTH_API_RATE_LIMIT</cite></p></li>
+</ul>
+</section>
+<section id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>The HealthService runs as part of the main daemon and collects metrics in the background. The HTTP server is optional and remains disabled by default for safety. To enable the server set <cite>health.api.enabled</cite> to <cite>true</cite> in the config or set <cite>HEALTH_HTTP_SERVER_ENABLED=true</cite>.</p>
+<p>Example (bash):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">HEALTH_HTTP_SERVER_ENABLED</span><span class="o">=</span><span class="nb">true</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">HEALTH_API_HOST</span><span class="o">=</span><span class="m">127</span>.0.0.1
+<span class="nb">export</span><span class="w"> </span><span class="nv">HEALTH_API_PORT</span><span class="o">=</span><span class="m">8080</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">HEALTH_API_AUTH_TOKEN</span><span class="o">=</span><span class="s2">&quot;your_secure_token&quot;</span>
+python<span class="w"> </span>-m<span class="w"> </span>wazuh_dfn
+</pre></div>
 </div>
-</noscript>
-
-<div id="search-results"></div>
+<p>Example (PowerShell):</p>
+<div class="highlight-powershell notranslate"><div class="highlight"><pre><span></span><span class="nv">$env:HEALTH_HTTP_SERVER_ENABLED</span> <span class="p">=</span> <span class="s1">&#39;true&#39;</span>
+<span class="nv">$env:HEALTH_API_HOST</span> <span class="p">=</span> <span class="s1">&#39;127.0.0.1&#39;</span>
+<span class="nv">$env:HEALTH_API_PORT</span> <span class="p">=</span> <span class="s1">&#39;8080&#39;</span>
+<span class="nv">$env:HEALTH_API_AUTH_TOKEN</span> <span class="p">=</span> <span class="s1">&#39;your_secure_token&#39;</span>
+<span class="n">python</span> <span class="n">-m</span> <span class="n">wazuh_dfn</span>
+</pre></div>
+</div>
+</section>
+<section id="endpoints">
+<h2>Endpoints<a class="headerlink" href="#endpoints" title="Link to this heading">¶</a></h2>
+<p>The HTTP API exposes the following endpoints when enabled:</p>
+<p><strong>Basic Health Checks:</strong></p>
+<ul class="simple">
+<li><p>GET /health - Overall health status</p></li>
+<li><p>GET /health/detailed - Detailed health metrics</p></li>
+</ul>
+<p><strong>Kubernetes-style Health Checks:</strong></p>
+<ul class="simple">
+<li><p>GET /health/ready - Readiness probe for container orchestration</p></li>
+<li><p>GET /health/live - Liveness probe for container orchestration</p></li>
+</ul>
+<p><strong>Component Status:</strong></p>
+<ul class="simple">
+<li><p>GET /status/system - System resource information</p></li>
+<li><p>GET /status/workers - Worker performance metrics</p></li>
+<li><p>GET /status/queue - Queue status and utilization</p></li>
+</ul>
+<p><strong>Metrics and Information:</strong></p>
+<ul class="simple">
+<li><p>GET /metrics - Prometheus-compatible metrics</p></li>
+<li><p>GET /api/info - API server information and capabilities</p></li>
+</ul>
+</section>
+<section id="migration-from-loggingservice">
+<h2>Migration from LoggingService<a class="headerlink" href="#migration-from-loggingservice" title="Link to this heading">¶</a></h2>
+<p><strong>BREAKING CHANGES:</strong> This version introduces breaking changes to the health monitoring system.</p>
+<p>If you previously used the LoggingService to emit periodic statistics via <cite>log.interval</cite> or the <cite>LOG_INTERVAL</cite> environment variable, follow these steps to migrate:</p>
+<ol class="arabic simple">
+<li><p>Move the interval value to <cite>health.stats_interval</cite> or set <cite>HEALTH_STATS_INTERVAL</cite> in the environment.</p></li>
+<li><p>Enable the API server (optional) via <cite>health.api.enabled: true</cite> or <cite>HEALTH_HTTP_SERVER_ENABLED=true</cite> if you need remote access to metrics.</p></li>
+<li><p>Secure the API using <cite>health.api.auth_token</cite> and <cite>health.api.allowed_ips</cite>.</p></li>
+<li><p><strong>REQUIRED:</strong> Update all service code calling old HealthEventService methods:</p>
+<ul class="simple">
+<li><p><cite>health_event_service.push_worker_performance()</cite> → <cite>health_event_service.emit_worker_performance()</cite></p></li>
+<li><p><cite>health_event_service.push_kafka_performance()</cite> → <cite>health_event_service.emit_kafka_performance()</cite></p></li>
+<li><p><cite>health_event_service.push_worker_last_processed()</cite> → <cite>health_event_service.emit_worker_last_processed()</cite></p></li>
+</ul>
+</li>
+<li><p><strong>NEW:</strong> Use <cite>health_event_service.emit_service_performance()</cite> for general service performance tracking.</p></li>
+<li><p><strong>REMOVED:</strong> The <cite>get_current_health()</cite> method has been removed from HealthService. Tests and debugging code must be updated.</p></li>
+<li><p>Remove or keep <cite>log.interval</cite> — it will still configure the legacy LoggingService interval, but the application will emit a migration warning when it is used.</p></li>
+</ol>
+</section>
+<section id="security-and-best-practices">
+<h2>Security and best practices<a class="headerlink" href="#security-and-best-practices" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Keep <cite>health.api.host</cite> set to <cite>127.0.0.1</cite> unless you intentionally expose it.</p></li>
+<li><p>Use a bearer token and IP allowlist for production deployments.</p></li>
+<li><p>Monitor <cite>health.max_history_entries</cite> and <cite>health.event_queue_size</cite> to control memory usage.</p></li>
+</ul>
+</section>
+</section>
 
         </article>
       </div>
       <footer>
         
         <div class="related-pages">
-          
-          
+          <a class="next-page" href="troubleshooting.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Troubleshooting</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="usage.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Wazuh-DFN Usage Guide</div>
+                
+              </div>
+            </a>
         </div>
         <div class="bottom-of-page">
           <div class="left-details">
@@ -318,8 +432,32 @@
         
       </footer>
     </div>
-    <aside class="toc-drawer no-toc">
+    <aside class="toc-drawer">
       
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Health Monitoring</a><ul>
+<li><a class="reference internal" href="#overview">Overview</a></li>
+<li><a class="reference internal" href="#configuration">Configuration</a></li>
+<li><a class="reference internal" href="#usage">Usage</a></li>
+<li><a class="reference internal" href="#endpoints">Endpoints</a></li>
+<li><a class="reference internal" href="#migration-from-loggingservice">Migration from LoggingService</a></li>
+<li><a class="reference internal" href="#security-and-best-practices">Security and best practices</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
       
       
     </aside>
@@ -330,8 +468,5 @@
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>
     <script src="_static/clipboard.min.js?v=a7894cd8"></script>
     <script src="_static/copybutton.js?v=30646c52"></script>
-    
-<script src="_static/searchtools.js"></script>
-<script src="_static/language_data.js"></script>
-<script src="searchindex.js"></script></body>
+    </body>
 </html>
