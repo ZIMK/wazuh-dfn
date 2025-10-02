@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import ssl
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -988,3 +989,304 @@ async def test_producer_cleanup_error_handling(kafka_service):
 
         # Verify the producer reference was updated
         assert kafka_service.producer is new_producer
+
+
+# =============================================================================
+# KAFKA INTERVAL TRACKING TESTS (Phase 4 Implementation)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_kafka_service_initializes_dual_tracking(sample_config, wazuh_service, shutdown_event):
+    """Test that KafkaService initializes both cumulative and interval tracking."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    # Verify cumulative stats initialized
+    assert kafka_service._cumulative_stats["total_operations"] == 0
+    assert kafka_service._cumulative_stats["slow_operations"] == 0
+    assert abs(kafka_service._cumulative_stats["all_time_max"]) < 0.01
+    assert kafka_service._cumulative_stats["total_errors"] == 0
+
+    # Verify interval stats initialized
+    assert kafka_service._interval_stats["operations"] == 0
+    assert kafka_service._interval_stats["slow_operations"] == 0
+    assert abs(kafka_service._interval_stats["max_operation_time"]) < 0.01
+    assert abs(kafka_service._interval_stats["last_slow_operation_time"]) < 0.01
+    assert kafka_service._interval_stats["recent_stage_times"] == []
+    assert "interval_start" in kafka_service._interval_stats
+
+
+@pytest.mark.asyncio
+async def test_get_kafka_stats_returns_interval_data(sample_config, wazuh_service, shutdown_event):
+    """Test that get_kafka_stats returns interval data, not cumulative."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    # Set different values for cumulative and interval
+    async with kafka_service._stats_lock:
+        kafka_service._cumulative_stats["total_operations"] = 1000
+        kafka_service._cumulative_stats["slow_operations"] = 50
+
+        kafka_service._interval_stats["operations"] = 25
+        kafka_service._interval_stats["slow_operations"] = 3
+        kafka_service._interval_stats["max_operation_time"] = 2.5
+        kafka_service._interval_stats["last_slow_operation_time"] = 1.8
+
+    # Get stats
+    stats = kafka_service.get_kafka_stats()
+
+    # Verify returns interval data
+    assert stats["total_operations"] == 25  # interval, not cumulative
+    assert stats["slow_operations"] == 3
+    assert abs(stats["max_operation_time"] - 2.5) < 0.01
+    assert abs(stats["last_slow_operation_time"] - 1.8) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_reset_interval_stats_clears_interval_only(sample_config, wazuh_service, shutdown_event):
+    """Test that reset_interval_stats clears interval but preserves cumulative."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    # Set both cumulative and interval data
+    async with kafka_service._stats_lock:
+        kafka_service._cumulative_stats["total_operations"] = 1000
+        kafka_service._cumulative_stats["slow_operations"] = 50
+        kafka_service._cumulative_stats["all_time_max"] = 10.5
+
+        kafka_service._interval_stats["operations"] = 25
+        kafka_service._interval_stats["slow_operations"] = 3
+        kafka_service._interval_stats["max_operation_time"] = 2.5
+
+    # Reset interval
+    await kafka_service.reset_interval_stats()
+
+    # Verify interval reset
+    assert kafka_service._interval_stats["operations"] == 0
+    assert kafka_service._interval_stats["slow_operations"] == 0
+    assert abs(kafka_service._interval_stats["max_operation_time"]) < 0.01
+    assert kafka_service._interval_stats["recent_stage_times"] == []
+
+    # Verify cumulative preserved
+    assert kafka_service._cumulative_stats["total_operations"] == 1000
+    assert kafka_service._cumulative_stats["slow_operations"] == 50
+    assert abs(kafka_service._cumulative_stats["all_time_max"] - 10.5) < 0.01
+
+
+@pytest.mark.asyncio
+@patch("wazuh_dfn.services.kafka_service.AIOKafkaProducer")
+async def test_send_alert_tracks_both_cumulative_and_interval(
+    mock_producer_class, sample_config, wazuh_service, shutdown_event
+):
+    """Test that sending alerts updates both cumulative and interval stats."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    # Setup mock producer
+    mock_producer = AsyncMock()
+    mock_producer.start = AsyncMock()
+    mock_producer.send_and_wait = AsyncMock()
+    mock_producer_class.return_value = mock_producer
+
+    # Initialize producer
+    kafka_service.producer = mock_producer
+
+    # Send alert (simulate fast operation)
+    with patch.object(kafka_service, "_send_message_once") as mock_send:
+        mock_send.return_value = {"success": True, "topic": "test_topic"}
+
+        # Simulate operation timing
+        async with kafka_service._stats_lock:
+            kafka_service._cumulative_stats["total_operations"] += 1
+            kafka_service._interval_stats["operations"] += 1
+
+    # Verify both incremented
+    assert kafka_service._cumulative_stats["total_operations"] == 1
+    assert kafka_service._interval_stats["operations"] == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_operation_tracking_stores_stage_times(sample_config, wazuh_service, shutdown_event):
+    """Test that slow operations store stage times for max operation."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    stage_times_1 = {"prep": 0.5, "encode": 1.0, "send": 2.5}  # total 4.0s
+    stage_times_2 = {"prep": 0.3, "encode": 0.8, "send": 1.9}  # total 3.0s
+    stage_times_3 = {"prep": 0.6, "encode": 1.2, "send": 3.2}  # total 5.0s (new max)
+
+    async with kafka_service._stats_lock:
+        # First slow operation (4.0s)
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._cumulative_stats["slow_operations"] += 1
+        kafka_service._interval_stats["slow_operations"] += 1
+        kafka_service._interval_stats["max_operation_time"] = 4.0
+        kafka_service._interval_stats["recent_stage_times"] = [stage_times_1.copy()]
+
+        # Second slow operation (3.0s - not max)
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._cumulative_stats["slow_operations"] += 1
+        kafka_service._interval_stats["slow_operations"] += 1
+        kafka_service._interval_stats["recent_stage_times"].append(stage_times_2.copy())
+
+        # Third slow operation (5.0s - new max, replaces stage times)
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._cumulative_stats["slow_operations"] += 1
+        kafka_service._interval_stats["slow_operations"] += 1
+        kafka_service._interval_stats["max_operation_time"] = 5.0
+        kafka_service._interval_stats["recent_stage_times"] = [stage_times_3.copy()]
+
+    # Verify max operation has correct stage times
+    assert abs(kafka_service._interval_stats["max_operation_time"] - 5.0) < 0.01
+    assert len(kafka_service._interval_stats["recent_stage_times"]) == 1
+    assert kafka_service._interval_stats["recent_stage_times"][0] == stage_times_3
+
+
+@pytest.mark.asyncio
+async def test_cumulative_tracks_all_time_max(sample_config, wazuh_service, shutdown_event):
+    """Test that cumulative stats track all-time maximum across resets."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    async with kafka_service._stats_lock:
+        # First operation: 5.0s
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._cumulative_stats["slow_operations"] += 1
+        kafka_service._cumulative_stats["all_time_max"] = 5.0
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._interval_stats["slow_operations"] += 1
+        kafka_service._interval_stats["max_operation_time"] = 5.0
+
+    # All-time max is 5.0
+    assert abs(kafka_service._cumulative_stats["all_time_max"] - 5.0) < 0.01
+
+    # Reset interval
+    await kafka_service.reset_interval_stats()
+
+    async with kafka_service._stats_lock:
+        # Second operation: 3.0s (less than all-time)
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._interval_stats["max_operation_time"] = 3.0
+
+    # All-time still 5.0, interval max is 3.0
+    assert abs(kafka_service._cumulative_stats["all_time_max"] - 5.0) < 0.01
+    assert abs(kafka_service._interval_stats["max_operation_time"] - 3.0) < 0.01
+
+    async with kafka_service._stats_lock:
+        # Third operation: 7.0s (new all-time max)
+        kafka_service._cumulative_stats["total_operations"] += 1
+        kafka_service._cumulative_stats["slow_operations"] += 1
+        kafka_service._cumulative_stats["all_time_max"] = 7.0
+        kafka_service._interval_stats["operations"] += 1
+        kafka_service._interval_stats["slow_operations"] += 1
+        kafka_service._interval_stats["max_operation_time"] = 7.0
+
+    # All-time updated to 7.0
+    assert abs(kafka_service._cumulative_stats["all_time_max"] - 7.0) < 0.01
+    assert abs(kafka_service._interval_stats["max_operation_time"] - 7.0) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_interval_start_timestamp_updates_on_reset(sample_config, wazuh_service, shutdown_event):
+    """Test that interval_start timestamp is updated when resetting."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    # Get initial timestamp
+    initial_start = kafka_service._interval_stats["interval_start"]
+
+    # Wait a bit
+    await asyncio.sleep(0.1)
+
+    # Reset
+    await kafka_service.reset_interval_stats()
+
+    # Verify timestamp updated
+    new_start = kafka_service._interval_stats["interval_start"]
+    assert new_start > initial_start
+    assert abs(new_start - time.time()) < 1.0  # Should be recent
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stat_updates(sample_config, wazuh_service, shutdown_event):
+    """Test that concurrent stat updates are thread-safe."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    async def update_stats():
+        """Simulate concurrent stat updates."""
+        async with kafka_service._stats_lock:
+            kafka_service._cumulative_stats["total_operations"] += 1
+            kafka_service._interval_stats["operations"] += 1
+            await asyncio.sleep(0.01)  # Simulate work
+
+    # Run 10 concurrent updates
+    tasks = [update_stats() for _ in range(10)]
+    await asyncio.gather(*tasks)
+
+    # Verify all updates recorded
+    assert kafka_service._cumulative_stats["total_operations"] == 10
+    assert kafka_service._interval_stats["operations"] == 10
+
+
+@pytest.mark.asyncio
+async def test_error_tracking_updates_cumulative(sample_config, wazuh_service, shutdown_event):
+    """Test that errors are tracked in cumulative stats."""
+    kafka_service = KafkaService(
+        config=sample_config,
+        dfn_config=MagicMock(dfn_id="test_topic", dfn_broker="localhost:9092", dfn_cert=None, dfn_key=None),
+        wazuh_service=wazuh_service,
+        shutdown_event=shutdown_event,
+    )
+
+    initial_errors = kafka_service._cumulative_stats["total_errors"]
+
+    # Simulate error tracking
+    async with kafka_service._stats_lock:
+        kafka_service._cumulative_stats["total_errors"] += 1
+
+    # Verify error counted
+    assert kafka_service._cumulative_stats["total_errors"] == initial_errors + 1
+
+    # Reset interval (shouldn't affect error count)
+    await kafka_service.reset_interval_stats()
+
+    # Error count still preserved
+    assert kafka_service._cumulative_stats["total_errors"] == initial_errors + 1

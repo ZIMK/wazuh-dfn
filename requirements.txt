@@ -32,7 +32,7 @@ pycparser==2.22; python_full_version >= "3.9" and platform_python_implementation
 pydantic==2.11.9
 pydantic-core==2.33.2
 pygments==2.19.2
-pyright==1.1.405
+pyright==1.1.406
 pytest==8.4.2
 pytest-aiohttp==1.1.0
 pytest-asyncio==0.26.0

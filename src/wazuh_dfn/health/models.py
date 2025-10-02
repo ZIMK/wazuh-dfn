@@ -143,13 +143,19 @@ class WorkerLastProcessedData(TypedDict):
 
 
 class QueueStatsData(TypedDict):
-    """Type-safe definition for queue statistics (for events)."""
+    """Type-safe definition for queue statistics (for events).
 
-    total_processed: int
-    max_queue_size: int
-    config_max_queue_size: int
-    queue_full_count: int
-    last_queue_size: int
+    Note: These stats represent interval-based metrics that reset after each
+    logging cycle. Despite the field name 'total_processed', this contains
+    the count of items processed in the current interval (not cumulative/all-time).
+    This allows accurate throughput calculation (items/sec) per logging period.
+    """
+
+    total_processed: int  # Items processed in current interval (resets each log cycle)
+    max_queue_size: int  # Maximum queue size reached in current interval
+    config_max_queue_size: int  # Configured maximum capacity (does not reset)
+    queue_full_count: int  # Times queue was full in current interval
+    last_queue_size: int  # Current queue size (snapshot, does not reset)
 
 
 class KafkaInternalStatsData(TypedDict):

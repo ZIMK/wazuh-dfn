@@ -80,17 +80,35 @@ class HealthService:
         self._shutdown_event = shutdown_event
         self._worker_performance_data: dict[str, dict[str, Any]] = {}
         self._worker_last_processed: dict[str, dict[str, Any]] = {}
-        self._kafka_performance_data = {
-            "slow_operations": 0,
+
+        # Kafka metrics - Cumulative (since startup)
+        self._kafka_cumulative_data = {
             "total_operations": 0,
-            "last_slow_operation_time": 0,
-            "max_operation_time": 0,
-            "recent_stage_times": [],
+            "slow_operations": 0,
+            "all_time_max": 0.0,
+        }
+
+        # Kafka metrics - Interval (reset each log cycle)
+        self._kafka_interval_data = {
+            "operations": 0,
+            "slow_operations": 0,
+            "max_operation_time": 0.0,
+            "max_stage_times": {},
+            "interval_start": time.time(),
         }
         self._perf_lock = asyncio.Lock()
 
         # System monitoring
         self.process = psutil.Process() if psutil else None
+
+        # System resource trend tracking (rolling window)
+        self._resource_history: list[dict[str, Any]] = []
+        self._max_history_samples = 10  # Keep last 10 samples for trend analysis
+
+        # Performance history tracking
+        self._kafka_performance_history: list[dict[str, Any]] = []
+        self._worker_performance_history: dict[str, list[dict[str, Any]]] = {}
+        self._queue_performance_history: dict[str, list[dict[str, Any]]] = {}
 
         # Thresholds (LoggingService compatibility)
         self._warning_fill_threshold = 70.0
@@ -197,22 +215,29 @@ class HealthService:
     async def _handle_kafka_performance_event(self, event: dict[str, Any]) -> None:
         """Handle Kafka performance event."""
         operation_data = event.get("data", {})
+        total_time = operation_data.get("total_time", 0)
+        stage_times = operation_data.get("stage_times", {})
 
         async with self._perf_lock:
-            self._kafka_performance_data["total_operations"] += 1
+            # Update cumulative metrics
+            self._kafka_cumulative_data["total_operations"] += 1
 
-            total_time = operation_data.get("total_time", 0)
             if total_time > 1.0:  # SLOW_OPERATIONS_THRESHOLD
-                self._kafka_performance_data["slow_operations"] += 1
-                self._kafka_performance_data["last_slow_operation_time"] = total_time
-                self._kafka_performance_data["max_operation_time"] = max(
-                    self._kafka_performance_data["max_operation_time"], total_time
+                self._kafka_cumulative_data["slow_operations"] += 1
+                self._kafka_cumulative_data["all_time_max"] = max(
+                    self._kafka_cumulative_data["all_time_max"], total_time
                 )
 
-                stage_times = operation_data.get("stage_times", {})
-                self._kafka_performance_data["recent_stage_times"].append(stage_times)
-                if len(self._kafka_performance_data["recent_stage_times"]) > 5:
-                    self._kafka_performance_data["recent_stage_times"].pop(0)
+            # Update interval metrics
+            self._kafka_interval_data["operations"] += 1
+
+            if total_time > 1.0:  # SLOW_OPERATIONS_THRESHOLD
+                self._kafka_interval_data["slow_operations"] += 1
+
+                # Track interval max WITH its stage breakdown
+                if total_time > self._kafka_interval_data["max_operation_time"]:
+                    self._kafka_interval_data["max_operation_time"] = total_time
+                    self._kafka_interval_data["max_stage_times"] = stage_times.copy()
 
     # Memory Management Methods
     async def cleanup_old_health_data(self) -> None:
@@ -245,12 +270,6 @@ class HealthService:
                     self._worker_performance_data = dict(sorted_workers[:max_entries])
                     break
 
-            # Clean Kafka performance data
-            if "recent_stage_times" in self._kafka_performance_data:
-                recent_times = self._kafka_performance_data["recent_stage_times"]
-                if len(recent_times) > max_entries:
-                    self._kafka_performance_data["recent_stage_times"] = recent_times[-max_entries:]
-
             # Clean last processed data based on retention
             for worker_name, info in list(self._worker_last_processed.items()):
                 if isinstance(info, dict) and "timestamp" in info:
@@ -265,6 +284,57 @@ class HealthService:
             f"Cleaned up health data (retention: {retention_seconds}s, "
             f"max entries: {max_entries}, remaining: {cleaned_count})"
         )
+
+    async def _reset_interval_metrics(self) -> None:
+        """Reset interval metrics after logging.
+
+        Called after each log cycle to reset interval counters while preserving
+        cumulative totals. This provides accurate per-interval statistics.
+        """
+        async with self._perf_lock:
+            # Calculate interval duration for debugging
+            interval_duration = time.time() - self._kafka_interval_data["interval_start"]
+
+            LOGGER.debug(
+                f"Resetting interval metrics after {interval_duration:.0f}s: "
+                f"Kafka {self._kafka_interval_data['operations']} ops"
+            )
+
+            # Reset Kafka interval metrics
+            self._kafka_interval_data = {
+                "operations": 0,
+                "slow_operations": 0,
+                "max_operation_time": 0.0,
+                "max_stage_times": {},
+                "interval_start": time.time(),
+            }
+
+        # Reset queue interval metrics for all queue providers
+        try:
+            queue_providers = self.container.get_queue_providers()
+            for queue_name, provider in queue_providers.items():
+                # Check if provider has reset_interval_stats method
+                if hasattr(provider, "reset_interval_stats"):
+                    try:
+                        await provider.reset_interval_stats()
+                    except Exception as e:
+                        LOGGER.error(f"Error resetting interval stats for {queue_name}: {e}")
+        except Exception as e:
+            LOGGER.error(f"Error resetting queue interval metrics: {e}")
+
+        # Reset Kafka interval metrics for all Kafka providers
+        try:
+            kafka_providers = self.container.get_kafka_providers()
+            for kafka_name, provider in kafka_providers.items():
+                # Check if provider has reset_interval_stats method
+                if hasattr(provider, "reset_interval_stats"):
+                    try:
+                        await provider.reset_interval_stats()
+                        LOGGER.debug(f"Reset interval stats for Kafka provider: {kafka_name}")
+                    except Exception as e:
+                        LOGGER.error(f"Error resetting interval stats for {kafka_name}: {e}")
+        except Exception as e:
+            LOGGER.error(f"Error resetting Kafka interval metrics: {e}")
 
     def _collect_health_metrics(self) -> HealthMetrics:
         """Collect comprehensive health metrics from all system components with caching.
@@ -539,6 +609,12 @@ class HealthService:
             # Log Kafka performance
             await self._log_kafka_performance()
 
+            # Analyze performance correlations
+            self._analyze_performance_correlations()
+
+            # Reset interval metrics for next cycle
+            await self._reset_interval_metrics()
+
         except Exception as e:
             LOGGER.error(f"Error collecting monitoring stats: {e}", exc_info=True)
 
@@ -556,9 +632,13 @@ class HealthService:
                     stats = provider.get_queue_stats()
                     queue_size = stats.get("last_queue_size", 0)
                     config_max_size = stats.get("config_max_queue_size", 100)
+                    total_processed = stats.get("total_processed", 0)
+                    max_size = stats.get("max_queue_size", 0)
+                    full_count = stats.get("queue_full_count", 0)
 
                     fill_percentage = (queue_size / config_max_size) * 100 if config_max_size > 0 else 0
 
+                    # Log current fill status
                     if fill_percentage > self._critical_fill_threshold:
                         LOGGER.error(
                             f"CRITICAL: Queue {queue_name} is {fill_percentage:.1f}% full"
@@ -573,10 +653,15 @@ class HealthService:
                             f"Queue {queue_name} is {fill_percentage:.1f}% full ({queue_size}/{config_max_size})"
                         )
 
+                    # Calculate throughput (items/sec) - these are now interval stats
+                    interval_duration = self._config.stats_interval
+                    throughput = total_processed / interval_duration if interval_duration > 0 else 0
+
                     LOGGER.info(
-                        f"Queue {queue_name} stats: {stats.get('total_processed', 0)} total processed, "
-                        f"max size reached: {stats.get('max_queue_size', 0)}, "
-                        f"queue full warnings: {stats.get('queue_full_count', 0)}"
+                        f"Queue {queue_name} stats (last {interval_duration:.0f}s): "
+                        f"{total_processed} processed ({throughput:.1f} items/s), "
+                        f"max size reached: {max_size}, "
+                        f"queue full warnings: {full_count}"
                     )
                 except Exception as e:
                     LOGGER.error(f"Error getting queue stats for {queue_name}: {e}")
@@ -584,28 +669,177 @@ class HealthService:
             LOGGER.error(f"Error logging queue stats: {e}")
 
     def _log_system_metrics(self) -> None:
-        """Log system metrics."""
+        """Log system metrics with enhanced resource monitoring and trend analysis."""
         if not self.process:
             return
 
         try:
+            # Collect current metrics
+            memory_info = self.process.memory_info()
             memory_percent = self.process.memory_percent()
-            LOGGER.info(f"Current memory usage: {memory_percent:.2f}%")
-        except Exception as e:
-            LOGGER.error(f"Error getting memory usage: {e}")
+            memory_mb = memory_info.rss / (1024 * 1024)
+            cpu_percent = self.process.cpu_percent()
+            threads = self.process.num_threads()
 
-        if psutil:
+            # Store in history for trend analysis
+            current_sample = {
+                "timestamp": time.time(),
+                "memory_percent": memory_percent,
+                "memory_mb": memory_mb,
+                "cpu_percent": cpu_percent,
+                "threads": threads,
+            }
+
+            self._resource_history.append(current_sample)
+            if len(self._resource_history) > self._max_history_samples:
+                self._resource_history.pop(0)
+
+            # Memory metrics
+            LOGGER.info(f"Memory usage: {memory_percent:.2f}% ({memory_mb:.1f} MB RSS)")
+
+            # CPU metrics
             try:
-                cpu_percent = psutil.cpu_percent()
-                LOGGER.info(f"CPU usage (avg): {cpu_percent:.2f}%")
+                if psutil:
+                    system_cpu = psutil.cpu_percent()
+                    LOGGER.info(f"CPU usage - Process: {cpu_percent:.2f}%, System: {system_cpu:.2f}%")
+                else:
+                    LOGGER.info(f"CPU usage (process): {cpu_percent:.2f}%")
             except Exception as e:
-                LOGGER.debug(f"Error getting CPU average: {e}")
+                LOGGER.debug(f"Error getting CPU metrics: {e}")
 
-        try:
-            open_files = self.process.open_files()
-            LOGGER.info(f"Current open files: {open_files}")
+            # Thread metrics
+            LOGGER.info(f"Active threads: {threads}")
+
+            # File descriptor metrics
+            try:
+                open_files_count = len(self.process.open_files())
+                if resource and hasattr(resource, "getrlimit") and hasattr(resource, "RLIMIT_NOFILE"):
+                    max_files = resource.getrlimit(resource.RLIMIT_NOFILE)[0]  # type: ignore[]
+                    fd_percent = (open_files_count / max_files) * 100
+                    LOGGER.info(f"File descriptors: {open_files_count}/{max_files} ({fd_percent:.1f}%)")
+                else:
+                    LOGGER.info(f"Open file descriptors: {open_files_count}")
+            except Exception as e:
+                LOGGER.debug(f"Error getting file descriptor info: {e}")
+
+            # Uptime
+            try:
+                create_time = self.process.create_time()
+                uptime_seconds = time.time() - create_time
+                uptime_hours = uptime_seconds / 3600
+                LOGGER.info(f"Process uptime: {uptime_hours:.1f} hours ({uptime_seconds:.0f} seconds)")
+            except Exception as e:
+                LOGGER.debug(f"Error getting uptime: {e}")
+
+            # Trend analysis (if we have enough history)
+            if len(self._resource_history) >= 3:
+                self._log_resource_trends()
+
         except Exception as e:
-            LOGGER.error(f"Error getting open files: {e}")
+            LOGGER.error(f"Error logging system metrics: {e}")
+
+    def _log_resource_trends(self) -> None:
+        """Analyze and log resource usage trends."""
+        try:
+            if len(self._resource_history) < 2:
+                return
+
+            # Calculate trends
+            memory_values = [s["memory_percent"] for s in self._resource_history]
+            cpu_values = [s["cpu_percent"] for s in self._resource_history]
+
+            # Memory trend
+            memory_avg = sum(memory_values) / len(memory_values)
+            memory_recent = memory_values[-3:]  # Last 3 samples
+            memory_recent_avg = sum(memory_recent) / len(memory_recent)
+            memory_trend = memory_recent_avg - memory_avg
+
+            # CPU trend
+            cpu_avg = sum(cpu_values) / len(cpu_values)
+            cpu_recent = cpu_values[-3:]
+            cpu_recent_avg = sum(cpu_recent) / len(cpu_recent)
+            cpu_trend = cpu_recent_avg - cpu_avg
+
+            # Log trends if significant
+            if abs(memory_trend) > 5.0:  # More than 5% change
+                trend_direction = "increasing" if memory_trend > 0 else "decreasing"
+                LOGGER.info(
+                    f"Memory trend: {trend_direction} "
+                    f"(avg: {memory_avg:.1f}%, recent: {memory_recent_avg:.1f}%, "
+                    f"change: {memory_trend:+.1f}%)"
+                )
+
+            if abs(cpu_trend) > 10.0:  # More than 10% change
+                trend_direction = "increasing" if cpu_trend > 0 else "decreasing"
+                LOGGER.info(
+                    f"CPU trend: {trend_direction} "
+                    f"(avg: {cpu_avg:.1f}%, recent: {cpu_recent_avg:.1f}%, "
+                    f"change: {cpu_trend:+.1f}%)"
+                )
+
+            # Alert on concerning trends
+            if memory_trend > 10.0:
+                LOGGER.warning(f"Significant memory increase detected: {memory_trend:+.1f}% " "- possible memory leak")
+
+            if cpu_trend > 20.0:
+                LOGGER.warning(
+                    f"Significant CPU increase detected: {cpu_trend:+.1f}% " "- possible performance degradation"
+                )
+
+        except Exception as e:
+            LOGGER.debug(f"Error analyzing resource trends: {e}")
+
+    def _analyze_performance_correlations(self) -> None:
+        """Analyze correlations between different performance metrics."""
+        try:
+            # Need minimum history for meaningful correlation
+            if len(self._kafka_performance_history) < 3 or len(self._resource_history) < 3:
+                return
+
+            # Correlation: Kafka throughput vs System CPU
+            kafka_ops = [s["ops_per_sec"] for s in self._kafka_performance_history[-3:]]
+            cpu_values = [s["cpu_percent"] for s in self._resource_history[-3:]]
+
+            kafka_avg = sum(kafka_ops) / len(kafka_ops)
+            cpu_avg = sum(cpu_values) / len(cpu_values)
+
+            # Simple correlation check: if both metrics are increasing together
+            kafka_increasing = kafka_ops[-1] > kafka_avg
+            cpu_increasing = cpu_values[-1] > cpu_avg
+
+            if kafka_increasing and cpu_increasing:
+                LOGGER.info(
+                    f"Correlation detected: High Kafka throughput ({kafka_ops[-1]:.1f} ops/s) "
+                    f"correlates with elevated CPU usage ({cpu_values[-1]:.1f}%)"
+                )
+
+            # Check for anomalies: low throughput with high CPU
+            if not kafka_increasing and cpu_increasing and cpu_values[-1] > 70:
+                LOGGER.warning(
+                    f"Performance anomaly: Low Kafka throughput ({kafka_ops[-1]:.1f} ops/s) "
+                    f"despite high CPU usage ({cpu_values[-1]:.1f}%) - possible bottleneck"
+                )
+
+            # Correlation: Worker performance vs Memory
+            if self._worker_performance_history:
+                for worker_name, history in self._worker_performance_history.items():
+                    if len(history) >= 3:
+                        worker_rates = [s["rate"] for s in history[-3:]]
+                        worker_avg = sum(worker_rates) / len(worker_rates)
+
+                        memory_values = [s["memory_percent"] for s in self._resource_history[-3:]]
+                        memory_avg = sum(memory_values) / len(memory_values)
+
+                        # Check if performance degradation correlates with memory pressure
+                        if worker_rates[-1] < worker_avg * 0.7 and memory_values[-1] > memory_avg * 1.2:
+                            LOGGER.warning(
+                                f"Performance degradation: Worker {worker_name} throughput down "
+                                f"({worker_rates[-1]:.2f} vs avg {worker_avg:.2f} alerts/sec) "
+                                f"correlates with memory pressure ({memory_values[-1]:.1f}%)"
+                            )
+
+        except Exception as e:
+            LOGGER.debug(f"Error analyzing performance correlations: {e}")
 
     def _log_service_status(self) -> None:
         """Log service status."""
@@ -629,16 +863,13 @@ class HealthService:
             LOGGER.error(f"Error logging service status: {e}")
 
     async def _log_worker_performance(self) -> None:
-        """Log worker performance."""
+        """Log worker performance with enhanced metrics display."""
         try:
             worker_providers = self.container.get_worker_providers()
 
             if worker_providers is None or worker_providers == {}:
                 LOGGER.warning("No worker providers available")
                 return
-
-            async with self._perf_lock:
-                worker_perf_data = self._worker_performance_data.copy()
 
             for name, provider in worker_providers.items():
                 try:
@@ -661,53 +892,143 @@ class HealthService:
                             f"{worker_seconds_ago:.2f} seconds ago"
                         )
 
-                    # Log performance metrics if available
-                    if name in worker_perf_data:
-                        perf = worker_perf_data[name]
+                    # Enhanced performance metrics logging using real calculated data
+                    alerts_processed = performance.get("alerts_processed", 0)
+                    rate = performance.get("rate", 0.0)
+                    avg_processing = performance.get("avg_processing", 0.0)
+                    recent_avg = performance.get("recent_avg", 0.0)
+                    min_time = performance.get("min_time", 0.0)
+                    max_time = performance.get("max_time", 0.0)
+                    slow_alerts = performance.get("slow_alerts", 0)
+                    extremely_slow = performance.get("extremely_slow_alerts", 0)
+                    last_alert_id = performance.get("last_alert_id", "")
+
+                    # Primary performance log
+                    LOGGER.info(
+                        f"Worker {name} performance: "
+                        f"{alerts_processed} alerts processed, "
+                        f"rate: {rate:.2f} alerts/sec, "
+                        f"avg: {avg_processing*1000:.2f}ms, "
+                        f"recent avg: {recent_avg*1000:.2f}ms"
+                    )
+
+                    # Detailed timing breakdown
+                    if alerts_processed > 0:
                         LOGGER.info(
-                            f"Worker {name} performance: {perf.get('alerts_processed', 0)} alerts processed, "
-                            f"rate: {perf.get('rate', 0):.2f} alerts/sec, "
-                            f"avg: {perf.get('avg_processing', 0)*1000:.2f}ms, "
-                            f"recent avg: {perf.get('recent_avg', 0)*1000:.2f}ms, "
-                            f"slow alerts: {perf.get('slow_alerts', 0)}, "
-                            f"extremely slow: {perf.get('extremely_slow_alerts', 0)}"
+                            f"Worker {name} timing details: "
+                            f"min: {min_time*1000:.2f}ms, "
+                            f"max: {max_time*1000:.2f}ms, "
+                            f"slow: {slow_alerts}, "
+                            f"extremely slow: {extremely_slow}"
                         )
+
+                    # Last processed alert ID
+                    if last_alert_id:
+                        LOGGER.debug(f"Worker {name} last alert ID: {last_alert_id}")
+
+                    # Store in performance history for correlation analysis
+                    if name not in self._worker_performance_history:
+                        self._worker_performance_history[name] = []
+
+                    history_sample = {
+                        "timestamp": time.time(),
+                        "alerts_processed": alerts_processed,
+                        "rate": rate,
+                        "avg_processing": avg_processing,
+                        "slow_alerts": slow_alerts,
+                    }
+                    self._worker_performance_history[name].append(history_sample)
+                    if len(self._worker_performance_history[name]) > self._max_history_samples:
+                        self._worker_performance_history[name].pop(0)
+
                 except Exception as e:
                     LOGGER.error(f"Error logging worker performance for {name}: {e}")
         except Exception as e:
             LOGGER.error(f"Error logging worker performance: {e}")
 
     async def _log_kafka_performance(self) -> None:
-        """Log Kafka performance."""
+        """Log Kafka performance with interval-based metrics."""
         try:
             async with self._perf_lock:
-                kafka_perf = self._kafka_performance_data.copy()
+                cumulative = self._kafka_cumulative_data.copy()
+                interval = self._kafka_interval_data.copy()
 
-            if not kafka_perf:
-                LOGGER.warning("No Kafka performance data available")
-                return
+            # Calculate interval duration
+            interval_duration = time.time() - interval["interval_start"]
 
-            if kafka_perf["total_operations"] > 0:
-                slow_pct = (
-                    (kafka_perf["slow_operations"] / kafka_perf["total_operations"]) * 100
-                    if kafka_perf["total_operations"] > 0
-                    else 0
-                )
+            # Log interval metrics (primary - what happened recently)
+            if interval["operations"] > 0:
+                slow_pct = (interval["slow_operations"] / interval["operations"]) * 100
+                ops_per_sec = interval["operations"] / interval_duration if interval_duration > 0 else 0
 
                 LOGGER.info(
-                    f"Kafka performance: {kafka_perf['total_operations']} operations, "
-                    f"{kafka_perf['slow_operations']} slow ({slow_pct:.1f}%), "
-                    f"max time: {kafka_perf['max_operation_time']:.2f}s"
+                    f"Kafka performance (last {interval_duration:.0f}s): "
+                    f"{interval['operations']} operations ({ops_per_sec:.1f} ops/s), "
+                    f"{interval['slow_operations']} slow ({slow_pct:.1f}%), "
+                    f"interval max: {interval['max_operation_time']:.2f}s"
                 )
 
-                if kafka_perf["slow_operations"] > 0 and kafka_perf["recent_stage_times"]:
-                    latest = kafka_perf["recent_stage_times"][-1]
+                # Show stage breakdown for the slowest operation in this interval
+                if interval["slow_operations"] > 0 and interval["max_stage_times"]:
+                    max_stages = interval["max_stage_times"]
+                    total_breakdown = sum(max_stages.values())
+
+                    # Calculate stage percentages
+                    prep_time = max_stages.get("prep", 0)
+                    encode_time = max_stages.get("encode", 0)
+                    send_time = max_stages.get("send", 0)
+                    connect_time = max_stages.get("connect", 0)
+
+                    prep_pct = (prep_time / total_breakdown * 100) if total_breakdown > 0 else 0
+                    encode_pct = (encode_time / total_breakdown * 100) if total_breakdown > 0 else 0
+                    send_pct = (send_time / total_breakdown * 100) if total_breakdown > 0 else 0
+                    connect_pct = (connect_time / total_breakdown * 100) if total_breakdown > 0 else 0
+
                     LOGGER.info(
-                        f"Latest slow Kafka operation: "
-                        f"Prep: {latest.get('prep', 0):.2f}s, "
-                        f"Encode: {latest.get('encode', 0):.2f}s, "
-                        f"Send: {latest.get('send', 0):.2f}s"
+                        f"Slowest operation breakdown (total: {total_breakdown:.2f}s): "
+                        f"Prep: {prep_time:.2f}s ({prep_pct:.0f}%), "
+                        f"Encode: {encode_time:.2f}s ({encode_pct:.0f}%), "
+                        f"Send: {send_time:.2f}s ({send_pct:.0f}%), "
+                        f"Connect: {connect_time:.2f}s ({connect_pct:.0f}%)"
                     )
+
+                    # Identify bottleneck
+                    bottleneck = max(
+                        [("Prep", prep_pct), ("Encode", encode_pct), ("Send", send_pct), ("Connect", connect_pct)],
+                        key=lambda x: x[1],
+                    )
+                    if bottleneck[1] > 50:
+                        LOGGER.warning(
+                            f"Kafka bottleneck detected: {bottleneck[0]} stage "
+                            f"consuming {bottleneck[1]:.0f}% of operation time"
+                        )
+            else:
+                LOGGER.info(f"Kafka performance (last {interval_duration:.0f}s): No operations")
+
+            # Store in performance history for trend/correlation analysis
+            if interval["operations"] > 0:
+                ops_per_sec_calc = interval["operations"] / interval_duration if interval_duration > 0 else 0
+                history_sample = {
+                    "timestamp": time.time(),
+                    "operations": interval["operations"],
+                    "slow_operations": interval["slow_operations"],
+                    "max_operation_time": interval["max_operation_time"],
+                    "ops_per_sec": ops_per_sec_calc,
+                }
+                self._kafka_performance_history.append(history_sample)
+                if len(self._kafka_performance_history) > self._max_history_samples:
+                    self._kafka_performance_history.pop(0)
+
+            # Log cumulative stats (secondary - for long-term trends)
+            if cumulative["total_operations"] > 0:
+                cumulative_slow_pct = (cumulative["slow_operations"] / cumulative["total_operations"]) * 100
+                LOGGER.debug(
+                    f"Kafka cumulative stats: "
+                    f"{cumulative['total_operations']} total operations, "
+                    f"{cumulative['slow_operations']} total slow ({cumulative_slow_pct:.1f}%), "
+                    f"all-time max: {cumulative['all_time_max']:.2f}s"
+                )
+
         except Exception as e:
             LOGGER.error(f"Error logging Kafka performance: {e}")
 

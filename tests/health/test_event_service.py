@@ -925,3 +925,101 @@ async def test_event_service_immediate_alert_method(health_config):
     service._emit_immediate_alert(test_event)
 
     # Method should be callable without errors
+
+
+# ============================================================================
+# Phase 1: Interval Tracking Tests (HEALTH_METRICS_ANALYSIS.md)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_health_event_queue_interval_tracking(health_event_service):
+    """Test that health event queue tracks interval metrics correctly."""
+    event_service = health_event_service
+
+    # Emit several events
+    for i in range(10):
+        await event_service.emit_worker_performance(
+            worker_name="test_worker",
+            performance_data={
+                "alerts_processed": i,
+                "rate": 1.0,
+                "avg_processing": 0.1,  # Use correct field name
+                "recent_avg": 0.1,
+                "min_time": 0.05,
+                "max_time": 0.15,
+                "slow_alerts": 0,
+                "extremely_slow_alerts": 0,
+                "last_processing_time": 0.1,
+                "last_alert_id": f"alert_{i}",
+                "timestamp": time.time(),
+                "worker_count": 4,
+                "active_worker_count": 4,
+            },
+        )
+
+    # Check interval stats
+    queue_stats = event_service.get_queue_stats()
+    assert queue_stats["total_processed"] >= 10  # May have processed more due to internal events
+
+    # Reset interval stats
+    await event_service.reset_interval_stats()
+
+    # Verify reset
+    queue_stats_after = event_service.get_queue_stats()
+    assert queue_stats_after["total_processed"] == 0
+
+    # Emit more events
+    for _ in range(5):
+        await event_service.emit_kafka_performance(
+            operation_data={
+                "total_time": 1.0,
+                "stage_times": {"prep": 0.3, "encode": 0.3, "send": 0.4},
+                "message_size": 1024,
+                "topic": "test_topic",
+            }
+        )
+
+    # Check that only new events are counted
+    queue_stats_final = event_service.get_queue_stats()
+    assert queue_stats_final["total_processed"] == 5  # Only the new events
+
+
+@pytest.mark.asyncio
+async def test_event_service_reset_interval_stats(health_event_service):
+    """Test reset_interval_stats method resets interval counters."""
+    event_service = health_event_service
+
+    # Emit some events to populate stats
+    for _ in range(5):
+        await event_service.emit_worker_performance(
+            worker_name="test_worker",
+            performance_data={
+                "alerts_processed": 10,
+                "rate": 1.0,
+                "avg_processing": 0.1,  # Use correct field name
+                "recent_avg": 0.1,
+                "min_time": 0.05,
+                "max_time": 0.15,
+                "slow_alerts": 0,
+                "extremely_slow_alerts": 0,
+                "last_processing_time": 0.1,
+                "last_alert_id": "test_alert",
+                "timestamp": time.time(),
+                "worker_count": 4,
+                "active_worker_count": 4,
+            },
+        )
+
+    # Get initial stats
+    stats_before = event_service.get_queue_stats()
+    assert stats_before["total_processed"] > 0
+
+    # Reset interval stats
+    await event_service.reset_interval_stats()
+
+    # Get stats after reset
+    stats_after = event_service.get_queue_stats()
+    assert stats_after["total_processed"] == 0
+    assert stats_after["max_queue_size"] == 0
+    assert stats_after["queue_full_count"] == 0

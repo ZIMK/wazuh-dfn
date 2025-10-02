@@ -115,6 +115,26 @@ class KafkaService:
             "slow_operations": 0,
         }
 
+        # Dual tracking: cumulative (since startup) + interval (resets each cycle)
+        self._cumulative_stats = {
+            "total_operations": 0,
+            "slow_operations": 0,
+            "all_time_max": 0.0,
+            "total_errors": 0,
+        }
+
+        self._interval_stats = {
+            "operations": 0,
+            "slow_operations": 0,
+            "max_operation_time": 0.0,
+            "last_slow_operation_time": 0.0,
+            "recent_stage_times": [],  # Keep last 5 for debugging
+            "interval_start": time.time(),
+        }
+
+        # Lock for stats access
+        self._stats_lock = asyncio.Lock()
+
     def set_logging_service(self, logging_service) -> None:
         """Set the logging service reference for performance logging.
 
@@ -423,6 +443,34 @@ class KafkaService:
             total_time = time.time() - start_time
             self._metrics["total_sent"] += 1
 
+            # Track both cumulative and interval stats
+            async with self._stats_lock:
+                # Update cumulative
+                self._cumulative_stats["total_operations"] += 1
+
+                # Update interval
+                self._interval_stats["operations"] += 1
+
+                # Track slow operations (>1.0s threshold)
+                if total_time > 1.0:
+                    # Cumulative
+                    self._cumulative_stats["slow_operations"] += 1
+                    self._cumulative_stats["all_time_max"] = max(self._cumulative_stats["all_time_max"], total_time)
+
+                    # Interval
+                    self._interval_stats["slow_operations"] += 1
+                    self._interval_stats["last_slow_operation_time"] = total_time
+
+                    if total_time > self._interval_stats["max_operation_time"]:
+                        self._interval_stats["max_operation_time"] = total_time
+
+                        # Store stage times for the interval max
+                        # (this allows correlation in logs)
+                        self._interval_stats["recent_stage_times"] = [stage_times.copy()]
+                    elif len(self._interval_stats["recent_stage_times"]) < 5:
+                        # Keep last 5 slow operations for debugging
+                        self._interval_stats["recent_stage_times"].append(stage_times.copy())
+
             # Record performance data
             performance_data: KafkaPerformanceData = (
                 KafkaPerformanceBuilder.create(total_time)
@@ -472,6 +520,10 @@ class KafkaService:
                 )
 
                 self._metrics["errors"] += 1
+
+                # Track errors in cumulative stats
+                async with self._stats_lock:
+                    self._cumulative_stats["total_errors"] += 1
 
                 async with self._lock:  # Thread-safe producer cleanup
                     await self._handle_producer_cleanup()
@@ -532,17 +584,20 @@ class KafkaService:
         return self.is_connected()
 
     def get_kafka_stats(self) -> KafkaInternalStatsData:
-        """Get internal Kafka performance statistics.
+        """Get internal Kafka performance statistics (interval-based).
+
+        Returns interval statistics that reset after each logging cycle.
+        For cumulative stats, access _cumulative_stats directly.
 
         Returns:
-            KafkaInternalStatsData: Kafka performance metrics
+            KafkaInternalStatsData: Interval-based Kafka performance metrics
         """
         return {
-            "slow_operations": self._metrics.get("slow_operations", 0),
-            "total_operations": self._metrics.get("total_sent", 0),
-            "last_slow_operation_time": 0.0,  # Would need to track this
-            "max_operation_time": 0.0,  # Would need to track this
-            "recent_stage_times": [],  # Would need to track recent slow operations
+            "slow_operations": self._interval_stats["slow_operations"],
+            "total_operations": self._interval_stats["operations"],
+            "last_slow_operation_time": self._interval_stats["last_slow_operation_time"],
+            "max_operation_time": self._interval_stats["max_operation_time"],
+            "recent_stage_times": list(self._interval_stats["recent_stage_times"]),
         }
 
     def is_connected(self) -> bool:
@@ -552,6 +607,22 @@ class KafkaService:
             bool: True if connected, False otherwise
         """
         return self.producer is not None
+
+    async def reset_interval_stats(self) -> None:
+        """Reset interval-based statistics after logging cycle.
+
+        This method resets interval counters while preserving cumulative
+        statistics. Called by health service after each logging cycle.
+        """
+        async with self._stats_lock:
+            self._interval_stats = {
+                "operations": 0,
+                "slow_operations": 0,
+                "max_operation_time": 0.0,
+                "last_slow_operation_time": 0.0,
+                "recent_stage_times": [],
+                "interval_start": time.time(),
+            }
 
     def get_connection_info(self) -> dict[str, Any]:
         """Get Kafka connection information.

@@ -58,16 +58,46 @@ class AlertsWorkerService:
         self._worker_processed_times = {}
         self._times_lock = asyncio.Lock()
 
-        # Add counters for monitoring queue health - ensure timestamp is stored as int
+        # Queue metrics - Cumulative (since startup)
+        self._queue_cumulative_stats = {
+            "total_processed": 0,
+            "all_time_max_size": 0,
+            "total_full_count": 0,
+        }
+
+        # Queue metrics - Interval (reset each log cycle)
+        self._queue_interval_stats = {
+            "processed": 0,
+            "max_size": 0,
+            "full_count": 0,
+            "interval_start": time.time(),
+        }
+
+        # Legacy queue stats (for backward compatibility)
         self._queue_stats = {
             "total_processed": 0,
             "last_queue_size": 0,
             "max_queue_size": 0,
             "config_max_queue_size": alert_queue.maxsize,
             "queue_full_count": 0,
-            "last_queue_check": int(datetime.now().timestamp()),  # Convert to int
+            "last_queue_check": int(datetime.now().timestamp()),
         }
         self._stats_lock = asyncio.Lock()
+
+        # Worker performance tracking
+        self._worker_performance = {
+            "start_time": time.time(),
+            "total_alerts": 0,
+            "total_processing_time": 0.0,
+            "min_processing_time": float("inf"),
+            "max_processing_time": 0.0,
+            "slow_alerts": 0,  # > 2s
+            "extremely_slow_alerts": 0,  # > 5s
+            "last_processing_time": 0.0,
+            "last_alert_id": "",
+            "recent_times": [],  # Last 100 processing times for recent avg
+        }
+        self._perf_lock = asyncio.Lock()
 
         # Track if we're in high throughput mode
         self._high_throughput_mode = False
@@ -106,24 +136,40 @@ class AlertsWorkerService:
     def get_worker_performance(self) -> WorkerPerformanceData:
         """Get current worker performance metrics.
 
+        Returns real-time worker performance data calculated from tracked metrics.
+
         Returns:
             WorkerPerformanceData: Worker performance data
         """
-        # Return basic performance data
+        # Calculate metrics from tracked data
+        total_alerts = self._worker_performance.get("total_alerts", 0)
+        total_time = self._worker_performance.get("total_processing_time", 0.0)
+        start_time = self._worker_performance.get("start_time", time.time())
+        elapsed = time.time() - start_time
+
+        # Calculate rates and averages
+        rate = total_alerts / elapsed if elapsed > 0 else 0.0
+        avg_processing = total_time / total_alerts if total_alerts > 0 else 0.0
+
+        # Calculate recent average (last 100 alerts)
+        recent_times = self._worker_performance.get("recent_times", [])
+        recent_avg = sum(recent_times) / len(recent_times) if recent_times else 0.0
+
+        # Return actual performance data
         return {
-            "alerts_processed": self._queue_stats.get("total_processed", 0),
-            "rate": 0.0,
-            "avg_processing": 0.0,
-            "recent_avg": 0.0,
-            "min_time": 0.0,
-            "max_time": 0.0,
-            "slow_alerts": 0,
-            "extremely_slow_alerts": 0,
-            "last_processing_time": 0.0,
-            "last_alert_id": "",
+            "alerts_processed": total_alerts,
+            "rate": rate,
+            "avg_processing": avg_processing,
+            "recent_avg": recent_avg,
+            "min_time": self._worker_performance.get("min_processing_time", 0.0),
+            "max_time": self._worker_performance.get("max_processing_time", 0.0),
+            "slow_alerts": self._worker_performance.get("slow_alerts", 0),
+            "extremely_slow_alerts": self._worker_performance.get("extremely_slow_alerts", 0),
+            "last_processing_time": self._worker_performance.get("last_processing_time", 0.0),
+            "last_alert_id": self._worker_performance.get("last_alert_id", ""),
             "timestamp": time.time(),
-            "worker_count": self.config.num_workers,  # Add actual worker count
-            "active_worker_count": len([task for task in self.worker_tasks if not task.done()]),  # Active workers
+            "worker_count": self.config.num_workers,
+            "active_worker_count": len([task for task in self.worker_tasks if not task.done()]),
         }
 
     def get_worker_name(self) -> str:
@@ -137,14 +183,17 @@ class AlertsWorkerService:
     def get_queue_stats(self) -> QueueStatsData:
         """Get current queue statistics.
 
+        Returns interval-based statistics for accurate per-period metrics.
+
         Returns:
             QueueStatsData: Queue statistics data
         """
+        # Return interval stats (not cumulative) for more useful logging
         return {
-            "total_processed": self._queue_stats.get("total_processed", 0),
-            "max_queue_size": self._queue_stats.get("max_queue_size", 0),
-            "config_max_queue_size": self._queue_stats.get("config_max_queue_size", 0),
-            "queue_full_count": self._queue_stats.get("queue_full_count", 0),
+            "total_processed": self._queue_interval_stats.get("processed", 0),
+            "max_queue_size": self._queue_interval_stats.get("max_size", 0),
+            "config_max_queue_size": self.alert_queue.maxsize,
+            "queue_full_count": self._queue_interval_stats.get("full_count", 0),
             "last_queue_size": self.alert_queue.qsize(),
         }
 
@@ -194,6 +243,29 @@ class AlertsWorkerService:
         """
         # Would need to implement error tracking
         return None
+
+    async def reset_interval_stats(self) -> None:
+        """Reset interval statistics after logging.
+
+        Called by HealthService after each log cycle to provide accurate
+        per-interval metrics instead of cumulative totals.
+        """
+        async with self._stats_lock:
+            # Calculate interval duration for debugging
+            interval_duration = time.time() - self._queue_interval_stats["interval_start"]
+
+            LOGGER.debug(
+                f"Resetting queue interval stats after {interval_duration:.0f}s: "
+                f"{self._queue_interval_stats['processed']} processed"
+            )
+
+            # Reset interval metrics
+            self._queue_interval_stats = {
+                "processed": 0,
+                "max_size": 0,
+                "full_count": 0,
+                "interval_start": time.time(),
+            }
 
     @property
     async def worker_processed_times(self) -> dict[str, float]:
@@ -262,12 +334,26 @@ class AlertsWorkerService:
                 fill_percentage = (current_size / max_size) * 100 if max_size > 0 else 0
 
                 async with self._stats_lock:
+                    # Legacy stats
                     self._queue_stats["last_queue_size"] = current_size
                     self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
 
+                    # Interval stats
+                    self._queue_interval_stats["max_size"] = max(self._queue_interval_stats["max_size"], current_size)
+
+                    # Cumulative stats
+                    self._queue_cumulative_stats["all_time_max_size"] = max(
+                        self._queue_cumulative_stats["all_time_max_size"], current_size
+                    )
+
                     # Check if queue is at risk of overflowing (>80% full)
                     if fill_percentage > 80:
+                        # Legacy
                         self._queue_stats["queue_full_count"] += 1
+                        # Interval
+                        self._queue_interval_stats["full_count"] += 1
+                        # Cumulative
+                        self._queue_cumulative_stats["total_full_count"] += 1
 
                         # Enable high-throughput mode if not already enabled
                         if not self._high_throughput_mode:
@@ -402,9 +488,17 @@ class AlertsWorkerService:
                             # Update timing stats
                             self._update_timing_stats(timing_stats, processing_time)
 
-                            # Update global stats
+                            # Store last alert ID for metrics
+                            self._worker_performance["last_alert_id"] = alert_id
+
+                            # Update global stats (all three tracking systems)
                             async with self._stats_lock:
+                                # Legacy
                                 self._queue_stats["total_processed"] += 1
+                                # Interval
+                                self._queue_interval_stats["processed"] += 1
+                                # Cumulative
+                                self._queue_cumulative_stats["total_processed"] += 1
 
                             # Log based on processing time thresholds
                             if processing_time > 10.0:
@@ -526,11 +620,11 @@ class AlertsWorkerService:
     def _update_timing_stats(self, stats: dict, processing_time: float) -> None:
         """Update timing statistics with a new processing time."""
         # Keep last 100 processing times for analysis
-        stats["processing_times"].append(float(processing_time))  # Ensure it's explicitly a float
+        stats["processing_times"].append(float(processing_time))
         if len(stats["processing_times"]) > 100:
             stats["processing_times"].pop(0)
 
-        # Update min/max times - ensure they're always stored as floats
+        # Update min/max times
         stats["max_time"] = float(max(stats["max_time"], processing_time))
         stats["min_time"] = float(min(stats["min_time"], processing_time))
 
@@ -539,6 +633,28 @@ class AlertsWorkerService:
             stats["extremely_slow_alerts"] += 1
         elif processing_time > 2.0:
             stats["slow_alerts"] += 1
+
+        # Update global worker performance tracking
+        self._worker_performance["total_alerts"] += 1
+        self._worker_performance["total_processing_time"] += processing_time
+        self._worker_performance["min_processing_time"] = min(
+            self._worker_performance["min_processing_time"], processing_time
+        )
+        self._worker_performance["max_processing_time"] = max(
+            self._worker_performance["max_processing_time"], processing_time
+        )
+        self._worker_performance["last_processing_time"] = processing_time
+
+        # Count slow alerts in global tracking
+        if processing_time > 5.0:
+            self._worker_performance["extremely_slow_alerts"] += 1
+        elif processing_time > 2.0:
+            self._worker_performance["slow_alerts"] += 1
+
+        # Keep last 100 times for recent average
+        self._worker_performance["recent_times"].append(processing_time)
+        if len(self._worker_performance["recent_times"]) > 100:
+            self._worker_performance["recent_times"].pop(0)
 
     async def _process_alert_batch(
         self, worker_name: str, batch_size: int, alerts_processed: int, total_processing_time: float
@@ -619,9 +735,14 @@ class AlertsWorkerService:
                             f"for alert {alert_id}"
                         )
 
-                    # Update global stats
+                    # Update global stats (all three tracking systems)
                     async with self._stats_lock:
+                        # Legacy
                         self._queue_stats["total_processed"] += 1
+                        # Interval
+                        self._queue_interval_stats["processed"] += 1
+                        # Cumulative
+                        self._queue_cumulative_stats["total_processed"] += 1
 
                 except Exception as e:
                     alert_id = alert.get("id", "unknown")

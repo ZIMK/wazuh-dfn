@@ -139,6 +139,13 @@ class MockQueueMetricsProvider(MockHealthMetricsProvider):
     def is_queue_healthy(self) -> bool:
         return self.healthy
 
+    async def reset_interval_stats(self) -> None:
+        """Reset interval-based statistics (mock implementation)."""
+        # Reset stats to 0 for testing
+        self.queue_stats["total_processed"] = 0
+        self.queue_stats["max_queue_size"] = 0
+        self.queue_stats["queue_full_count"] = 0
+
 
 class MockKafkaMetricsProvider(MockHealthMetricsProvider):
     """Mock implementation of KafkaMetricsProvider protocol."""
@@ -166,6 +173,10 @@ class MockKafkaMetricsProvider(MockHealthMetricsProvider):
 
     def get_connection_info(self) -> dict[str, Any]:
         return self.connection_info
+
+    async def reset_interval_stats(self) -> None:
+        """Reset interval-based statistics (required by protocol)."""
+        pass
 
 
 def test_health_metrics_provider_protocol_compliance():
@@ -498,6 +509,10 @@ def test_queue_stats_collector_capacity_utilization():
         def is_queue_healthy(self) -> bool:
             return self.current_size < self.max_size * 0.9
 
+        async def reset_interval_stats(self) -> None:
+            """Reset interval statistics (mock implementation)."""
+            pass
+
         def get_health_status(self) -> bool:
             return True
 
@@ -539,6 +554,10 @@ def test_queue_stats_collector_zero_capacity_handling():
 
         def is_queue_healthy(self) -> bool:
             return True
+
+        async def reset_interval_stats(self) -> None:
+            """Reset interval statistics (mock implementation)."""
+            pass
 
         def get_health_status(self) -> bool:
             return True

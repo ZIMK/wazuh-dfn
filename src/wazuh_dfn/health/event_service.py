@@ -67,7 +67,22 @@ class HealthEventService:
         self._extremely_slow_threshold = config.kafka_extremely_slow_threshold
         self._worker_stall_threshold = config.worker_stall_threshold
 
-        # Add counters for monitoring queue health - ensure timestamp is stored as int
+        # Queue metrics - Cumulative (since startup)
+        self._queue_cumulative_stats = {
+            "total_processed": 0,
+            "all_time_max_size": 0,
+            "total_full_count": 0,
+        }
+
+        # Queue metrics - Interval (reset each log cycle)
+        self._queue_interval_stats = {
+            "processed": 0,
+            "max_size": 0,
+            "full_count": 0,
+            "interval_start": time.time(),
+        }
+
+        # Legacy queue stats (for backward compatibility)
         self._queue_stats = {
             "total_processed": 0,
             "last_queue_size": 0,
@@ -107,16 +122,30 @@ class HealthEventService:
         try:
             await self._event_queue.put(event)
 
-            # Update queue statistics
+            # Update queue statistics (legacy, cumulative, and interval)
             async with self._stats_lock:
-                self._queue_stats["total_processed"] += 1
                 current_size = self._event_queue.qsize()
+
+                # Update legacy stats (preserve backward compatibility)
+                self._queue_stats["total_processed"] += 1
                 self._queue_stats["last_queue_size"] = current_size
                 self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
-
-                # Check if queue is getting full
                 if self._event_queue.full():
                     self._queue_stats["queue_full_count"] += 1
+
+                # Update cumulative stats
+                self._queue_cumulative_stats["total_processed"] += 1
+                self._queue_cumulative_stats["all_time_max_size"] = max(
+                    self._queue_cumulative_stats["all_time_max_size"], current_size
+                )
+                if self._event_queue.full():
+                    self._queue_cumulative_stats["total_full_count"] += 1
+
+                # Update interval stats
+                self._queue_interval_stats["processed"] += 1
+                self._queue_interval_stats["max_size"] = max(self._queue_interval_stats["max_size"], current_size)
+                if self._event_queue.full():
+                    self._queue_interval_stats["full_count"] += 1
 
         except Exception as e:
             self._last_error = f"Failed to emit worker performance event: {e}"
@@ -152,16 +181,30 @@ class HealthEventService:
         try:
             await self._event_queue.put(event)
 
-            # Update queue statistics
+            # Update queue statistics (legacy, cumulative, and interval)
             async with self._stats_lock:
-                self._queue_stats["total_processed"] += 1
                 current_size = self._event_queue.qsize()
+
+                # Update legacy stats (preserve backward compatibility)
+                self._queue_stats["total_processed"] += 1
                 self._queue_stats["last_queue_size"] = current_size
                 self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
-
-                # Check if queue is getting full
                 if self._event_queue.full():
                     self._queue_stats["queue_full_count"] += 1
+
+                # Update cumulative stats
+                self._queue_cumulative_stats["total_processed"] += 1
+                self._queue_cumulative_stats["all_time_max_size"] = max(
+                    self._queue_cumulative_stats["all_time_max_size"], current_size
+                )
+                if self._event_queue.full():
+                    self._queue_cumulative_stats["total_full_count"] += 1
+
+                # Update interval stats
+                self._queue_interval_stats["processed"] += 1
+                self._queue_interval_stats["max_size"] = max(self._queue_interval_stats["max_size"], current_size)
+                if self._event_queue.full():
+                    self._queue_interval_stats["full_count"] += 1
 
         except Exception as e:
             self._last_error = f"Failed to emit worker last processed event: {e}"
@@ -187,16 +230,30 @@ class HealthEventService:
         try:
             await self._event_queue.put(event)
 
-            # Update queue statistics
+            # Update queue statistics (legacy, cumulative, and interval)
             async with self._stats_lock:
-                self._queue_stats["total_processed"] += 1
                 current_size = self._event_queue.qsize()
+
+                # Update legacy stats (preserve backward compatibility)
+                self._queue_stats["total_processed"] += 1
                 self._queue_stats["last_queue_size"] = current_size
                 self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
-
-                # Check if queue is getting full
                 if self._event_queue.full():
                     self._queue_stats["queue_full_count"] += 1
+
+                # Update cumulative stats
+                self._queue_cumulative_stats["total_processed"] += 1
+                self._queue_cumulative_stats["all_time_max_size"] = max(
+                    self._queue_cumulative_stats["all_time_max_size"], current_size
+                )
+                if self._event_queue.full():
+                    self._queue_cumulative_stats["total_full_count"] += 1
+
+                # Update interval stats
+                self._queue_interval_stats["processed"] += 1
+                self._queue_interval_stats["max_size"] = max(self._queue_interval_stats["max_size"], current_size)
+                if self._event_queue.full():
+                    self._queue_interval_stats["full_count"] += 1
 
         except Exception as e:
             self._last_error = f"Failed to emit kafka performance event: {e}"
@@ -228,16 +285,30 @@ class HealthEventService:
         try:
             await self._event_queue.put(event)
 
-            # Update queue statistics
+            # Update queue statistics (legacy, cumulative, and interval)
             async with self._stats_lock:
-                self._queue_stats["total_processed"] += 1
                 current_size = self._event_queue.qsize()
+
+                # Update legacy stats (preserve backward compatibility)
+                self._queue_stats["total_processed"] += 1
                 self._queue_stats["last_queue_size"] = current_size
                 self._queue_stats["max_queue_size"] = max(self._queue_stats["max_queue_size"], current_size)
-
-                # Check if queue is getting full
                 if self._event_queue.full():
                     self._queue_stats["queue_full_count"] += 1
+
+                # Update cumulative stats
+                self._queue_cumulative_stats["total_processed"] += 1
+                self._queue_cumulative_stats["all_time_max_size"] = max(
+                    self._queue_cumulative_stats["all_time_max_size"], current_size
+                )
+                if self._event_queue.full():
+                    self._queue_cumulative_stats["total_full_count"] += 1
+
+                # Update interval stats
+                self._queue_interval_stats["processed"] += 1
+                self._queue_interval_stats["max_size"] = max(self._queue_interval_stats["max_size"], current_size)
+                if self._event_queue.full():
+                    self._queue_interval_stats["full_count"] += 1
 
         except Exception as e:
             self._last_error = f"Failed to emit service performance event: {e}"
@@ -296,16 +367,42 @@ class HealthEventService:
     def get_queue_stats(self) -> QueueStatsData:
         """Get current queue statistics.
 
+        Returns interval-based statistics for accurate per-period metrics.
+
         Returns:
             QueueStatsData: Queue statistics data
         """
+        # Return interval stats (not cumulative) for more useful logging
         return {
-            "total_processed": self._queue_stats.get("total_processed", 0),
-            "max_queue_size": self._queue_stats.get("max_queue_size", 0),
-            "config_max_queue_size": self._queue_stats.get("config_max_queue_size", 0),
-            "queue_full_count": self._queue_stats.get("queue_full_count", 0),
+            "total_processed": self._queue_interval_stats.get("processed", 0),
+            "max_queue_size": self._queue_interval_stats.get("max_size", 0),
+            "config_max_queue_size": self._event_queue.maxsize,
+            "queue_full_count": self._queue_interval_stats.get("full_count", 0),
             "last_queue_size": self._event_queue.qsize(),
         }
+
+    async def reset_interval_stats(self) -> None:
+        """Reset interval statistics after logging.
+
+        Called by HealthService after each log cycle to provide accurate
+        per-interval metrics instead of cumulative totals.
+        """
+        async with self._stats_lock:
+            # Calculate interval duration for debugging
+            interval_duration = time.time() - self._queue_interval_stats["interval_start"]
+
+            LOGGER.debug(
+                f"Resetting health event queue interval stats after {interval_duration:.0f}s: "
+                f"{self._queue_interval_stats['processed']} processed"
+            )
+
+            # Reset interval metrics
+            self._queue_interval_stats = {
+                "processed": 0,
+                "max_size": 0,
+                "full_count": 0,
+                "interval_start": time.time(),
+            }
 
     def get_queue_name(self) -> str:
         """Get the queue identifier.

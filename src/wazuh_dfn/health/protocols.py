@@ -204,6 +204,14 @@ class QueueMetricsProvider(HealthMetricsProvider, Protocol):
         """
         ...
 
+    async def reset_interval_stats(self) -> None:
+        """Reset interval-based statistics after each logging cycle.
+
+        Called by HealthService after each stats_interval to reset
+        interval counters while preserving cumulative totals.
+        """
+        ...
+
 
 @runtime_checkable
 class KafkaMetricsProvider(HealthMetricsProvider, Protocol):
@@ -230,6 +238,14 @@ class KafkaMetricsProvider(HealthMetricsProvider, Protocol):
 
         Returns:
             dict[str, Any]: Connection details (topic, bootstrap servers, etc.)
+        """
+        ...
+
+    async def reset_interval_stats(self) -> None:
+        """Reset interval-based statistics after logging cycle.
+
+        This method should be called after each logging cycle to reset
+        interval counters while preserving cumulative statistics.
         """
         ...
 
