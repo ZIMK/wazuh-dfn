@@ -780,6 +780,8 @@ async def test_process_alerts_method(mocker, caplog):
 
     mock_queue.get = mocker.AsyncMock(side_effect=test_alerts)
     mock_queue.task_done = mocker.MagicMock()
+    # qsize() is synchronous and should return an int, not a coroutine
+    mock_queue.qsize = mocker.MagicMock(return_value=1)
 
     # Mock process_alert with different timings
     # First call normal, second call slow

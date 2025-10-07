@@ -231,13 +231,13 @@ class HealthService:
             # Update interval metrics
             self._kafka_interval_data["operations"] += 1
 
+            # Track interval max for ALL operations (not just slow ones)
+            if total_time > self._kafka_interval_data["max_operation_time"]:
+                self._kafka_interval_data["max_operation_time"] = total_time
+                self._kafka_interval_data["max_stage_times"] = stage_times.copy()
+
             if total_time > 1.0:  # SLOW_OPERATIONS_THRESHOLD
                 self._kafka_interval_data["slow_operations"] += 1
-
-                # Track interval max WITH its stage breakdown
-                if total_time > self._kafka_interval_data["max_operation_time"]:
-                    self._kafka_interval_data["max_operation_time"] = total_time
-                    self._kafka_interval_data["max_stage_times"] = stage_times.copy()
 
     # Memory Management Methods
     async def cleanup_old_health_data(self) -> None:
@@ -965,7 +965,7 @@ class HealthService:
                     f"Kafka performance (last {interval_duration:.0f}s): "
                     f"{interval['operations']} operations ({ops_per_sec:.1f} ops/s), "
                     f"{interval['slow_operations']} slow ({slow_pct:.1f}%), "
-                    f"interval max: {interval['max_operation_time']:.2f}s"
+                    f"interval max: {interval['max_operation_time']:.4f}s"
                 )
 
                 # Show stage breakdown for the slowest operation in this interval

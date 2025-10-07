@@ -442,6 +442,16 @@ class AlertsWorkerService:
                     timeout = 0.05 if consecutive_empty > 5 else 0.2
 
                     try:
+                        # Track queue size BEFORE dequeuing (captures actual max usage)
+                        current_queue_size = self.alert_queue.qsize()
+                        async with self._stats_lock:
+                            self._queue_interval_stats["max_size"] = max(
+                                self._queue_interval_stats["max_size"], current_queue_size
+                            )
+                            self._queue_cumulative_stats["all_time_max_size"] = max(
+                                self._queue_cumulative_stats["all_time_max_size"], current_queue_size
+                            )
+
                         # Get an alert from the queue
                         alert = await asyncio.wait_for(self.alert_queue.get(), timeout=timeout)
                         LOGGER.debug(f"Worker {worker_name} got alert {alert}")
