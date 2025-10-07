@@ -17,8 +17,8 @@ try:
     from socket import AF_UNIX, SOCK_DGRAM  # type: ignore
 except ImportError:
     # Define these for testing purposes on Windows
-    AF_UNIX = 1
-    SOCK_DGRAM = 2
+    AF_UNIX = 1  # type: ignore
+    SOCK_DGRAM = 2  # type: ignore
 
 # Set up logging
 LOGGER = logging.getLogger(__name__)
