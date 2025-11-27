@@ -44,10 +44,8 @@ def test_load_alerts():
     test_files = get_test_files()
     assert len(test_files) > 0, "No test files found"
 
-    alerts = []
     for filename in test_files:
         alert = load_json_alert(filename)
-        alerts.append(alert)
 
         # Basic validation of required fields
         assert "agent" in alert

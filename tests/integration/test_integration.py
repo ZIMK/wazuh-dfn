@@ -2,9 +2,12 @@ import json
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from wazuh_dfn.config import MiscConfig
+from wazuh_dfn.services.handlers import SyslogHandler, WindowsHandler
 
 LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +21,17 @@ WIN_LOG_CLEARED_TEST_FILE = "win_1102.json"
 def load_json_file(file_path: str) -> dict:
     with Path(file_path).open() as f:
         return json.load(f)
+
+
+def load_json_alert(filename):
+    """Load a JSON alert file from the tests directory"""
+    with (INTEGRATION_DIR / filename).open() as f:
+        return json.load(f)
+
+
+def get_test_files():
+    """Get list of all JSON test files"""
+    return [f.name for f in INTEGRATION_DIR.glob("*.json")]
 
 
 @pytest.mark.asyncio
@@ -108,7 +122,7 @@ async def test_windows_log_cleared_handling(alerts_service, caplog) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_process_integration_files(alerts_service, caplog) -> None:  # noqa: PLR0912 NOSONAR
+async def test_process_integration_files(alerts_service, caplog) -> None:  # noqa: PLR0912 # NOSONAR
     """Test processing of all alert types from the integration_files directory"""
     caplog.set_level(logging.INFO)
 
@@ -336,3 +350,49 @@ async def test_process_integration_files(alerts_service, caplog) -> None:  # noq
             pytest.fail(f"{len(failures)} tests failed. See summary above.")
         else:
             LOGGER.info("\nAll integration files processed successfully.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_kafka_message_creation(caplog) -> None:
+    """Test Kafka message creation for syslog and Windows handlers."""
+    caplog.set_level(logging.INFO)
+    # This test would include specific checks for message creation logic
+    # For brevity, the implementation is omitted here
+    LOGGER.info("Kafka message creation test executed")
+
+    test_files = get_test_files()
+    assert len(test_files) > 0, "No test files found"
+
+    syslog_handler = SyslogHandler(config=MiscConfig(), kafka_service=MagicMock(), wazuh_service=MagicMock())
+    windows_handler = WindowsHandler(kafka_service=MagicMock(), wazuh_service=MagicMock())
+    # if self._is_relevant_fail2ban_alert(alert):
+    # message_data = self._create_message_data(alert)
+
+    for filename in test_files:
+        alert = load_json_alert(filename)
+        if syslog_handler._is_relevant_fail2ban_alert(alert):
+            message_data = syslog_handler._create_message_data(alert)
+
+            assert "timestamp" in message_data
+            assert "body" in message_data
+            assert message_data.get("event_format") == "syslog5424-json"
+
+            # load kafka message data from file to check if same
+            with (INTEGRATION_DIR / f"{filename}.json.kafka").open("r") as f:
+                expected_data = json.load(f)
+
+            assert message_data == expected_data, f"Syslog Kafka message data does not match for {filename}"
+        if windows_handler._is_relevant_windows_alert(alert):
+            event_id = str(alert["data"]["win"]["system"]["eventID"])
+            message_data = windows_handler._create_message_data(alert, event_id)
+
+            assert "timestamp" in message_data
+            assert "body" in message_data
+            assert message_data.get("event_format") == "windows-xml"
+
+            # load kafka message data from file to check if same
+            with (INTEGRATION_DIR / f"{filename}.json.kafka").open("r") as f:
+                expected_data = json.load(f)
+
+            assert message_data == expected_data, f"Windows Kafka message data does not match for {filename}"

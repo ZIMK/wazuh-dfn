@@ -278,8 +278,7 @@ def test_yaml_config_loading():
     """Test loading config from YAML file."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         yaml_path = tmp.name
-        tmp.write(
-            """
+        tmp.write("""
 dfn:
   dfn_id: test-yaml-id
   dfn_broker: broker:9092
@@ -287,8 +286,7 @@ wazuh:
   max_event_size: 32000
 log:
   level: DEBUG
-        """
-        )
+        """)
 
     try:
         config = Config.from_yaml(yaml_path)
@@ -321,8 +319,7 @@ def test_toml_config_loading():
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as tmp:
         toml_path = tmp.name
-        tmp.write(
-            """
+        tmp.write("""
 [dfn]
 dfn_id = "test-toml-id"
 dfn_broker = "toml-broker:9092"
@@ -332,8 +329,7 @@ max_event_size = 64000
 
 [log]
 level = "DEBUG"
-        """
-        )
+        """)
 
     try:
         config = Config.from_toml(toml_path)
@@ -782,15 +778,13 @@ def test_config_value_precedence():
     # Create a temporary YAML config file
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         yaml_path = tmp.name
-        tmp.write(
-            """
+        tmp.write("""
 dfn:
   dfn_id: yaml-id
   dfn_broker: yaml-broker:9092
 wazuh:
   max_event_size: 40000
-            """
-        )
+            """)
 
     try:
         # 1. Start with defaults
@@ -873,26 +867,22 @@ def test_layered_configuration_loading():
     # Create two temporary config files
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as base_file:
         base_path = base_file.name
-        base_file.write(
-            """
+        base_file.write("""
 dfn:
   dfn_id: base-id
   dfn_broker: base-broker:9092
 wazuh:
   max_event_size: 30000
-            """
-        )
+            """)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as override_file:
         override_path = override_file.name
-        override_file.write(
-            """
+        override_file.write("""
 dfn:
   dfn_id: override-id
 wazuh:
   json_alert_file: /custom/path/alerts.json
-            """
-        )
+            """)
 
     try:
         # Load base config

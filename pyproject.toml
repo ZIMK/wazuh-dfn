@@ -25,7 +25,7 @@ dependencies = [
     "pydantic-core>=2.33.0,<3.0.0",     # Core implementation for pydantic (no upper bound)
     "tomli; python_version < \"3.11\"", # TOML parsing for Python < 3.11
     "zipp>=3.21.0,<4.0.0",              # ZIP file import support
-    "aiofiles>=24.1.0,<25.0.0",         # Async file I/O operations
+    "aiofiles>=25.0.0,<26.0.0",         # Async file I/O operations
     "aiokafka>=0.12.0,<1.0.0",          # Async Kafka client (replacing confluent-kafka)
     "wazuh-dfn[health-api]",
 ]
@@ -51,12 +51,12 @@ build-backend = "pdm.backend"
 
 [tool.pdm.dev-dependencies]
 test = [
-    "pytest>=8.0.0,<9.0.0",
+    "pytest>=9.0.0,<10.0.0",
     "pytest-cov>=7.0.0,<8.0.0",
     "pytest-sugar>=1.0.0,<2.0.0",
     "pytest-mock>=3.0.0,<4.0.0",
     "hypothesis>=6.0.0,<7.0.0",
-    "pytest-asyncio>=0.26.0,<1.0.0", # Support for testing async code
+    "pytest-asyncio>=1.0.0,<2.0.0",  # Support for testing async code
     "pytest-aiohttp>=1.0.0,<2.0.0",  # aiohttp testing fixtures
     "coverage[toml]>=7.8.0,<8.0.0",  # Test coverage reporting
     "termcolor>=3.0.0,<4.0.0",       # Terminal color output formatting
@@ -193,7 +193,6 @@ reportUntypedFunctionDecorator = false
 useLibraryCodeForTypes = true
 reportMissingParameterType = false
 reportUnknownParameterType = false
-reportMissingReturn = false
 reportIncompatibleMethodOverride = "warning"
 reportImportCycles = "warning"
 
