@@ -78,6 +78,8 @@ class WindowsHandler:
                 "4672",  # Special privileges assigned to new logon
                 "4720",  # User account was created
                 "1100",  # Event logging service was shut down
+                "3697",  # A new external device was recognized by the system
+                "4698",  # A scheduled task was created
             ]
         return False
 
